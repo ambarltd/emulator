@@ -1,10 +1,11 @@
 module Queue.Partition.File where
 
-import Control.Concurrent (MVar, newMVar)
-import Control.Concurrent.STM (TVar, readTVarIO)
+import Control.Concurrent (MVar, newMVar, modifyMVar)
+import Control.Concurrent.STM (TVar, readTVarIO, atomically, readTVar, retry)
 import Control.Concurrent.Mutex (Mutex)
-import Control.Monad (void, replicateM_)
-import Data.ByteString.Char8 as Char8
+import Control.Monad (void, replicateM_, when)
+import qualified Data.ByteString.Char8 as Char8
+import qualified Data.ByteString.Lazy as B
 import System.IO
   ( Handle
   , openFile
@@ -56,7 +57,23 @@ instance Partition FilePartition where
   -- | Reads one record and advances the Reader.
   -- Blocks if there are no more records.
   read :: FileReader -> IO Record
-  read = undefined
+  read (FileReader var) =
+    modifyMVar var $ \ReaderInfo{..} -> do
+      end <- if r_end >= r_position
+         then return r_end
+         else do
+           atomically $ do
+             n <- readTVar r_partitionEnd
+             when (n == r_position) retry
+             return n
+      record <- Record . B.fromStrict <$> Char8.hGetLine r_handle
+      let info = ReaderInfo
+            { r_position = r_position + 1
+            , r_handle = r_handle
+            , r_end = end
+            , r_partitionEnd = r_partitionEnd
+            }
+      return (info, record)
 
   getIndex :: FileReader -> Index
   getIndex = undefined

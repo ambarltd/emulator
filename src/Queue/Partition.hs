@@ -8,6 +8,8 @@ data Position
   | End
 
 newtype Index = Index Int
+  deriving Show
+  deriving newtype (Num, Eq, Ord)
 
 newtype Record = Record ByteString
 

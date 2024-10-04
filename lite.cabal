@@ -14,6 +14,8 @@ common common
         TypeFamilyDependencies
         RecordWildCards
         InstanceSigs
+        DerivingStrategies
+        GeneralizedNewtypeDeriving
 
 executable lite
     import: common
