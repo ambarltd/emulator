@@ -17,6 +17,15 @@ executable lite
     other-modules:
     build-depends:
         base ^>=4.17.2.1
+        , lite-lib
         , prettyprinter
         , prettyprinter-ansi-terminal
         , optparse-applicative
+
+library lite-lib
+    import: common
+    hs-source-dirs: src
+    exposed-modules:
+        Lib
+    build-depends:
+        base ^>=4.17.2.1
