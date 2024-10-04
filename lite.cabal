@@ -26,6 +26,9 @@ library lite-lib
     import: common
     hs-source-dirs: src
     exposed-modules:
+        Control.Concurrent.Mutex
+        Queue.Partition
         Lib
     build-depends:
         base ^>=4.17.2.1
+        , bytestring
