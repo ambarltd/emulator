@@ -1,5 +1,7 @@
 module Test.Queue (testQueues) where
 
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (async, wait)
 import Data.Char (isAscii)
 import qualified Data.Text as Text
 import Data.Text.Encoding (encodeUtf8)
@@ -15,10 +17,9 @@ testQueues  = describe "queue" $ do
   describe "partition" $
     testPartition withFilePartition
   where
-  withFilePartition act =
-    withSystemTempDirectory "partition-XXXXX" $ \path -> do
-    partition <- FilePartition.open path "file-partition"
-    act partition
+  withFilePartition path act =
+    FilePartition.withFilePartition path "file-partition" act
+
 
 -- | Infinite list of messages of varying lengths
 messages :: [Record]
@@ -32,19 +33,53 @@ messages = toRecord <$> zipWith take lengths sentences
       then succ c
       else '#' -- chr 35
 
-testPartition :: Partition a => (forall b. (a -> IO b) -> IO b) -> Spec
+testPartition :: Partition a => (forall b. FilePath -> (a -> IO b) -> IO b) -> Spec
 testPartition with = do
-  it "reads what is written" $ with $ \partition -> do
-    one : two : _ <- return messages
-    P.write partition one
-    P.write partition two
-    P.seek partition Beginning $ \reader -> do
-      (o1, one_) <- P.read reader
-      o1 `shouldBe` 0
-      (o2, two_) <- P.read reader
-      o2 `shouldBe` 1
+  it "reads what is written" $
+    withTempPath $ \path ->
+    with path $ \partition -> do
+      one : two : _ <- return messages
+      P.write partition one
+      P.write partition two
+      P.seek partition Beginning $ \reader -> do
+        (o1, one_) <- P.read reader
+        o1 `shouldBe` 0
+        (o2, two_) <- P.read reader
+        o2 `shouldBe` 1
+        one_ `shouldBe` one
+        two_ `shouldBe` two
+
+  it "reopens" $
+    withTempPath $ \path -> do
+      one : two : _ <- return messages
+      with path $ \partition -> do
+        P.write partition one
+        P.write partition two
+      with path $ \partition ->
+        P.seek partition Beginning $ \reader -> do
+          (_, one_) <- P.read reader
+          (_, two_) <- P.read reader
+          one_ `shouldBe` one
+          two_ `shouldBe` two
+
+  it "blocks reads when reaches the end" $
+    withTempPath $ \path ->
+    with path $ \partition -> do
+      one : two : _ <- return messages
+      let read' =
+            P.seek partition Beginning $ \reader -> do
+            (_, one_) <- P.read reader
+            (_, two_) <- P.read reader
+            return (one_, two_)
+          write' = do
+            P.write partition one
+            P.write partition two
+
+      r <- async read'
+      threadDelay 5
+      _ <- async write'
+      (one_, two_) <- wait r
       one_ `shouldBe` one
       two_ `shouldBe` two
-
-
-
+  where
+  withTempPath = withSystemTempDirectory "partition-XXXXX"

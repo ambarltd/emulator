@@ -1,18 +1,25 @@
 module Queue.Partition.File
   ( FilePartition
   , FileReader
-  , open
+  , withFilePartition
   ) where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar)
 import Control.Concurrent.STM (TVar, readTVarIO, atomically, readTVar, retry, writeTVar, newTVarIO)
-import Control.Concurrent.Mutex (Mutex, withMutex, newMutex)
-import Control.Monad (unless, when)
+import Control.Exception (bracket)
+import Control.Monad (void, unless, when)
 import qualified Data.Binary as Binary
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Unsafe as B (unsafeUseAsCStringLen)
 import qualified Data.ByteString.Char8 as Char8
 import qualified Data.ByteString.Lazy as LB
+import Data.Coerce (coerce)
 import Data.Word (Word64)
+import GHC.IO.Handle (hLock, LockMode(..))
+import GHC.IO.FD (FD)
+import qualified GHC.IO.FD as FD
+import qualified GHC.IO.Device as FD
 import GHC.Stack (HasCallStack)
 import System.IO
   ( Handle
@@ -38,7 +45,7 @@ import Queue.Partition
 data FilePartition = FilePartition
   { p_records:: FilePath
   , p_index :: FilePath
-  , p_lock :: Mutex  -- ^ write lock
+  , p_handles :: MVar (FD.FD, FD.FD) -- ^ write lock. (records, index)
   , p_info :: TVar (Count, Bytes) -- ^ record count and size
   }
 
@@ -73,8 +80,8 @@ record. That's why this structure is targets unformatted JSON records.
 
 -}
 
-open :: HasCallStack => FilePath -> String -> IO FilePartition
-open location name = do
+withFilePartition :: HasCallStack => FilePath -> String -> (FilePartition -> IO a) -> IO a
+withFilePartition location name act = do
   let records = location </> name <> ".records"
       index   = location </> name <> ".index"
   exists_records <- doesFileExist records
@@ -89,17 +96,18 @@ open location name = do
     then createIndex index
     else loadIndex index
 
-  mutex <- newMutex
-  var <- newTVarIO (count, size)
-  return FilePartition
-    { p_records = records
-    , p_index = index
-    , p_lock = mutex
-    , p_info = var
-    }
+  withNonLockingWritableFD records $ \fd_records ->
+    withNonLockingWritableFD index $ \fd_index -> do
+    lock <- newMVar (fd_records, fd_index)
+    var <- newTVarIO (count, size)
+    act FilePartition
+      { p_records = records
+      , p_index = index
+      , p_handles = lock
+      , p_info = var
+      }
   where
     createIndex index = do
-      putStrLn "Creating index"
       -- The index file starts with an entry for the position of the zeroeth element.
       -- Therefore the index always contains one more entry than the records file.
       LB.writeFile index $ Binary.encode @Word64 0
@@ -110,6 +118,16 @@ open location name = do
       let count = (indexSize `div` _WORD64_SIZE) - 1
       byteOffsetOfNextEntry <- readIndexEntry index (Offset count)
       return (Count count, byteOffsetOfNextEntry)
+
+withNonLockingWritableFD :: FilePath -> (FD -> IO a) -> IO a
+withNonLockingWritableFD path act = bracket open close act
+  where
+  open = do
+    (fd, _) <- FD.openFile path AppendMode True
+    FD.release fd
+    return fd
+  close = FD.close
+
 
 -- A single-threaded file readed.
 newtype FileReader = FileReader (MVar ReaderInfo)
@@ -141,6 +159,7 @@ instance Partition FilePartition where
       (Count len, _) <- readTVarIO p_info
       Bytes byteOffset <- readIndexEntry p_index offset
       withFile p_records ReadMode $ \handle -> do
+        hLock handle SharedLock
         hSeek handle AbsoluteSeek (fromIntegral byteOffset)
         var <- newMVar $ ReaderInfo
           { r_next = offset
@@ -153,17 +172,17 @@ instance Partition FilePartition where
   -- | Reads one record and advances the Reader.
   -- Blocks if there are no more records.
   read :: FileReader -> IO (Offset, Record)
-  read (FileReader var) =
+  read (FileReader var) = do
     modifyMVar var $ \ReaderInfo{..} -> do
       let offset = r_next -- offset to be read.
       len <- if r_length > unOffset offset
-         then return r_length
-         else do
-           atomically $ do
-             (Count newLen, _) <- readTVar r_info
-             -- block till there are more elements to read.
-             unless (newLen > unOffset offset) retry
-             return newLen
+        then return r_length
+        else do
+          atomically $ do
+            (Count newLen, _) <- readTVar r_info
+            -- block till there are more elements to read.
+            unless (newLen > unOffset offset) retry
+            return newLen
 
       record <- Record <$> Char8.hGetLine r_handle
 
@@ -183,22 +202,28 @@ instance Partition FilePartition where
     when (Char8.elem '\n' bs) $
       error "FilePartition write: record contains newline character"
 
-    withMutex p_lock $ do
+    withMVar p_handles $ \(fd_records, fd_index) -> do
       (Count count, Bytes partitionSize) <- readTVarIO p_info
 
-      let entry = LB.fromStrict bs <> "\n"
+      let entry = bs <> "\n"
           entrySize = fromIntegral (B.length bs)
-          entryByteOffset = Binary.encode partitionSize
+          entryByteOffset = B.toStrict $ Binary.encode partitionSize
           newSize = entrySize + partitionSize
           newCount = count + 1
 
-      LB.appendFile p_records entry
-      LB.appendFile p_index entryByteOffset
+      writeNonBlocking fd_records entry
+      writeNonBlocking fd_index entryByteOffset
       atomically $ writeTVar p_info (Count newCount, Bytes newSize)
+
+writeNonBlocking :: FD -> ByteString -> IO ()
+writeNonBlocking fd bs =
+  void $ B.unsafeUseAsCStringLen bs $ \(ptr, len) ->
+  FD.writeNonBlocking fd (coerce ptr) 0 (fromIntegral len)
 
 readIndexEntry :: FilePath -> Offset -> IO Bytes
 readIndexEntry path (Offset offset)  =
   withFile path ReadMode $ \handle -> do
+    hLock handle SharedLock
     hSeek handle AbsoluteSeek $ fromIntegral $ offset * _WORD64_SIZE
     bytes <- B.hGet handle _WORD64_SIZE
     byteOffset <- case Binary.decodeOrFail $ LB.fromStrict bytes of

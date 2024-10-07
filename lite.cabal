@@ -18,6 +18,7 @@ common common
         GeneralizedNewtypeDeriving
         TypeApplications
         RankNTypes
+        NumericUnderscores
 
 executable lite
     import: common
@@ -58,6 +59,7 @@ test-suite lite-tests
     build-depends:
         base ^>=4.17.2.1
         , lite-lib
+        , async
         , bytestring
         , directory
         , filepath
