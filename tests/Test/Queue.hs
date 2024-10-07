@@ -1,7 +1,8 @@
 module Test.Queue (testQueues) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (async, wait)
+import Control.Concurrent.Async (async, wait, concurrently)
+import Control.Monad (replicateM)
 import Data.Char (isAscii)
 import qualified Data.Text as Text
 import Data.Text.Encoding (encodeUtf8)
@@ -76,10 +77,29 @@ testPartition with = do
             P.write partition two
 
       r <- async read'
-      threadDelay 5
-      _ <- async write'
+      _ <- async $ do
+        threadDelay 50
+        write'
       (one_, two_) <- wait r
       one_ `shouldBe` one
       two_ `shouldBe` two
+
+  it "reads concurrently" $
+    withTempPath $ \path ->
+    with path $ \partition -> do
+      let len = 10
+          selected = take len messages
+          read' =
+            P.seek partition Beginning $ \reader ->
+              replicateM len $ snd <$> P.read reader
+          write' =
+            traverse (P.write partition) selected
+
+      r <- async $ concurrently read' read'
+      _ <- async write'
+      (left, right) <- wait r
+      left `shouldBe` right
+      left `shouldBe` selected
+
   where
   withTempPath = withSystemTempDirectory "partition-XXXXX"
