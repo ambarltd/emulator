@@ -1,4 +1,8 @@
-module Queue.Partition.File where
+module Queue.Partition.File
+  ( FilePartition
+  , FileReader
+  , open
+  ) where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar)
 import Control.Concurrent.STM (TVar, readTVarIO, atomically, readTVar, retry, writeTVar, newTVarIO)
@@ -9,6 +13,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as Char8
 import qualified Data.ByteString.Lazy as LB
 import Data.Word (Word64)
+import GHC.Stack (HasCallStack)
 import System.IO
   ( Handle
   , hSeek
@@ -68,10 +73,10 @@ record. That's why this structure is targets unformatted JSON records.
 
 -}
 
-open :: FilePath -> String -> IO FilePartition
+open :: HasCallStack => FilePath -> String -> IO FilePartition
 open location name = do
-  let records = location </> name </> ".records"
-      index   = location </> name </> ".index"
+  let records = location </> name <> ".records"
+      index   = location </> name <> ".index"
   exists_records <- doesFileExist records
   exists_index <- doesFileExist index
   when (exists_records /= exists_index) $
@@ -94,6 +99,7 @@ open location name = do
     }
   where
     createIndex index = do
+      putStrLn "Creating index"
       -- The index file starts with an entry for the position of the zeroeth element.
       -- Therefore the index always contains one more entry than the records file.
       LB.writeFile index $ Binary.encode @Word64 0
@@ -122,8 +128,8 @@ _WORD64_SIZE = 8
 instance Partition FilePartition where
   type Reader FilePartition = FileReader
 
-  seek :: Position -> FilePartition -> (FileReader -> IO a) -> IO a
-  seek pos (FilePartition{..}) act =
+  seek :: FilePartition -> Position -> (FileReader -> IO a) -> IO a
+  seek (FilePartition{..}) pos act =
     case pos of
       At i -> readerFrom i
       Beginning -> readerFrom (Offset 0)
@@ -172,8 +178,8 @@ instance Partition FilePartition where
   getOffset :: FileReader -> IO Offset
   getOffset (FileReader var) = withMVar var $ return . r_next
 
-  write :: Record -> FilePartition -> IO ()
-  write (Record bs) (FilePartition{..}) = do
+  write :: FilePartition -> Record -> IO ()
+  write (FilePartition{..}) (Record bs)  = do
     when (Char8.elem '\n' bs) $
       error "FilePartition write: record contains newline character"
 

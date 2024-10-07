@@ -9,7 +9,7 @@ function run {
 }
 
 function test {
-  ./tests/test.sh
+  cabal run lite-tests -- "${@}"
 }
 
 function typecheck {
@@ -22,6 +22,12 @@ function typecheck-executable {
   # Start fast type-checking of the executable. (Just Main.hs)
   # Watches your files and type-checks on save
   ghcid -c 'cabal v2-repl' lite "${@}"
+}
+
+function typecheck-tests {
+  # Start fast type-checking of the executable. (Just Main.hs)
+  # Watches your files and type-checks on save
+  ghcid -c 'cabal v2-repl' lite-tests "${@}"
 }
 
 # If the first argument is a function run it.

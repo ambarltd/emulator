@@ -17,6 +17,7 @@ common common
         DerivingStrategies
         GeneralizedNewtypeDeriving
         TypeApplications
+        RankNTypes
 
 executable lite
     import: common
@@ -45,3 +46,23 @@ library lite-lib
         , stm
         , filepath
         , directory
+
+test-suite lite-tests
+    import: common
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
+    hs-source-dirs: tests
+    main-is: Tests.hs
+    other-modules:
+        Test.Queue
+    type:    exitcode-stdio-1.0
+    build-depends:
+        base ^>=4.17.2.1
+        , lite-lib
+        , bytestring
+        , directory
+        , filepath
+        , hspec
+        , HUnit
+        , QuickCheck
+        , temporary
+        , text
