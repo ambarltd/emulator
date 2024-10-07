@@ -37,7 +37,6 @@ library lite-lib
     ghc-options: -Wall -Werror -fprof-auto
     hs-source-dirs: src
     exposed-modules:
-        Control.Concurrent.Mutex
         Queue.Partition
         Queue.Partition.File
     build-depends:
