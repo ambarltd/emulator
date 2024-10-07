@@ -1,8 +1,8 @@
 module Queue.Partition.File where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar)
-import Control.Concurrent.STM (TVar, readTVarIO, atomically, readTVar, retry, writeTVar)
-import Control.Concurrent.Mutex (Mutex, withMutex)
+import Control.Concurrent.STM (TVar, readTVarIO, atomically, readTVar, retry, writeTVar, newTVarIO)
+import Control.Concurrent.Mutex (Mutex, withMutex, newMutex)
 import Control.Monad (unless, when)
 import qualified Data.Binary as Binary
 import qualified Data.ByteString as B
@@ -16,6 +16,8 @@ import System.IO
   , IOMode(..)
   , SeekMode(..)
   )
+import System.Directory (doesFileExist, getFileSize)
+import System.FilePath ((</>))
 
 import Queue.Partition
 
@@ -66,6 +68,43 @@ record. That's why this structure is targets unformatted JSON records.
 
 -}
 
+open :: FilePath -> String -> IO FilePartition
+open location name = do
+  let records = location </> name </> ".records"
+      index   = location </> name </> ".index"
+  exists_records <- doesFileExist records
+  exists_index <- doesFileExist index
+  when (exists_records /= exists_index) $
+    if not exists_records
+    then error $ "Missing records file: " <> records
+    else error $ "Missing index file: " <> index
+
+  (count, size) <-
+    if not exists_index
+    then createIndex index
+    else loadIndex index
+
+  mutex <- newMutex
+  var <- newTVarIO (count, size)
+  return FilePartition
+    { p_records = records
+    , p_index = index
+    , p_lock = mutex
+    , p_info = var
+    }
+  where
+    createIndex index = do
+      -- The index file starts with an entry for the position of the zeroeth element.
+      -- Therefore the index always contains one more entry than the records file.
+      LB.writeFile index $ Binary.encode @Word64 0
+      return (Count 0, Bytes 0)
+
+    loadIndex index = do
+      indexSize <- fromIntegral <$> getFileSize index
+      let count = (indexSize `div` _WORD64_SIZE) - 1
+      byteOffsetOfNextEntry <- readIndexEntry index (Offset count)
+      return (Count count, byteOffsetOfNextEntry)
+
 -- A single-threaded file readed.
 newtype FileReader = FileReader (MVar ReaderInfo)
 
@@ -89,22 +128,16 @@ instance Partition FilePartition where
       At i -> readerFrom i
       Beginning -> readerFrom (Offset 0)
       End -> do
-        (Count len, _) <- readTVarIO p_info
-        readerFrom $ Offset $ len - 1
+        (Count count, _) <- readTVarIO p_info
+        readerFrom $ Offset $ count - 1
     where
-    readerFrom ix =  do
+    readerFrom offset =  do
       (Count len, _) <- readTVarIO p_info
-      offset <- withFile p_index ReadMode $ \handle -> do
-        hSeek handle AbsoluteSeek $ fromIntegral $ len * _WORD64_SIZE
-        bytes <- B.hGet handle _WORD64_SIZE
-        case Binary.decodeOrFail $ LB.fromStrict bytes of
-          Left (_,_,err) -> error $ "FilePartition: Error reading index: " <> err
-          Right  (_,_,n) -> return n
-
+      Bytes byteOffset <- readIndexEntry p_index offset
       withFile p_records ReadMode $ \handle -> do
-        hSeek handle AbsoluteSeek offset
+        hSeek handle AbsoluteSeek (fromIntegral byteOffset)
         var <- newMVar $ ReaderInfo
-          { r_next = ix
+          { r_next = offset
           , r_handle = handle
           , r_length = len
           , r_info = p_info
@@ -156,3 +189,13 @@ instance Partition FilePartition where
       LB.appendFile p_records entry
       LB.appendFile p_index entryByteOffset
       atomically $ writeTVar p_info (Count newCount, Bytes newSize)
+
+readIndexEntry :: FilePath -> Offset -> IO Bytes
+readIndexEntry path (Offset offset)  =
+  withFile path ReadMode $ \handle -> do
+    hSeek handle AbsoluteSeek $ fromIntegral $ offset * _WORD64_SIZE
+    bytes <- B.hGet handle _WORD64_SIZE
+    byteOffset <- case Binary.decodeOrFail $ LB.fromStrict bytes of
+      Left (_,_,err) -> error $ "FilePartition: Error reading index: " <> err
+      Right  (_,_,n) -> return n
+    return $ Bytes byteOffset
