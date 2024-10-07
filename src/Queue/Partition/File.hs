@@ -119,6 +119,9 @@ withFilePartition location name act = do
       byteOffsetOfNextEntry <- readIndexEntry index (Offset count)
       return (Count count, byteOffsetOfNextEntry)
 
+-- | GHC's implementation prevents the overlapping acquisition of write and
+-- read handles for files. And write handles are exclusive.
+-- To support reads in parallel to writes we need to use a lower level abstraction.
 withNonLockingWritableFD :: FilePath -> (FD -> IO a) -> IO a
 withNonLockingWritableFD path act = bracket open close act
   where
