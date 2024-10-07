@@ -3,7 +3,7 @@ module Queue.Partition.File where
 import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar)
 import Control.Concurrent.STM (TVar, readTVarIO, atomically, readTVar, retry, writeTVar)
 import Control.Concurrent.Mutex (Mutex, withMutex)
-import Control.Monad (void, replicateM_, when)
+import Control.Monad (when)
 import qualified Data.Binary as Binary
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as Char8
@@ -11,7 +11,7 @@ import qualified Data.ByteString.Lazy as LB
 import Data.Int (Int64)
 import System.IO
   ( Handle
-  , openFile
+  , hSeek
   , withFile
   , IOMode(..)
   , SeekMode(..)
@@ -31,8 +31,8 @@ import Queue.Partition
 data FilePartition = FilePartition
   { p_records:: FilePath
   , p_index :: FilePath
-  , p_writeLock :: Mutex
-  , p_end :: TVar Index
+  , p_lock :: Mutex  -- ^ write lock
+  , p_length :: TVar Int -- ^ record count
   }
 
 {-| Note [File Partition Design]
@@ -63,53 +63,65 @@ record. That's why this structure is targets unformatted JSON records.
 newtype FileReader = FileReader (MVar ReaderInfo)
 
 data ReaderInfo = ReaderInfo
-  { r_position :: Index
+  { r_position :: Index -- ^ index of next record to be read
   , r_handle :: Handle
-  , r_end :: Index -- partition end last time we checked.
-  , r_partitionEnd :: TVar Index
+  , r_length :: Int -- ^ cached partition length
+  , r_liveLength :: TVar Int
   }
+
+-- | Size in bytes of 64 bits unsigned integer.
+_WORD64_SIZE :: Int
+_WORD64_SIZE = 8
 
 instance Partition FilePartition where
   type Reader FilePartition = FileReader
 
-  seek :: Position -> FilePartition -> IO FileReader
-  seek pos (FilePartition{..}) = case pos of
-    At i -> readerFrom i
-    Beginning -> readerFrom (Index 0)
-    End -> readerFrom =<< readTVarIO p_end
+  seek :: Position -> FilePartition -> (FileReader -> IO a) -> IO a
+  seek pos (FilePartition{..}) act =
+    case pos of
+      At i -> readerFrom i
+      Beginning -> readerFrom (Index 0)
+      End -> do
+        len <- readTVarIO p_length
+        readerFrom $ Index $ len - 1
     where
-    readerFrom (Index i) =  do
-      handle <- openFile p_records ReadMode
-      skip i handle
-      end <- readTVarIO p_end
-      var <- newMVar $ ReaderInfo
-        { r_position = Index i
-        , r_handle = handle
-        , r_end = end
-        , r_partitionEnd = p_end
-        }
-      return $ FileReader var
+    readerFrom ix =  do
+      len <- readTVarIO p_length
+      offset <- withFile p_index ReadMode $ \handle -> do
+        hSeek handle AbsoluteSeek $ fromIntegral $ len * _WORD64_SIZE
+        bytes <- B.hGet handle _WORD64_SIZE
+        case Binary.decodeOrFail $ LB.fromStrict bytes of
+          Left (_,_,err) -> error $ "FilePartition: Error reading index: " <> err
+          Right  (_,_,n) -> return n
 
-    skip n h = replicateM_ n $ void $ Char8.hGetLine h
+      withFile p_records ReadMode $ \handle -> do
+        hSeek handle AbsoluteSeek offset
+        var <- newMVar $ ReaderInfo
+          { r_position = ix
+          , r_handle = handle
+          , r_length = len
+          , r_liveLength = p_length
+          }
+        act $ FileReader var
 
   -- | Reads one record and advances the Reader.
   -- Blocks if there are no more records.
   read :: FileReader -> IO Record
   read (FileReader var) =
     modifyMVar var $ \ReaderInfo{..} -> do
-      end <- if r_end >= r_position
-         then return r_end
+      end <- if r_length >= r_position
+         then return r_length
          else do
            atomically $ do
-             n <- readTVar r_partitionEnd
+             n <- readTVar r_liveLength
              when (n == r_position) retry
              return n
       record <- Record <$> Char8.hGetLine r_handle
       let info = ReaderInfo
             { r_position = r_position + 1
             , r_handle = r_handle
-            , r_end = end
-            , r_partitionEnd = r_partitionEnd
+            , r_length = end
+            , r_liveLength = r_liveLength
             }
       return (info, record)
 
