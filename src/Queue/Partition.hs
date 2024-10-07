@@ -1,6 +1,6 @@
 module Queue.Partition where
 
-import Data.ByteString.Lazy (ByteString)
+import Data.ByteString (ByteString)
 
 data Position
   = At Index
@@ -21,6 +21,6 @@ class Partition a where
   -- Blocks if there are no more records.
   read :: Reader a -> IO Record
 
-  getIndex :: Reader a -> Index
+  getIndex :: Reader a -> IO Index
 
   write :: Record -> a -> IO ()

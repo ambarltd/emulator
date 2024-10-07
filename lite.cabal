@@ -16,6 +16,7 @@ common common
         InstanceSigs
         DerivingStrategies
         GeneralizedNewtypeDeriving
+        TypeApplications
 
 executable lite
     import: common
@@ -40,4 +41,5 @@ library lite-lib
     build-depends:
         base ^>=4.17.2.1
         , bytestring
+        , binary
         , stm
