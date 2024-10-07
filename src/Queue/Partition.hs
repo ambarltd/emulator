@@ -3,11 +3,11 @@ module Queue.Partition where
 import Data.ByteString (ByteString)
 
 data Position
-  = At Index
+  = At Offset
   | Beginning
   | End
 
-newtype Index = Index Int
+newtype Offset = Offset { unOffset :: Int }
   deriving Show
   deriving newtype (Num, Eq, Ord)
 
@@ -19,8 +19,8 @@ class Partition a where
   seek :: Position -> a -> (Reader a -> IO b) -> IO b
   -- | Reads one record and advances the Reader.
   -- Blocks if there are no more records.
-  read :: Reader a -> IO Record
+  read :: Reader a -> IO (Offset, Record)
 
-  getIndex :: Reader a -> IO Index
+  getOffset :: Reader a -> IO Offset
 
   write :: Record -> a -> IO ()
