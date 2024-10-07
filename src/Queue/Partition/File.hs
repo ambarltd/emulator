@@ -39,7 +39,7 @@ import Queue.Partition
 --  * Allow users to inspect the partition file in a text editor. One entry per line.
 --  * Fast sequential reading
 --  * Fast seek to position
---  * Support concurrent reads
+--  * Support parallel reads
 --
 -- Concurrent writes are not supported.
 data FilePartition = FilePartition
@@ -65,7 +65,7 @@ This allow for fast sequential consumption as we can just go through the file
 reading line by line.
 
 The only write operation allowed on the records file is to append a new record.
-This allows for safe concurrent reads and for reads to happen concurrently with
+This allows for safe parallel reads and for reads to happen concurrently with
 writing.
 
 To allow for fast seeks (jump to the nth entry) we use an index file. The index
