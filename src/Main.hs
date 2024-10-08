@@ -3,12 +3,10 @@ module Main where
 import qualified Options.Applicative as O
 import qualified Options.Applicative.Help.Pretty as OP
 
-import Lib (placeholder)
-
 main :: IO ()
 main = do
   Options <- O.execParser cliOptions
-  putStrLn placeholder
+  putStrLn "Done"
 
 data Options = Options
 
