@@ -30,7 +30,7 @@ import System.IO
   , IOMode(..)
   , SeekMode(..)
   )
-import System.Directory (doesFileExist, getFileSize)
+import System.Directory (doesFileExist, getFileSize, removeFile)
 import System.FilePath ((</>))
 
 import Queue.Partition
@@ -47,6 +47,7 @@ import Queue.Partition
 data FilePartition = FilePartition
   { p_records:: FilePath
   , p_index :: FilePath
+  , p_lock :: FilePath
   , p_handles :: MVar (Maybe (FD.FD, FD.FD))
       -- ^ write handles (records, index)
       -- is Nothing when file partition is closed
@@ -82,6 +83,9 @@ As a consequence of the 'readable in a text editor' requirement, the '\n'
 character is used as the record separator and is therefore not allowed in the
 record. That's why this structure is targets unformatted JSON records.
 
+We create a lock file to prevent a partition to be opened more than once from
+the same or different processes.
+
 -}
 
 withFilePartition :: FilePath -> String -> (FilePartition -> IO a) -> IO a
@@ -91,12 +95,14 @@ open :: FilePath -> String -> IO FilePartition
 open location name = do
   let records = location </> name <> ".records"
       index   = location </> name <> ".index"
-  exists <- checkExistence records index
+      lock    = location </> name <> ".lock"
+  exists <- checkExistence records index lock
   (count, size) <-
     if not exists
     then createIndex index
     else loadIndex index
 
+  writeFile lock "locked"
   fd_records <- openNonLockingWritableFD records
   fd_index <- openNonLockingWritableFD index
   handles <- newMVar $ Just (fd_records, fd_index)
@@ -104,13 +110,17 @@ open location name = do
   return FilePartition
     { p_records = records
     , p_index = index
+    , p_lock = lock
     , p_handles = handles
     , p_info = var
     }
   where
-    checkExistence records index = do
+    checkExistence records index lock = do
       exists_records <- doesFileExist records
       exists_index <- doesFileExist index
+      exists_lock <- doesFileExist lock
+      when exists_lock $
+        error $ "Lock found. Partition already open: " <> lock
       when (exists_records /= exists_index) $
         if not exists_records
         then error $ "Missing records file: " <> records
@@ -131,10 +141,10 @@ open location name = do
 
 close :: FilePartition -> IO ()
 close FilePartition{..} =
-  modifyMVar_ p_handles $ \mhandles ->
-  case mhandles of
+  modifyMVar_ p_handles $ \case
     Nothing -> return Nothing -- already closed
     Just (fd_records, fd_index) -> do
+      removeFile p_lock
       closeNonLockingWritableFD fd_records
       closeNonLockingWritableFD fd_index
       return Nothing
