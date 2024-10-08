@@ -10,13 +10,76 @@ common common
     default-language: Haskell2010
     default-extensions:
         OverloadedStrings
+        TypeFamilies
+        TypeFamilyDependencies
+        RecordWildCards
+        InstanceSigs
+        DerivingStrategies
+        GeneralizedNewtypeDeriving
+        TypeApplications
+        RankNTypes
+        NumericUnderscores
+        BangPatterns
 
 executable lite
     import: common
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
     main-is:          src/Main.hs
     other-modules:
     build-depends:
         base ^>=4.17.2.1
+        , lite-lib
         , prettyprinter
         , prettyprinter-ansi-terminal
         , optparse-applicative
+
+library lite-lib
+    import: common
+    ghc-options: -Wall -Werror -fprof-auto
+    hs-source-dirs: src
+    exposed-modules:
+        Queue.Partition
+        Queue.Partition.File
+    build-depends:
+        base ^>=4.17.2.1
+        , bytestring
+        , binary
+        , stm
+        , filepath
+        , directory
+
+test-suite lite-tests
+    import: common
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
+    hs-source-dirs: tests
+    main-is: Tests.hs
+    other-modules:
+        Test.Queue
+    type:    exitcode-stdio-1.0
+    build-depends:
+        base ^>=4.17.2.1
+        , lite-lib
+        , async
+        , bytestring
+        , directory
+        , filepath
+        , hspec
+        , HUnit
+        , QuickCheck
+        , temporary
+        , text
+
+benchmark lite-bench
+  import: common
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
+  type:    exitcode-stdio-1.0
+  main-is: benchmarks/Benchmarks.hs
+  build-depends:
+        base ^>=4.17.2.1
+        , lite-lib
+        , async
+        , bytestring
+        , criterion
+        , temporary
+        , text
+        , time

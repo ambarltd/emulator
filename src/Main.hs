@@ -6,7 +6,7 @@ import qualified Options.Applicative.Help.Pretty as OP
 main :: IO ()
 main = do
   Options <- O.execParser cliOptions
-  putStrLn "Ambar Lite"
+  putStrLn "Done"
 
 data Options = Options
 
