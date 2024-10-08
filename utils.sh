@@ -12,6 +12,16 @@ function test {
   cabal run lite-tests -- "${@}"
 }
 
+function bench {
+  cabal run lite-bench -- "${@}"
+}
+
+# Save results of benchmarking
+function bench-save {
+  cabal build lite-bench
+  cabal run lite-bench -- "${@}" | tee ./benchmarks/benchmarks.log
+}
+
 function typecheck {
   # Start fast type-checking of the library. (Everything but Main.hs)
   # Watches your files and type-checks on save
@@ -28,6 +38,12 @@ function typecheck-tests {
   # Start fast type-checking of the executable. (Just Main.hs)
   # Watches your files and type-checks on save
   ghcid -c 'cabal v2-repl' lite-tests "${@}"
+}
+
+function typecheck-bench {
+  # Start fast type-checking of the executable. (Just Main.hs)
+  # Watches your files and type-checks on save
+  ghcid -c 'cabal v2-repl' lite-bench "${@}"
 }
 
 # If the first argument is a function run it.

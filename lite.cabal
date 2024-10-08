@@ -19,6 +19,7 @@ common common
         TypeApplications
         RankNTypes
         NumericUnderscores
+        BangPatterns
 
 executable lite
     import: common
@@ -67,3 +68,18 @@ test-suite lite-tests
         , QuickCheck
         , temporary
         , text
+
+benchmark lite-bench
+  import: common
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
+  type:    exitcode-stdio-1.0
+  main-is: benchmarks/Benchmarks.hs
+  build-depends:
+        base ^>=4.17.2.1
+        , lite-lib
+        , async
+        , bytestring
+        , criterion
+        , temporary
+        , text
+        , time
