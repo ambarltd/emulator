@@ -44,7 +44,10 @@ library lite-lib
         base ^>=4.17.2.1
         , bytestring
         , binary
+        , containers
+        , unordered-containers
         , stm
+        , text
         , filepath
         , directory
 

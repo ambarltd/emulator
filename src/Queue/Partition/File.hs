@@ -2,9 +2,11 @@ module Queue.Partition.File
   ( FilePartition
   , FileReader
   , withFilePartition
+  , open
+  , close
   ) where
 
-import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar)
+import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar, modifyMVar_)
 import Control.Concurrent.STM (TVar, readTVarIO, atomically, readTVar, retry, writeTVar, newTVarIO)
 import Control.Exception (bracket)
 import Control.Monad (void, unless, when)
@@ -15,12 +17,12 @@ import qualified Data.ByteString.Unsafe as B (unsafeUseAsCStringLen)
 import qualified Data.ByteString.Char8 as Char8
 import qualified Data.ByteString.Lazy as LB
 import Data.Coerce (coerce)
+import Data.Maybe (fromMaybe)
 import Data.Word (Word64)
 import GHC.IO.Handle (hLock, LockMode(..))
 import GHC.IO.FD (FD)
 import qualified GHC.IO.FD as FD
 import qualified GHC.IO.Device as FD
-import GHC.Stack (HasCallStack)
 import System.IO
   ( Handle
   , hSeek
@@ -45,7 +47,9 @@ import Queue.Partition
 data FilePartition = FilePartition
   { p_records:: FilePath
   , p_index :: FilePath
-  , p_handles :: MVar (FD.FD, FD.FD) -- ^ write lock. (records, index)
+  , p_handles :: MVar (Maybe (FD.FD, FD.FD))
+      -- ^ write handles (records, index)
+      -- is Nothing when file partition is closed
   , p_info :: TVar (Count, Bytes) -- ^ record count and size
   }
 
@@ -80,33 +84,39 @@ record. That's why this structure is targets unformatted JSON records.
 
 -}
 
-withFilePartition :: HasCallStack => FilePath -> String -> (FilePartition -> IO a) -> IO a
-withFilePartition location name act = do
+withFilePartition :: FilePath -> String -> (FilePartition -> IO a) -> IO a
+withFilePartition location name = bracket (open location name) close
+
+open :: FilePath -> String -> IO FilePartition
+open location name = do
   let records = location </> name <> ".records"
       index   = location </> name <> ".index"
-  exists_records <- doesFileExist records
-  exists_index <- doesFileExist index
-  when (exists_records /= exists_index) $
-    if not exists_records
-    then error $ "Missing records file: " <> records
-    else error $ "Missing index file: " <> index
-
+  exists <- checkExistence records index
   (count, size) <-
-    if not exists_index
+    if not exists
     then createIndex index
     else loadIndex index
 
-  withNonLockingWritableFD records $ \fd_records ->
-    withNonLockingWritableFD index $ \fd_index -> do
-    lock <- newMVar (fd_records, fd_index)
-    var <- newTVarIO (count, size)
-    act FilePartition
-      { p_records = records
-      , p_index = index
-      , p_handles = lock
-      , p_info = var
-      }
+  fd_records <- openNonLockingWritableFD records
+  fd_index <- openNonLockingWritableFD index
+  handles <- newMVar $ Just (fd_records, fd_index)
+  var <- newTVarIO (count, size)
+  return FilePartition
+    { p_records = records
+    , p_index = index
+    , p_handles = handles
+    , p_info = var
+    }
   where
+    checkExistence records index = do
+      exists_records <- doesFileExist records
+      exists_index <- doesFileExist index
+      when (exists_records /= exists_index) $
+        if not exists_records
+        then error $ "Missing records file: " <> records
+        else error $ "Missing index file: " <> index
+      return exists_records
+
     createIndex index = do
       -- The index file starts with an entry for the position of the zeroeth element.
       -- Therefore the index always contains one more entry than the records file.
@@ -119,18 +129,27 @@ withFilePartition location name act = do
       byteOffsetOfNextEntry <- readIndexEntry index (Offset count)
       return (Count count, byteOffsetOfNextEntry)
 
+close :: FilePartition -> IO ()
+close FilePartition{..} =
+  modifyMVar_ p_handles $ \mhandles ->
+  case mhandles of
+    Nothing -> return Nothing -- already closed
+    Just (fd_records, fd_index) -> do
+      closeNonLockingWritableFD fd_records
+      closeNonLockingWritableFD fd_index
+      return Nothing
+
 -- | GHC's implementation prevents the overlapping acquisition of write and
 -- read handles for files. And write handles are exclusive.
 -- To support reads in parallel to writes we need to use a lower level abstraction.
-withNonLockingWritableFD :: FilePath -> (FD -> IO a) -> IO a
-withNonLockingWritableFD path act = bracket open close act
-  where
-  open = do
+openNonLockingWritableFD :: FilePath -> IO FD
+openNonLockingWritableFD path = do
     (fd, _) <- FD.openFile path AppendMode True
     FD.release fd
     return fd
-  close = FD.close
 
+closeNonLockingWritableFD :: FD -> IO ()
+closeNonLockingWritableFD = FD.close
 
 -- A single-threaded file readed.
 newtype FileReader = FileReader (MVar ReaderInfo)
@@ -205,7 +224,10 @@ instance Partition FilePartition where
     when (Char8.elem '\n' bs) $
       error "FilePartition write: record contains newline character"
 
-    withMVar p_handles $ \(fd_records, fd_index) -> do
+    withMVar p_handles $ \mhandles -> do
+      let (fd_records, fd_index) = fromMaybe
+              (error "FilePartition: writing to closed partition")
+              mhandles
       (Count count, Bytes partitionSize) <- readTVarIO p_info
 
       let entry = bs <> "\n"
