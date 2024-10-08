@@ -4,49 +4,61 @@ import Control.Monad (forM)
 import Control.Concurrent (MVar, modifyMVar)
 import Data.Bifunctor (second)
 import Data.ByteString (ByteString)
-import Data.Hashable (Hashable)
+import Data.Hashable (Hashable(..))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Text (Text)
 
-import Queue.Partition (Offset)
+import Queue.Partition (Partition, Offset, Record(..))
 import qualified Queue.Partition as P
 
-newtype Topic = Topic Text
+newtype Topic = Topic { unTopic :: Text }
   deriving newtype (Eq, Ord, Hashable)
 
-newtype Partition = Partition Int
+newtype PartitionNumber = PartitionNumber { unPartitionNumber :: Int }
   deriving newtype (Eq, Ord, Hashable)
 
 data Meta = Meta
   { meta_topic :: Topic
-  , meta_partition :: Partition
+  , meta_partition :: PartitionNumber
   , meta_offset :: Offset
   }
 
 data PartitionInstance =
-  forall a. P.Partition a => PartitionInstance a
+  forall a. Partition a => PartitionInstance a
 
 newtype Inventory = Inventory
-  (HashMap Topic (HashMap Partition (Maybe PartitionInstance)))
+  (HashMap Topic (HashMap PartitionNumber (Maybe PartitionInstance)))
 
 data Consumer = Consumer
 
-newtype Producer = Producer (HashMap Partition PartitionInstance)
+data Producer a = Producer
+  { p_topic :: Topic
+  , p_partitions :: HashMap PartitionNumber PartitionInstance
+  , p_select :: a -> PartitionNumber
+  , p_encode :: a -> Record
+  }
 
 data Queue = Queue
-  { q_openPartition :: Topic -> Partition -> IO PartitionInstance
+  { q_openPartition :: Topic -> PartitionNumber -> IO PartitionInstance
   , q_partitionsPerTopic :: Int
   , q_inventory :: MVar Inventory
   }
 
-withProducer :: Queue -> Topic -> (Producer -> IO b) -> IO b
-withProducer Queue{..} topic act = do
+withProducer
+  :: Hashable b
+  => Queue
+  -> Topic
+  -> (a -> b)              -- ^ partitioner
+  -> (a -> ByteString)     -- ^ encoder
+  -> (Producer a -> IO b)
+  -> IO b
+withProducer Queue{..} topic partitioner encode act = do
   partitions <- modifyMVar q_inventory $ \(Inventory inventory) -> do
     partitions <- case HashMap.lookup topic inventory of
       Nothing ->
         forM [0 .. q_partitionsPerTopic - 1] $ \n ->
-          (Partition n,) <$> q_openPartition topic (Partition n)
+          (PartitionNumber n,) <$> q_openPartition topic (PartitionNumber n)
       Just ps ->
         forM (HashMap.toList ps) $ \(pid, mp) ->
           (pid,) <$> maybe (q_openPartition topic pid) return mp
@@ -57,13 +69,28 @@ withProducer Queue{..} topic act = do
         inventory
       , partitions
       )
-  act (Producer $ HashMap.fromList partitions)
+  act $ Producer
+    { p_topic = topic
+    , p_partitions = HashMap.fromList partitions
+    , p_select = PartitionNumber . (`mod` q_partitionsPerTopic) . hash . partitioner
+    , p_encode = Record . encode
+    }
 
-write :: Producer -> ByteString -> IO ()
-write = undefined
+write :: Producer a -> a -> IO ()
+write Producer{..} msg = do
+  PartitionInstance partition <- maybe err return (HashMap.lookup pid p_partitions)
+  P.write partition (p_encode msg)
+  where
+  pid = p_select msg
+  err = error $ unwords
+    [ "Queue: unknown partition"
+    <> show (unPartitionNumber pid)
+    <> "on topic"
+    <> show (unTopic p_topic)
+    ]
 
 withConsumer :: Queue -> (Consumer -> IO b) -> IO b
-withConsumer  = undefined
+withConsumer = undefined
 
 -- | blocks until there is a message.
 read :: Consumer -> IO (ByteString, Meta)
