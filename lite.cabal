@@ -21,6 +21,8 @@ common common
         NumericUnderscores
         BangPatterns
         LambdaCase
+        TupleSections
+        ExistentialQuantification
 
 executable lite
     import: common
@@ -39,6 +41,7 @@ library lite-lib
     ghc-options: -Wall -Werror -fprof-auto
     hs-source-dirs: src
     exposed-modules:
+        Queue
         Queue.Partition
         Queue.Partition.File
     build-depends:
@@ -46,11 +49,12 @@ library lite-lib
         , bytestring
         , binary
         , containers
-        , unordered-containers
+        , directory
+        , filepath
+        , hashable
         , stm
         , text
-        , filepath
-        , directory
+        , unordered-containers
 
 test-suite lite-tests
     import: common
