@@ -13,7 +13,7 @@
 
 import Prelude hiding (read)
 
-import Control.Concurrent.Async (mapConcurrently)
+import Control.Concurrent.Async (mapConcurrently, forConcurrently_)
 import Control.Concurrent.STM
   ( STM
   , TVar
@@ -145,7 +145,7 @@ withConsumer topic@Topic{..} gname act = do
   let isNewGroup = HashMap.null (g_offsets group)
   when isNewGroup initialise
   cid <- ConsumerId <$> newUUID
-  bracket (rebalanceAdd cid) rebalanceRemove act
+  bracket (rebalanceAdd cid) (const $ rebalanceRemove cid) act
   where
     initialise = do
       readers <- mapConcurrently mkReader $ HashMap.toList t_partitions
@@ -186,7 +186,7 @@ withConsumer topic@Topic{..} gname act = do
       forM_ (zip cids readerLists) $ \(c, readers) ->
         case HashMap.lookup c (g_consumers group) of
           Nothing -> error "rebalancing: missing consumer id"
-          Just (Consumer _ rvar) -> writeTVar rvar readers
+          Just (Consumer _ rvar) -> writeTVar rvar (cycle readers)
 
     rebalanceAdd :: ConsumerId -> IO Consumer
     rebalanceAdd cid = atomically $ do
@@ -211,9 +211,34 @@ withConsumer topic@Topic{..} gname act = do
         writeTVar t_cgroups $ HashMap.insert gname groupUpdated groups
         return newConsumer
 
+    rebalanceRemove :: ConsumerId -> IO ()
+    rebalanceRemove cid = do
+      clearReaders <- atomically $ do
+        clearReaders <- removeConsumer
+        rebalance gname
+        return clearReaders
+      forM_ clearReaders $ \readers ->
+        forConcurrently_ readers $ \ReaderInstance{..} ->
+          closeReader r_reader
+      where
+      removeConsumer = do
+        groups <- readTVar t_cgroups
+        let group = groups HashMap.! gname
+            remaining = HashMap.delete cid (g_consumers group)
+            group' = group
+              { g_readers =
+                  if HashMap.null remaining
+                    then Nothing
+                    else g_readers group
+              , g_consumers = remaining
+              }
 
-    rebalanceRemove :: Consumer -> IO ()
-    rebalanceRemove (Consumer _ _) = undefined
+        writeTVar t_cgroups $ HashMap.insert gname group' groups
+
+        return $ if HashMap.null remaining
+          then g_readers group
+          else Nothing
+
 
 data Meta = Meta Offset PartitionNumber
 
