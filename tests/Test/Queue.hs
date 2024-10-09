@@ -42,7 +42,7 @@ testPartition with = do
       one : two : _ <- return messages
       P.write partition one
       P.write partition two
-      P.seek partition Beginning $ \reader -> do
+      P.withReader partition Beginning $ \reader -> do
         (o1, one_) <- P.read reader
         o1 `shouldBe` 0
         (o2, two_) <- P.read reader
@@ -57,7 +57,7 @@ testPartition with = do
         P.write partition one
         P.write partition two
       with path $ \partition ->
-        P.seek partition Beginning $ \reader -> do
+        P.withReader partition Beginning $ \reader -> do
           (_, one_) <- P.read reader
           (_, two_) <- P.read reader
           one_ `shouldBe` one
@@ -68,7 +68,7 @@ testPartition with = do
     with path $ \partition -> do
       one : two : _ <- return messages
       let read' =
-            P.seek partition Beginning $ \reader -> do
+            P.withReader partition Beginning $ \reader -> do
             (_, one_) <- P.read reader
             (_, two_) <- P.read reader
             return (one_, two_)
@@ -90,7 +90,7 @@ testPartition with = do
       let len = 10
           selected = take len messages
           read' =
-            P.seek partition Beginning $ \reader ->
+            P.withReader partition Beginning $ \reader ->
               replicateM len $ snd <$> P.read reader
           write' =
             traverse (P.write partition) selected

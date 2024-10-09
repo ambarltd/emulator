@@ -6,7 +6,7 @@ module Queue.Partition.File
   , close
   ) where
 
-import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar, modifyMVar_)
+import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar, modifyMVar_, readMVar)
 import Control.Concurrent.STM (TVar, readTVarIO, atomically, readTVar, retry, writeTVar, newTVarIO)
 import Control.Exception (bracket)
 import Control.Monad (void, unless, when)
@@ -27,6 +27,8 @@ import System.IO
   ( Handle
   , hSeek
   , withFile
+  , openFile
+  , hClose
   , IOMode(..)
   , SeekMode(..)
   )
@@ -45,7 +47,8 @@ import Queue.Partition
 --
 -- Concurrent writes are not supported.
 data FilePartition = FilePartition
-  { p_records:: FilePath
+  { p_name :: PartitionName
+  , p_records:: FilePath
   , p_index :: FilePath
   , p_lock :: FilePath
   , p_handles :: MVar (Maybe (FD.FD, FD.FD))
@@ -53,6 +56,8 @@ data FilePartition = FilePartition
       -- is Nothing when file partition is closed
   , p_info :: TVar (Count, Bytes) -- ^ record count and size
   }
+
+newtype PartitionName = PartitionName { unPartitionName :: String }
 
 -- | Size in bytes
 newtype Bytes = Bytes Word64
@@ -108,7 +113,8 @@ open location name = do
   handles <- newMVar $ Just (fd_records, fd_index)
   var <- newTVarIO (count, size)
   return FilePartition
-    { p_records = records
+    { p_name = PartitionName name
+    , p_records = records
     , p_index = index
     , p_lock = lock
     , p_handles = handles
@@ -162,13 +168,13 @@ closeNonLockingWritableFD :: FD -> IO ()
 closeNonLockingWritableFD = FD.close
 
 -- A single-threaded file readed.
-newtype FileReader = FileReader (MVar ReaderInfo)
+data FileReader = FileReader PartitionName (MVar ReaderInfo)
 
 data ReaderInfo = ReaderInfo
   { r_next :: Offset -- ^ offset of next record to be read
-  , r_handle :: Handle
+  , r_handle :: Maybe Handle -- ^ Nothing if reader is closed
   , r_length :: Int -- ^ cached partition length
-  , r_info :: TVar (Count, Bytes) -- ^ record count and size of partition.
+  , r_partition :: FilePartition
   }
 
 -- | Size in bytes of 64 bits unsigned integer.
@@ -178,56 +184,83 @@ _WORD64_SIZE = 8
 instance Partition FilePartition where
   type Reader FilePartition = FileReader
 
-  seek :: FilePartition -> Position -> (FileReader -> IO a) -> IO a
-  seek (FilePartition{..}) pos act =
-    case pos of
-      At i -> readerFrom i
-      Beginning -> readerFrom (Offset 0)
-      End -> do
-        (Count count, _) <- readTVarIO p_info
-        readerFrom $ Offset $ count - 1
-    where
-    readerFrom offset =  do
-      (Count len, _) <- readTVarIO p_info
-      Bytes byteOffset <- readIndexEntry p_index offset
-      withFile p_records ReadMode $ \handle -> do
-        hLock handle SharedLock
-        hSeek handle AbsoluteSeek (fromIntegral byteOffset)
-        var <- newMVar $ ReaderInfo
-          { r_next = offset
-          , r_handle = handle
-          , r_length = len
-          , r_info = p_info
-          }
-        act $ FileReader var
+  openReader :: FilePartition -> IO FileReader
+  openReader p@(FilePartition{..}) = do
+    (Count len, _) <- readTVarIO p_info
+    handle <- openFile p_records ReadMode
+    hLock handle SharedLock
+    var <- newMVar $ ReaderInfo
+      { r_next = Offset 0
+      , r_handle = Just handle
+      , r_length = len
+      , r_partition = p
+      }
+    return $ FileReader p_name var
+
+  closeReader :: FileReader -> IO ()
+  closeReader (FileReader _ var) = do
+    modifyMVar_ var $ \info -> do
+      maybe (return ()) hClose (r_handle info)
+      return info { r_handle = Nothing }
+
+  seek :: FileReader -> Position -> IO ()
+  seek (FileReader _ var) pos = do
+    ReaderInfo{..} <- readMVar var
+    (Count count, _) <- readTVarIO $ p_info r_partition
+    let offset = case pos of
+          At (Offset o) -> o
+          Beginning -> 0
+          End -> count - 1
+    if pos == At r_next
+      then return ()
+      else do
+        when (offset > count) $
+          throwErr r_partition $ unwords
+            [ "seek: offset out of bounds."
+            , "Entries:", show count
+            , "Offset:", show offset
+            ]
+        case r_handle of
+          Nothing ->
+            throwErr r_partition "seek: closed reader."
+          Just handle -> do
+            Bytes byteOffset <- readIndexEntry (p_index r_partition) (Offset offset)
+            hSeek handle AbsoluteSeek (fromIntegral byteOffset)
 
   -- | Reads one record and advances the Reader.
   -- Blocks if there are no more records.
   read :: FileReader -> IO (Offset, Record)
-  read (FileReader var) = do
+  read (FileReader _ var) = do
     modifyMVar var $ \ReaderInfo{..} -> do
+      handle <- case r_handle of
+        Nothing -> error $ unwords
+            [ "FilePartition: read: closed reader."
+            , "Partition:", unPartitionName (p_name r_partition)
+            ]
+        Just h -> return h
+
       let offset = r_next -- offset to be read.
       len <- if r_length > unOffset offset
         then return r_length
         else do
           atomically $ do
-            (Count newLen, _) <- readTVar r_info
+            (Count newLen, _) <- readTVar (p_info r_partition)
             -- block till there are more elements to read.
             unless (newLen > unOffset offset) retry
             return newLen
 
-      record <- Record <$> Char8.hGetLine r_handle
+      record <- Record <$> Char8.hGetLine handle
 
       let info = ReaderInfo
             { r_next = r_next + 1
             , r_handle = r_handle
             , r_length = len
-            , r_info = r_info
+            , r_partition = r_partition
             }
       return (info, (offset, record))
 
   getOffset :: FileReader -> IO Offset
-  getOffset (FileReader var) = withMVar var $ return . r_next
+  getOffset (FileReader _ var) = withMVar var $ return . r_next
 
   write :: FilePartition -> Record -> IO ()
   write (FilePartition{..}) (Record bs)  = do
@@ -256,8 +289,8 @@ writeNonBlocking fd bs =
   FD.writeNonBlocking fd (coerce ptr) 0 (fromIntegral len)
 
 readIndexEntry :: FilePath -> Offset -> IO Bytes
-readIndexEntry path (Offset offset)  =
-  withFile path ReadMode $ \handle -> do
+readIndexEntry indexPath (Offset offset)  =
+  withFile indexPath ReadMode $ \handle -> do
     hLock handle SharedLock
     hSeek handle AbsoluteSeek $ fromIntegral $ offset * _WORD64_SIZE
     bytes <- B.hGet handle _WORD64_SIZE
@@ -265,3 +298,8 @@ readIndexEntry path (Offset offset)  =
       Left (_,_,err) -> error $ "FilePartition: Error reading index: " <> err
       Right  (_,_,n) -> return n
     return $ Bytes byteOffset
+
+throwErr :: FilePartition -> String -> a
+throwErr p msg =
+  error $
+    "FilePartition (" <> unPartitionName (p_name p) <> "): " <> msg

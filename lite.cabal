@@ -42,18 +42,22 @@ library lite-lib
     hs-source-dirs: src
     exposed-modules:
         Queue
+        Queue.Topic
         Queue.Partition
         Queue.Partition.File
     build-depends:
         base ^>=4.17.2.1
+        , async
         , bytestring
         , binary
         , containers
         , directory
         , filepath
         , hashable
+        , random
         , stm
         , text
+        , time
         , unordered-containers
 
 test-suite lite-tests
