@@ -52,6 +52,7 @@ library lite-lib
         , binary
         , containers
         , directory
+        , extra
         , filepath
         , hashable
         , random
