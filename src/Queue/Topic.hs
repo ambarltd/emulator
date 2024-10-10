@@ -1,14 +1,19 @@
  module Queue.Topic
     ( Topic
-    , ConsumerGroupName
+    , PartitionInstance(..)
+    , withTopic
+    , getState
+
     , Consumer
-    , Producer
+    , ConsumerGroupName
     , Meta(..)
-    , withProducer
-    , write
     , withConsumer
     , read
     , commit
+
+    , Producer
+    , withProducer
+    , write
     ) where
 
 import Prelude hiding (read)
@@ -39,12 +44,12 @@ import Control.Concurrent.STM
 import Control.Exception (bracket)
 import Control.Monad (forM_, forM, when)
 import Data.ByteString (ByteString)
-import Data.List.Extra (chunksOf)
 import Data.Hashable (Hashable(..))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.List (find)
-import Data.Maybe (fromMaybe)
+import Data.List.Extra (chunksOf)
+import Data.Maybe (fromMaybe, isNothing)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
@@ -113,17 +118,41 @@ data ReaderInstance =
 newtype UUID = UUID Text
   deriving newtype (Eq, Ord, Hashable)
 
-newUUID :: IO UUID
-newUUID = do
-  now <- nominalDiffTimeToSeconds <$> getPOSIXTime
-  fixed <- randomIO @Int
-  return $ UUID $ Text.pack $ show now <> show fixed
-
 data Producer a = Producer
   { p_topic :: Topic
   , p_select :: a -> PartitionNumber
   , p_encode :: a -> Record
   }
+
+type TopicState = HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
+
+withTopic
+  :: TopicName
+  -> HashMap PartitionNumber PartitionInstance
+  -> TopicState
+  -> IO Topic
+withTopic name partitions groupOffsets = do
+  cgroupsVar <- atomically $ do
+    cgroups <- forM groupOffsets $ \partitionOffsets -> do
+      offsets <- forM partitionOffsets $ \offset ->
+        newTVar offset
+      return ConsumerGroup
+        { g_readers = Nothing
+        , g_comitted = offsets
+        , g_consumers = mempty
+        }
+    newTVar cgroups
+  return Topic
+    { t_name = name
+    , t_partitions = partitions
+    , t_cgroups = cgroupsVar
+    }
+
+-- | Get the state of the latest committed offsets of the topic.
+getState :: Topic -> STM TopicState
+getState Topic{..} = do
+  cgroups <- readTVar t_cgroups
+  forM cgroups $ \group -> forM (g_comitted group) readTVar
 
 withProducer
   :: Hashable b
@@ -158,11 +187,7 @@ write Producer{..} msg = do
 withConsumer :: Topic -> ConsumerGroupName -> (Consumer -> IO b) -> IO b
 withConsumer topic@Topic{..} gname act = do
   group <- atomically (retrieve gname)
-
-  case g_readers group of
-    Just [] -> openReaders group
-    _ -> return ()
-
+  when (isNothing $ g_readers group) $ openReaders group
   cid <- ConsumerId <$> newUUID
   bracket (add cid) (remove cid) act
   where
@@ -175,7 +200,7 @@ withConsumer topic@Topic{..} gname act = do
         Nothing -> do
           offsets <- traverse (const $ newTVar 0) t_partitions
           return ConsumerGroup
-            { g_readers = Just []
+            { g_readers = Nothing
             , g_comitted = offsets
             , g_consumers = mempty
             }
@@ -285,6 +310,12 @@ withConsumer topic@Topic{..} gname act = do
         return $ if HashMap.null remaining
           then g_readers group
           else Nothing
+
+newUUID :: IO UUID
+newUUID = do
+  now <- nominalDiffTimeToSeconds <$> getPOSIXTime
+  fixed <- randomIO @Int
+  return $ UUID $ Text.pack $ show now <> show fixed
 
 data Meta = Meta TopicName PartitionNumber Offset
 
