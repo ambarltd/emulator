@@ -61,6 +61,7 @@ import Queue.Partition
   )
 import qualified Queue.Partition as Partition
 
+-- | Abstraction for a group of independent streams (partitions)
 data Topic = Topic
   { t_name :: TopicName
   , t_partitions :: HashMap PartitionNumber PartitionInstance
@@ -79,6 +80,8 @@ data PartitionInstance =
 newtype ConsumerGroupName = ConsumerGroupName Text
   deriving newtype (Eq, Ord, Hashable)
 
+-- | A group of ordered readers of independent streams (partitions).
+-- Consumers always stream data from a disjoint sets of partitions.
 data ConsumerGroup = ConsumerGroup
   { g_readers :: Maybe [ReaderInstance]
   , g_comitted :: HashMap PartitionNumber (TVar Offset)
@@ -95,6 +98,7 @@ newtype ConsumerId = ConsumerId UUID
 -- Contains an infinite cycling list of reader instances for round-robin picking
 data Consumer = Consumer Topic (TVar [ReaderInstance])
 
+-- | A single (totally ordered) stream of data from a partition.
 data ReaderInstance =
   forall a. Partition a => ReaderInstance
     { r_reader :: Reader a
@@ -105,7 +109,6 @@ data ReaderInstance =
     , r_partition :: PartitionNumber
     , r_committed :: TVar Offset       -- ^ last committed offset
     }
-
 
 newtype UUID = UUID Text
   deriving newtype (Eq, Ord, Hashable)
