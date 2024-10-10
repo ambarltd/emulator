@@ -3,7 +3,7 @@
     , ConsumerGroupName
     , Consumer
     , Producer
-    , Meta
+    , Meta(..)
     , withProducer
     , write
     , withConsumer
@@ -17,9 +17,13 @@ import Control.Concurrent.Async (forConcurrently_, forConcurrently)
 import Control.Concurrent.STM
   ( STM
   , TVar
+  , TMVar
   , atomically
   , readTVar
+  , readTMVar
+  , newTMVar
   , writeTVar
+  , writeTMVar
   , newTVar
   , readTVarIO
   )
@@ -90,7 +94,7 @@ newUUID = do
 -- The particular instances and their number is adjusted through
 -- rebalances at consumer creation and descruction.
 -- Contains an infinite cycling list of reader instances for round-robin picking
-data Consumer = Consumer Topic (TVar [ReaderInstance])
+data Consumer = Consumer Topic (TMVar [ReaderInstance])
 
 data Producer a = Producer
   { p_topic :: Topic
@@ -196,7 +200,7 @@ withConsumer topic@Topic{..} gname act = do
       forM_ (zip cids readerLists) $ \(c, readers) ->
         case HashMap.lookup c (g_consumers group) of
           Nothing -> error "rebalancing: missing consumer id"
-          Just (Consumer _ rvar) -> writeTVar rvar (cycle readers)
+          Just (Consumer _ rvar) -> writeTMVar rvar (cycle readers)
 
       after <- assignments group
 
@@ -215,7 +219,7 @@ withConsumer topic@Topic{..} gname act = do
       -> STM (HashMap (ConsumerId, PartitionNumber) ReaderInstance)
     assignments g = do
       xss <- forM (HashMap.toList (g_consumers g)) $ \(cid, Consumer _ rvar) -> do
-        readers <- readTVar rvar
+        readers <- readTMVar rvar
         let deduped = case readers of
               [] -> []
               x:xs -> x : takeWhile (\y -> r_partition y /= r_partition x) xs
@@ -233,7 +237,7 @@ withConsumer topic@Topic{..} gname act = do
       addConsumer = do
         groups <- readTVar t_cgroups
         newConsumer <- do
-          rvar <- newTVar []
+          rvar <- newTMVar []
           return $ Consumer topic rvar
 
         let group = groups HashMap.! gname
@@ -275,11 +279,11 @@ withConsumer topic@Topic{..} gname act = do
           else Nothing
 
 
-data Meta = Meta Offset PartitionNumber
+data Meta = Meta
 
 -- | blocks until there is a message.
 read :: Consumer -> IO (ByteString, Meta)
-read  = undefined
+read (Consumer _ _) = undefined
 
 commit :: Consumer -> Meta -> IO ()
 commit  = undefined
