@@ -13,7 +13,13 @@
 
 import Prelude hiding (read)
 
-import Control.Concurrent.Async (forConcurrently_, forConcurrently)
+import Control.Concurrent.Async
+  ( Async
+  , async
+  , cancel
+  , forConcurrently_
+  , forConcurrently
+  )
 import Control.Concurrent.STM
   ( STM
   , TVar
@@ -22,10 +28,14 @@ import Control.Concurrent.STM
   , readTVar
   , readTMVar
   , newTMVar
+  , newTVarIO
   , writeTVar
   , writeTMVar
   , newTVar
+  , newEmptyTMVarIO
   , readTVarIO
+  , putTMVar
+  , takeTMVar
   )
 import Control.Exception (bracket)
 import Control.Monad (forM_, forM)
@@ -39,6 +49,7 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Time.Clock (nominalDiffTimeToSeconds)
+import Data.Void (Void)
 import System.Random (randomIO)
 
 import Queue.Partition
@@ -65,8 +76,12 @@ data PartitionInstance =
 data ReaderInstance =
   forall a. Partition a => ReaderInstance
     { r_reader :: Reader a
+    , r_worker :: Async Void
+    , r_next :: TMVar (Offset, Record) -- ^ take this to get the next element
+    , r_nextOffset :: TVar Offset      -- ^ offset we expect in next element.
+                                       --   change this to seek.
     , r_partition :: PartitionNumber
-    , r_committed :: TVar Offset
+    , r_committed :: TVar Offset       -- ^ last committed offset
     }
 
 newtype ConsumerGroupName = ConsumerGroupName Text
@@ -75,6 +90,7 @@ newtype ConsumerGroupName = ConsumerGroupName Text
 data ConsumerGroup = ConsumerGroup
   { g_readers :: Maybe [ReaderInstance]
   , g_offsets :: HashMap PartitionNumber (TVar Offset)
+  -- ^ comitted offsets
   , g_consumers :: HashMap ConsumerId Consumer
   }
 
@@ -159,32 +175,21 @@ withConsumer topic@Topic{..} gname act = do
       writeTVar t_cgroups $ HashMap.insert name group groups
       return group
 
-    -- create a new consumer group
+    -- open an existing group's readers
     openReaders :: ConsumerGroup -> IO ()
     openReaders group = do
       readers <- forConcurrently (HashMap.toList $ g_offsets group) $ \(pnumber, offsetVar) -> do
         let partition = t_partitions HashMap.! pnumber
-        mkReader partition pnumber offsetVar
+        readerNew partition pnumber offsetVar
       atomically $ do
         groups <- readTVar t_cgroups
         let g = groups HashMap.! gname
             g' = g { g_readers = Just readers }
         writeTVar t_cgroups $ HashMap.insert gname g' groups
 
-    mkReader :: PartitionInstance -> PartitionNumber -> TVar Offset -> IO ReaderInstance
-    mkReader (PartitionInstance partition) number offsetVar = do
-      reader <- Partition.openReader partition
-      offset <- readTVarIO offsetVar
-      Partition.seek reader (At offset)
-      return ReaderInstance
-        { r_reader = reader
-        , r_partition = number
-        , r_committed = offsetVar
-        }
-
     -- re-distribute readers across all existing consumers
-    -- returns an action to reset moved readers to the latest checkpoint
-    rebalance :: ConsumerGroupName -> STM (IO ())
+    -- resets moved readers to the latest checkpoint
+    rebalance :: ConsumerGroupName -> STM ()
     rebalance name = do
       groups <- readTVar t_cgroups
       let group = groups HashMap.! name
@@ -210,8 +215,8 @@ withConsumer topic@Topic{..} gname act = do
         offset <- readTVar (r_committed i)
         return (offset, i)
 
-      return $ forConcurrently_ toReset $ \(offset, ReaderInstance{..}) ->
-        Partition.seek r_reader (Partition.At offset)
+      forM_ toReset $ \(offset, rinstance) ->
+        readerSeek rinstance offset
 
     -- get readers assigned to each consumer id.
     assignments
@@ -227,11 +232,9 @@ withConsumer topic@Topic{..} gname act = do
       return $ HashMap.fromList (concat xss)
 
     add :: ConsumerId -> IO Consumer
-    add cid = do
-      (new, reset) <- atomically $ (,)
-        <$> addConsumer
-        <*> rebalance gname
-      reset
+    add cid = atomically $ do
+      new <- addConsumer
+      rebalance gname
       return new
       where
       addConsumer = do
@@ -249,15 +252,13 @@ withConsumer topic@Topic{..} gname act = do
 
     remove :: ConsumerId -> Consumer -> IO ()
     remove cid _ = do
-      (toClose, reset) <- atomically $ (,)
-        <$> removeConsumer
-        <*> rebalance gname
+      toClose <- atomically $ do
+        toClose <- removeConsumer
+        rebalance gname
+        return toClose
 
-      case toClose of
-        Nothing -> reset
-        Just readers ->
-          forConcurrently_  readers $ \ReaderInstance{..} ->
-            Partition.closeReader r_reader
+      forM_ toClose $ \readers ->
+        forConcurrently_ readers $ readerDestroy topic
       where
       removeConsumer :: STM (Maybe [ReaderInstance])
       removeConsumer = do
@@ -287,3 +288,52 @@ read (Consumer _ _) = undefined
 
 commit :: Consumer -> Meta -> IO ()
 commit  = undefined
+
+readerSeek :: ReaderInstance -> Offset -> STM ()
+readerSeek ReaderInstance{..} offset = writeTVar r_nextOffset offset
+
+readerRead :: ReaderInstance -> STM (Offset, Record)
+readerRead ReaderInstance{..} = takeTMVar r_next
+
+readerDestroy :: Topic -> ReaderInstance -> IO ()
+readerDestroy Topic{..} ReaderInstance{..} = do
+  cancel r_worker
+  Partition.closeReader r_reader
+  atomically $ writeTMVar r_next $ error $ unwords
+    [ "Topic (" <> Text.unpack t_name <> "):"
+    , "reading from destroyed reader"
+    ]
+
+readerNew :: PartitionInstance -> PartitionNumber -> TVar Offset -> IO ReaderInstance
+readerNew (PartitionInstance partition) number offsetVar = do
+  reader <- Partition.openReader partition
+  start <- readTVarIO offsetVar
+  next <- newEmptyTMVarIO
+  nextOffset <- newTVarIO start
+
+  let work mseek = do
+        forM_ mseek $ \pos -> Partition.seek reader (At pos)
+        -- blocks till a value is ready
+        (offset, record) <- Partition.read reader
+        mseek' <- atomically $ do
+          expected <- readTVar nextOffset
+          if offset == expected
+            then do
+              writeTVar nextOffset $ offset + 1
+              -- block till previous value is consumed
+              putTMVar next (offset, record)
+              return Nothing
+            else do
+              return (Just expected)
+        work mseek'
+
+  worker <- async (work (Just start))
+
+  return ReaderInstance
+    { r_reader = reader
+    , r_worker = worker
+    , r_next = next
+    , r_nextOffset = nextOffset
+    , r_partition = number
+    , r_committed = offsetVar
+    }

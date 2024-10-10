@@ -59,6 +59,7 @@ library lite-lib
         , stm
         , text
         , time
+        , unagi-chan
         , unordered-containers
 
 test-suite lite-tests
