@@ -17,7 +17,7 @@ data Position
 
 newtype Offset = Offset { unOffset :: Int }
   deriving Show
-  deriving newtype (Num, Eq, Ord)
+  deriving newtype (Eq, Ord, Enum, Integral, Real, Num)
 
 newtype Record = Record ByteString
   deriving newtype (Eq, Ord, Show)

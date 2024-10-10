@@ -6,22 +6,17 @@ module Queue.Partition.File
   , close
   ) where
 
-import Control.Concurrent (MVar, newMVar, withMVar, modifyMVar_)
+import Control.Concurrent (MVar, newMVar, withMVar, modifyMVar_, modifyMVar, readMVar)
 import Control.Concurrent.STM
-  ( TMVar
-  , TVar
+  ( TVar
   , readTVarIO
   , atomically
   , readTVar
-  , readTMVar
-  , takeTMVar
-  , putTMVar
   , retry
   , writeTVar
   , newTVarIO
-  , newTMVarIO
   )
-import Control.Exception (bracket, bracketOnError)
+import Control.Exception (bracket)
 import Control.Monad (void, unless, when)
 import qualified Data.Binary as Binary
 import Data.ByteString (ByteString)
@@ -77,7 +72,8 @@ newtype Bytes = Bytes Word64
   deriving (Eq, Show)
 
 newtype Count = Count Int
-  deriving (Eq, Show)
+  deriving (Show)
+  deriving newtype (Eq, Ord, Enum, Integral, Real, Num)
 
 {-| Note [File Partition Design]
 
@@ -181,12 +177,13 @@ closeNonLockingWritableFD :: FD -> IO ()
 closeNonLockingWritableFD = FD.close
 
 -- A single-threaded file readed.
-data FileReader = FileReader PartitionName (TMVar ReaderInfo)
+-- If you use it from multiple threads you will have problems.
+data FileReader = FileReader PartitionName (MVar ReaderInfo)
 
 data ReaderInfo = ReaderInfo
   { r_next :: Offset -- ^ offset of next record to be read
   , r_handle :: Maybe Handle -- ^ Nothing if reader is closed
-  , r_length :: Int -- ^ cached partition length
+  , r_length :: Count -- ^ cached partition length
   , r_partition :: FilePartition
   }
 
@@ -199,10 +196,10 @@ instance Partition FilePartition where
 
   openReader :: FilePartition -> IO FileReader
   openReader p@(FilePartition{..}) = do
-    (Count len, _) <- readTVarIO p_info
+    (len, _) <- readTVarIO p_info
     handle <- openFile p_records ReadMode
     hLock handle SharedLock
-    var <- newTMVarIO $ ReaderInfo
+    var <- newMVar $ ReaderInfo
       { r_next = Offset 0
       , r_handle = Just handle
       , r_length = len
@@ -212,16 +209,14 @@ instance Partition FilePartition where
 
   closeReader :: FileReader -> IO ()
   closeReader (FileReader _ var) =
-    modifyTMVarIO_ var $ \info -> do
+    modifyMVar_ var $ \info -> do
       maybe (return ()) hClose (r_handle info)
       return info { r_handle = Nothing }
 
   seek :: FileReader -> Position -> IO ()
   seek (FileReader _ var) pos = do
-    (ReaderInfo{..}, Count count) <- atomically $ do
-      info <- readTMVar var
-      (count, _) <- readTVar (p_info $ r_partition info)
-      return (info, count)
+    ReaderInfo{..} <- readMVar var
+    (Count count, _) <- readTVarIO (p_info r_partition)
     let offset = case pos of
           At (Offset o) -> o
           Beginning -> 0
@@ -246,7 +241,7 @@ instance Partition FilePartition where
   -- Blocks if there are no more records.
   read :: FileReader -> IO (Offset, Record)
   read (FileReader _ var) = do
-    modifyTMVarIO var $ \ReaderInfo{..} -> do
+    modifyMVar var $ \ReaderInfo{..} -> do
       handle <- case r_handle of
         Nothing -> error $ unwords
             [ "FilePartition: read: closed reader."
@@ -255,13 +250,13 @@ instance Partition FilePartition where
         Just h -> return h
 
       let offset = r_next -- offset to be read.
-      len <- if r_length > unOffset offset
+      len <- if fromIntegral r_length > offset
         then return r_length
         else do
           atomically $ do
-            (Count newLen, _) <- readTVar (p_info r_partition)
+            (newLen, _) <- readTVar (p_info r_partition)
             -- block till there are more elements to read.
-            unless (newLen > unOffset offset) retry
+            unless (newLen > fromIntegral offset) retry
             return newLen
 
       record <- Record <$> Char8.hGetLine handle
@@ -275,8 +270,7 @@ instance Partition FilePartition where
       return (info, (offset, record))
 
   getOffset :: FileReader -> IO Offset
-  getOffset (FileReader _ var) =
-    r_next  <$> atomically (readTMVar var)
+  getOffset (FileReader _ var) = r_next  <$> readMVar var
 
   write :: FilePartition -> Record -> IO ()
   write (FilePartition{..}) (Record bs)  = do
@@ -319,17 +313,3 @@ throwErr :: FilePartition -> String -> a
 throwErr p msg =
   error $
     "FilePartition (" <> unPartitionName (p_name p) <> "): " <> msg
-
-modifyTMVarIO :: TMVar a -> (a -> IO (a, b)) -> IO b
-modifyTMVarIO var act =
-  bracketOnError
-    (atomically $ takeTMVar var)
-    (atomically . putTMVar var)
-    $ \x -> do
-      (x', y) <- act x
-      atomically $ putTMVar var x'
-      return y
-
-modifyTMVarIO_ :: TMVar a -> (a -> IO a) -> IO ()
-modifyTMVarIO_ var act =
-  modifyTMVarIO var $ fmap (,()) . act
