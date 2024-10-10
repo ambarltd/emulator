@@ -26,24 +26,24 @@ import Control.Concurrent.STM
   , TMVar
   , atomically
   , readTVar
-  , readTMVar
-  , newTMVar
   , newTVarIO
   , writeTVar
-  , writeTMVar
   , newTVar
   , newEmptyTMVarIO
   , readTVarIO
   , putTMVar
-  , takeTMVar
+  , writeTMVar
+  , retry
+  , tryTakeTMVar
   )
 import Control.Exception (bracket)
-import Control.Monad (forM_, forM)
+import Control.Monad (forM_, forM, when)
 import Data.ByteString (ByteString)
 import Data.List.Extra (chunksOf)
 import Data.Hashable (Hashable(..))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
+import Data.List (find)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -62,16 +62,38 @@ import Queue.Partition
 import qualified Queue.Partition as Partition
 
 data Topic = Topic
-  { t_name :: Text
+  { t_name :: TopicName
   , t_partitions :: HashMap PartitionNumber PartitionInstance
   , t_cgroups :: TVar (HashMap ConsumerGroupName ConsumerGroup)
   }
+
+newtype TopicName = TopicName { unTopicName :: Text }
+  deriving newtype (Eq, Ord)
 
 newtype PartitionNumber = PartitionNumber { unPartitionNumber :: Int }
   deriving newtype (Eq, Ord, Hashable)
 
 data PartitionInstance =
   forall a. Partition a => PartitionInstance a
+
+newtype ConsumerGroupName = ConsumerGroupName Text
+  deriving newtype (Eq, Ord, Hashable)
+
+data ConsumerGroup = ConsumerGroup
+  { g_readers :: Maybe [ReaderInstance]
+  , g_comitted :: HashMap PartitionNumber (TVar Offset)
+  -- ^ comitted offsets. The TVar is shared with the ReaderInstance
+  , g_consumers :: HashMap ConsumerId Consumer
+  }
+
+newtype ConsumerId = ConsumerId UUID
+  deriving newtype (Eq, Ord, Hashable)
+
+-- | A consumer holds any number of reader instances.
+-- The particular instances and their number is adjusted through
+-- rebalances at consumer creation and descruction.
+-- Contains an infinite cycling list of reader instances for round-robin picking
+data Consumer = Consumer Topic (TVar [ReaderInstance])
 
 data ReaderInstance =
   forall a. Partition a => ReaderInstance
@@ -84,18 +106,6 @@ data ReaderInstance =
     , r_committed :: TVar Offset       -- ^ last committed offset
     }
 
-newtype ConsumerGroupName = ConsumerGroupName Text
-  deriving newtype (Eq, Ord, Hashable)
-
-data ConsumerGroup = ConsumerGroup
-  { g_readers :: Maybe [ReaderInstance]
-  , g_offsets :: HashMap PartitionNumber (TVar Offset)
-  -- ^ comitted offsets
-  , g_consumers :: HashMap ConsumerId Consumer
-  }
-
-newtype ConsumerId = ConsumerId UUID
-  deriving newtype (Eq, Ord, Hashable)
 
 newtype UUID = UUID Text
   deriving newtype (Eq, Ord, Hashable)
@@ -105,12 +115,6 @@ newUUID = do
   now <- nominalDiffTimeToSeconds <$> getPOSIXTime
   fixed <- randomIO @Int
   return $ UUID $ Text.pack $ show now <> show fixed
-
--- | A consumer holds any number of reader instances.
--- The particular instances and their number is adjusted through
--- rebalances at consumer creation and descruction.
--- Contains an infinite cycling list of reader instances for round-robin picking
-data Consumer = Consumer Topic (TMVar [ReaderInstance])
 
 data Producer a = Producer
   { p_topic :: Topic
@@ -145,7 +149,7 @@ write Producer{..} msg = do
     [ "Queue: unknown partition"
     <> show (unPartitionNumber pid)
     <> "on topic"
-    <> show (t_name p_topic)
+    <> Text.unpack (unTopicName $ t_name p_topic)
     ]
 
 withConsumer :: Topic -> ConsumerGroupName -> (Consumer -> IO b) -> IO b
@@ -169,7 +173,7 @@ withConsumer topic@Topic{..} gname act = do
           offsets <- traverse (const $ newTVar 0) t_partitions
           return ConsumerGroup
             { g_readers = Just []
-            , g_offsets = offsets
+            , g_comitted = offsets
             , g_consumers = mempty
             }
       writeTVar t_cgroups $ HashMap.insert name group groups
@@ -178,7 +182,7 @@ withConsumer topic@Topic{..} gname act = do
     -- open an existing group's readers
     openReaders :: ConsumerGroup -> IO ()
     openReaders group = do
-      readers <- forConcurrently (HashMap.toList $ g_offsets group) $ \(pnumber, offsetVar) -> do
+      readers <- forConcurrently (HashMap.toList $ g_comitted group) $ \(pnumber, offsetVar) -> do
         let partition = t_partitions HashMap.! pnumber
         readerNew partition pnumber offsetVar
       atomically $ do
@@ -205,7 +209,7 @@ withConsumer topic@Topic{..} gname act = do
       forM_ (zip cids readerLists) $ \(c, readers) ->
         case HashMap.lookup c (g_consumers group) of
           Nothing -> error "rebalancing: missing consumer id"
-          Just (Consumer _ rvar) -> writeTMVar rvar (cycle readers)
+          Just (Consumer _ rvar) -> writeTVar rvar (cycle readers)
 
       after <- assignments group
 
@@ -224,7 +228,7 @@ withConsumer topic@Topic{..} gname act = do
       -> STM (HashMap (ConsumerId, PartitionNumber) ReaderInstance)
     assignments g = do
       xss <- forM (HashMap.toList (g_consumers g)) $ \(cid, Consumer _ rvar) -> do
-        readers <- readTMVar rvar
+        readers <- readTVar rvar
         let deduped = case readers of
               [] -> []
               x:xs -> x : takeWhile (\y -> r_partition y /= r_partition x) xs
@@ -240,7 +244,7 @@ withConsumer topic@Topic{..} gname act = do
       addConsumer = do
         groups <- readTVar t_cgroups
         newConsumer <- do
-          rvar <- newTMVar []
+          rvar <- newTVar []
           return $ Consumer topic rvar
 
         let group = groups HashMap.! gname
@@ -279,28 +283,47 @@ withConsumer topic@Topic{..} gname act = do
           then g_readers group
           else Nothing
 
+data Meta = Meta TopicName PartitionNumber Offset
 
-data Meta = Meta
-
--- | blocks until there is a message.
+-- | Try to read all readers assigned to the consumer in round-robin fashion.
+-- Blocks until there is a message.
 read :: Consumer -> IO (ByteString, Meta)
-read (Consumer _ _) = undefined
+read (Consumer topic var) = atomically $ do
+  readers <- readTVar var
+  go [] readers
+  where
+  go _ [] = retry
+  go seen (r:rs) = do
+    let pnumber = r_partition r
+    when (pnumber `elem` seen) retry
+    mval <- readerTryRead r
+    case mval of
+      Nothing -> go (pnumber : seen) rs
+      Just (offset, Record bs) -> do
+        writeTVar var rs
+        return (bs, Meta (t_name topic) pnumber offset)
 
+-- | If the partition was moved to a different consumer
+-- the commit will fail silently.
 commit :: Consumer -> Meta -> IO ()
-commit  = undefined
+commit (Consumer _ var) (Meta _ pnumber offset) = atomically $ do
+  readers <- readTVar var
+  let mreader = find (\r -> r_partition r == pnumber) readers
+  forM_ mreader $ \ReaderInstance{..} ->
+    writeTVar r_committed offset
 
 readerSeek :: ReaderInstance -> Offset -> STM ()
-readerSeek ReaderInstance{..} offset = writeTVar r_nextOffset offset
+readerSeek ReaderInstance{..} = writeTVar r_nextOffset
 
-readerRead :: ReaderInstance -> STM (Offset, Record)
-readerRead ReaderInstance{..} = takeTMVar r_next
+readerTryRead :: ReaderInstance -> STM (Maybe (Offset, Record))
+readerTryRead ReaderInstance{..} = tryTakeTMVar r_next
 
 readerDestroy :: Topic -> ReaderInstance -> IO ()
 readerDestroy Topic{..} ReaderInstance{..} = do
   cancel r_worker
   Partition.closeReader r_reader
   atomically $ writeTMVar r_next $ error $ unwords
-    [ "Topic (" <> Text.unpack t_name <> "):"
+    [ "Topic (" <> Text.unpack (unTopicName t_name) <> "):"
     , "reading from destroyed reader"
     ]
 
