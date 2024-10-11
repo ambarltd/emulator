@@ -59,7 +59,6 @@ library lite-lib
         , stm
         , text
         , time
-        , unagi-chan
         , unordered-containers
 
 test-suite lite-tests
@@ -82,6 +81,7 @@ test-suite lite-tests
         , QuickCheck
         , temporary
         , text
+        , unordered-containers
 
 benchmark lite-bench
   import: common

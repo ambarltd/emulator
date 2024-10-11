@@ -4,23 +4,51 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, wait, concurrently)
 import Control.Monad (replicateM)
 import Data.Char (isAscii)
+import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Text as Text
-import Data.Text.Encoding (encodeUtf8)
+import Data.Text.Encoding as Text
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec (shouldBe, Spec, it, describe)
+import Foreign.Marshal.Utils (withMany)
 
+import Queue.Topic
+  ( Topic
+  , TopicName(..)
+  , Meta(..)
+  , ConsumerGroupName(..)
+  , withTopic
+  )
+import qualified Queue.Topic as T
+import Queue.Topic (PartitionInstance(..))
 import Queue.Partition (Partition(..), Position(..), Record(..))
 import qualified Queue.Partition as P
 import qualified Queue.Partition.File as FilePartition
 
 testQueues :: Spec
 testQueues  = describe "queue" $ do
-  describe "partition" $
+  describe "partition" $ do
     testPartition withFilePartition
+  describe "topic" $ do
+    testTopic withFileTopic
   where
   withFilePartition path act =
     FilePartition.withFilePartition path "file-partition" act
 
+  withFileTopic :: PartitionCount -> (Topic -> IO a) -> IO a
+  withFileTopic (PartitionCount n) act =
+    withTempPath $ \path ->
+    withMany (f path) [0..n-1] $ \pinstances ->
+    withTopic
+      (TopicName "test-topic")
+      (HashMap.fromList $ zip [0..] pinstances)
+      mempty
+      act
+    where
+    f path pnumber g = do
+      FilePartition.withFilePartition path (show pnumber) (g . PartitionInstance)
+
+withTempPath :: (FilePath -> IO a) -> IO a
+withTempPath = withSystemTempDirectory "partition-XXXXX"
 
 -- | Infinite list of messages of varying lengths
 messages :: [Record]
@@ -33,6 +61,34 @@ messages = toRecord <$> zipWith take lengths sentences
       if isAscii (succ c)
       then succ c
       else '#' -- chr 35
+
+newtype PartitionCount = PartitionCount Int
+
+testTopic :: (forall b. PartitionCount -> (Topic -> IO b) -> IO b) -> Spec
+testTopic with = do
+  it "reads from a single partition" $
+    with (PartitionCount 1) $ \topic -> do
+      one : two : three : _ <- return $ zip ([0..] :: [Int]) messages
+      T.withProducer topic fst (unRecord . snd) $ \producer -> do
+        putStrLn "writing one"
+        T.write producer one
+        putStrLn "writing two"
+        T.write producer two
+        putStrLn "writing three"
+        T.write producer three
+        putStrLn "done writing"
+      T.withConsumer topic (ConsumerGroupName "test-group") $ \consumer -> do
+          putStrLn "reading one"
+          (one_, Meta _ _ n1) <- T.read consumer
+          n1 `shouldBe` 0
+          putStrLn $ show n1
+          putStrLn "reading two"
+          (two_, Meta _ _ n2) <- T.read consumer
+          n2 `shouldBe` 1
+          Record one_ `shouldBe` snd one
+          Record two_ `shouldBe` snd two
+          putStrLn "done reading"
+      putStrLn "done"
 
 testPartition :: Partition a => (forall b. FilePath -> (a -> IO b) -> IO b) -> Spec
 testPartition with = do
@@ -101,5 +157,3 @@ testPartition with = do
       left `shouldBe` right
       left `shouldBe` selected
 
-  where
-  withTempPath = withSystemTempDirectory "partition-XXXXX"

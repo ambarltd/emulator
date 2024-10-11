@@ -19,7 +19,7 @@ newtype Offset = Offset { unOffset :: Int }
   deriving Show
   deriving newtype (Eq, Ord, Enum, Integral, Real, Num)
 
-newtype Record = Record ByteString
+newtype Record = Record { unRecord :: ByteString }
   deriving newtype (Eq, Ord, Show)
 
 -- | A Partition contains a sequence of records.

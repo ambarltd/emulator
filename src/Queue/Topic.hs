@@ -1,11 +1,12 @@
  module Queue.Topic
     ( Topic
+    , TopicName(..)
     , PartitionInstance(..)
     , withTopic
     , getState
 
     , Consumer
-    , ConsumerGroupName
+    , ConsumerGroupName(..)
     , Meta(..)
     , withConsumer
     , read
@@ -18,12 +19,14 @@
 
 import Prelude hiding (read)
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async
   ( Async
   , async
   , cancel
   , forConcurrently_
   , forConcurrently
+  , mapConcurrently_
   )
 import Control.Concurrent.STM
   ( STM
@@ -40,10 +43,13 @@ import Control.Concurrent.STM
   , writeTMVar
   , retry
   , tryTakeTMVar
+  , tryReadTMVar
+  , modifyTVar
   )
 import Control.Exception (bracket)
 import Control.Monad (forM_, forM, when)
 import Data.ByteString (ByteString)
+import Data.Foldable (sequenceA_)
 import Data.Hashable (Hashable(..))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
@@ -54,7 +60,9 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Time.Clock (nominalDiffTimeToSeconds)
+import Data.Traversable (mapAccumR)
 import Data.Void (Void)
+import System.IO.Unsafe (unsafePerformIO)
 import System.Random (randomIO)
 
 import Queue.Partition
@@ -77,7 +85,8 @@ newtype TopicName = TopicName { unTopicName :: Text }
   deriving newtype (Eq, Ord)
 
 newtype PartitionNumber = PartitionNumber { unPartitionNumber :: Int }
-  deriving newtype (Eq, Ord, Hashable)
+  deriving Show
+  deriving newtype (Eq, Ord, Enum, Integral, Real, Num, Hashable)
 
 data PartitionInstance =
   forall a. Partition a => PartitionInstance a
@@ -95,6 +104,7 @@ data ConsumerGroup = ConsumerGroup
   }
 
 newtype ConsumerId = ConsumerId UUID
+  deriving Show
   deriving newtype (Eq, Ord, Hashable)
 
 -- | A consumer holds any number of reader instances.
@@ -116,6 +126,7 @@ data ReaderInstance =
     }
 
 newtype UUID = UUID Text
+  deriving Show
   deriving newtype (Eq, Ord, Hashable)
 
 data Producer a = Producer
@@ -130,23 +141,51 @@ withTopic
   :: TopicName
   -> HashMap PartitionNumber PartitionInstance
   -> TopicState
-  -> IO Topic
-withTopic name partitions groupOffsets = do
-  cgroupsVar <- atomically $ do
-    cgroups <- forM groupOffsets $ \partitionOffsets -> do
-      offsets <- forM partitionOffsets $ \offset ->
-        newTVar offset
-      return ConsumerGroup
-        { g_readers = Nothing
-        , g_comitted = offsets
-        , g_consumers = mempty
-        }
-    newTVar cgroups
-  return Topic
-    { t_name = name
-    , t_partitions = partitions
-    , t_cgroups = cgroupsVar
-    }
+  -> (Topic -> IO a)
+  -> IO a
+withTopic name partitions groupOffsets act =
+  bracket create delete act
+  where
+  create = do
+    cgroupsVar <- atomically $ do
+      cgroups <- forM groupOffsets $ \partitionOffsets -> do
+        offsets <- forM partitionOffsets $ \offset ->
+          newTVar offset
+        return ConsumerGroup
+          { g_readers = Nothing
+          , g_comitted = offsets
+          , g_consumers = mempty
+          }
+      newTVar cgroups
+    return Topic
+      { t_name = name
+      , t_partitions = partitions
+      , t_cgroups = cgroupsVar
+      }
+
+  delete topic = do
+    readers <- atomically $ do
+      groups <- readTVar (t_cgroups topic)
+
+      -- empty all groups
+      writeTVar (t_cgroups topic) $ flip fmap groups $ \group ->
+        group { g_consumers = mempty }
+
+      -- close all consumers
+      sequenceA_
+        [ closeConsumer consumer
+        | group <- HashMap.elems groups
+        , consumer <- HashMap.elems (g_consumers group)
+        ]
+
+      -- collect all readers to close
+      return
+        [ reader
+        | group <- HashMap.elems groups
+        , reader <- fromMaybe [] (g_readers group)
+        ]
+
+    mapConcurrently_ (readerDestroy topic) readers
 
 -- | Get the state of the latest committed offsets of the topic.
 getState :: Topic -> STM TopicState
@@ -159,8 +198,8 @@ withProducer
   => Topic
   -> (a -> b)              -- ^ partitioner
   -> (a -> ByteString)     -- ^ encoder
-  -> (Producer a -> IO b)
-  -> IO b
+  -> (Producer a -> IO c)
+  -> IO c
 withProducer topic partitioner encode act =
   act $ Producer
     { p_topic = topic
@@ -219,54 +258,10 @@ withConsumer topic@Topic{..} gname act = do
             g' = g { g_readers = Just readers }
         writeTVar t_cgroups $ HashMap.insert gname g' groups
 
-    -- re-distribute readers across all existing consumers
-    -- resets moved readers to the latest checkpoint
-    rebalance :: ConsumerGroupName -> STM ()
-    rebalance name = do
-      groups <- readTVar t_cgroups
-      let group = groups HashMap.! name
-          cids = HashMap.keys (g_consumers group)
-          readerCount = maybe 0 length (g_readers group)
-          consumerCount = length cids
-          chunkSize = ceiling @Double $ fromIntegral readerCount / fromIntegral consumerCount
-          readerLists = chunksOf chunkSize (fromMaybe [] $ g_readers group) ++ repeat []
-
-      before <- assignments group
-
-      -- update consumers reader lists
-      forM_ (zip cids readerLists) $ \(c, readers) ->
-        case HashMap.lookup c (g_consumers group) of
-          Nothing -> error "rebalancing: missing consumer id"
-          Just (Consumer _ rvar) -> writeTVar rvar (cycle readers)
-
-      after <- assignments group
-
-      -- readers which changed consumers should be reset to their last comitted offset.
-      let changed = HashMap.elems $ after `HashMap.difference` before
-      toReset <- forM changed $ \i -> do
-        offset <- readTVar (r_committed i)
-        return (offset, i)
-
-      forM_ toReset $ \(offset, rinstance) ->
-        readerSeek rinstance offset
-
-    -- get readers assigned to each consumer id.
-    assignments
-      :: ConsumerGroup
-      -> STM (HashMap (ConsumerId, PartitionNumber) ReaderInstance)
-    assignments g = do
-      xss <- forM (HashMap.toList (g_consumers g)) $ \(cid, Consumer _ rvar) -> do
-        readers <- readTVar rvar
-        let deduped = case readers of
-              [] -> []
-              x:xs -> x : takeWhile (\y -> r_partition y /= r_partition x) xs
-        return $ flip fmap deduped $ \r -> ((cid, r_partition r), r)
-      return $ HashMap.fromList (concat xss)
-
     add :: ConsumerId -> IO Consumer
     add cid = atomically $ do
       new <- addConsumer
-      rebalance gname
+      _ <- rebalance gname
       return new
       where
       addConsumer = do
@@ -283,33 +278,83 @@ withConsumer topic@Topic{..} gname act = do
         return newConsumer
 
     remove :: ConsumerId -> Consumer -> IO ()
-    remove cid _ = do
+    remove cid consumer = do
       toClose <- atomically $ do
-        toClose <- removeConsumer
+        removeConsumer
         rebalance gname
-        return toClose
 
-      forM_ toClose $ \readers ->
-        forConcurrently_ readers $ readerDestroy topic
+      forConcurrently_ toClose $ readerDestroy topic
       where
-      removeConsumer :: STM (Maybe [ReaderInstance])
       removeConsumer = do
-        groups <- readTVar t_cgroups
-        let group = groups HashMap.! gname
-            remaining = HashMap.delete cid (g_consumers group)
-            group' = group
-              { g_readers =
-                  if HashMap.null remaining
-                    then Nothing
-                    else g_readers group
-              , g_consumers = remaining
-              }
+        closeConsumer consumer
+        modifyTVar t_cgroups $ \groups ->
+          let group = groups HashMap.! gname
+              remaining = HashMap.delete cid (g_consumers group)
+              group' = group { g_consumers = remaining }
+          in
+          HashMap.insert gname group' groups
 
-        writeTVar t_cgroups $ HashMap.insert gname group' groups
+    -- re-distribute readers across all existing consumers
+    -- resets moved readers to the latest checkpoint
+    rebalance :: ConsumerGroupName -> STM [ReaderInstance]
+    rebalance name = do
+      groups <- readTVar t_cgroups
+      let group = groups HashMap.! name
+          cids = HashMap.keys (g_consumers group)
+          readerCount = maybe 0 length (g_readers group)
+          consumerCount = length cids
+          chunkSize = ceiling @Double $ fromIntegral readerCount / fromIntegral consumerCount
+          readerLists = chunksOf chunkSize (fromMaybe [] $ g_readers group) ++ repeat []
 
-        return $ if HashMap.null remaining
-          then g_readers group
-          else Nothing
+      before <- assignments group
+
+      -- update consumers' readers lists
+      forM_ (zip cids readerLists) $ \(c, readers) ->
+        case HashMap.lookup c (g_consumers group) of
+          Nothing -> error "rebalancing: missing consumer id"
+          Just (Consumer _ rvar) -> writeTVar rvar (cycle readers)
+
+      after <- assignments group
+
+      -- readers assigned to different customers should be reset to
+      -- their last comitted offset.
+      let changed = HashMap.elems $ after `HashMap.difference` before
+      toReset <- forM changed $ \i -> do
+        offset <- readTVar (r_committed i)
+        return (offset, i)
+      forM_ toReset $ \(offset, rinstance) -> do
+        () <- return $ unsafePerformIO $ putStrLn "seeking from rebalance"
+        readerSeek rinstance offset
+
+      let (toClose, groups') = extractClosableReaders groups
+      -- remove readers from groups without a consumer
+      writeTVar t_cgroups groups'
+      -- return readers from groups without a consumer
+      return toClose
+      where
+        extractClosableReaders groups = mapAccumR f [] groups
+          where
+          f acc g =
+            let readers = fromMaybe [] (g_readers g) in
+            if HashMap.null (g_consumers g)
+               then (readers ++ acc, g { g_readers = Nothing })
+               else (acc, g)
+
+        -- get readers assigned to each consumer id.
+        assignments
+          :: ConsumerGroup
+          -> STM (HashMap (ConsumerId, PartitionNumber) ReaderInstance)
+        assignments g = do
+          xss <- forM (HashMap.toList (g_consumers g)) $ \(cid, Consumer _ rvar) -> do
+            readers <- readTVar rvar
+            let deduped = case readers of
+                  [] -> []
+                  x:xs -> x : takeWhile (\y -> r_partition y /= r_partition x) xs
+            return [ ((cid, r_partition r), r) | r <- deduped ]
+          return $ HashMap.fromList (concat xss)
+
+closeConsumer :: Consumer -> STM ()
+closeConsumer (Consumer _ var) =  writeTVar var []
 
 newUUID :: IO UUID
 newUUID = do
@@ -347,13 +392,16 @@ commit (Consumer _ var) (Meta _ pnumber offset) = atomically $ do
     writeTVar r_committed offset
 
 readerSeek :: ReaderInstance -> Offset -> STM ()
-readerSeek ReaderInstance{..} = writeTVar r_nextOffset
+readerSeek ReaderInstance{..} offset = do
+  () <- return $ unsafePerformIO $ putStrLn "seek requested"
+  writeTVar r_nextOffset offset
 
 readerTryRead :: ReaderInstance -> STM (Maybe (Offset, Record))
 readerTryRead ReaderInstance{..} = tryTakeTMVar r_next
 
 readerDestroy :: Topic -> ReaderInstance -> IO ()
 readerDestroy Topic{..} ReaderInstance{..} = do
+  putStrLn "destroying worker"
   cancel r_worker
   Partition.closeReader r_reader
   atomically $ writeTMVar r_next $ error $ unwords
@@ -369,19 +417,35 @@ readerNew (PartitionInstance partition) number offsetVar = do
   nextOffset <- newTVarIO start
 
   let work mseek = do
-        forM_ mseek $ \pos -> Partition.seek reader (At pos)
+        const (return ()) $ threadDelay 5_000_000
+        forM_ mseek $ \pos -> do
+          putStrLn $ "seeking to " <>  show pos
+          Partition.seek reader (At pos)
         -- blocks till a value is ready
         (offset, record) <- Partition.read reader
+        putStrLn $ "just read " <>  show offset
         mseek' <- atomically $ do
-          expected <- readTVar nextOffset
-          if offset == expected
-            then do
-              writeTVar nextOffset $ offset + 1
-              -- block till previous value is consumed
-              putTMVar next (offset, record)
-              return Nothing
-            else do
-              return (Just expected)
+          mcurrent <- tryReadTMVar next
+          nextO    <- readTVar nextOffset
+          let currentIsPopulated  = case mcurrent of
+                Nothing -> False
+                Just (o, _) -> o == nextO
+
+          if offset == nextO then do
+            () <- return $ unsafePerformIO $ putStrLn $ "work: override " <> show offset
+            writeTMVar next (offset, record) -- override whatever is there.
+            writeTVar nextOffset offset
+            return Nothing
+          else if offset == nextO + 1 && currentIsPopulated then do
+            () <- return $ unsafePerformIO $ putStrLn $ "work: wait to put " <> show offset
+            -- block till previous value is consumed
+            putTMVar next (offset, record)
+            writeTVar nextOffset offset
+            return Nothing
+          else do
+            () <- return $ unsafePerformIO $ putStrLn $ "work: expected " <> show nextO <> " but read " <> show offset
+            _ <- tryTakeTMVar next -- empty TMVar
+            return (Just nextO)
         work mseek'
 
   worker <- async (work (Just start))
