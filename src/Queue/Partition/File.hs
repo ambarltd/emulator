@@ -6,17 +6,14 @@ module Queue.Partition.File
   , close
   ) where
 
-import Control.Concurrent (MVar, newMVar, withMVar, modifyMVar_, modifyMVar, readMVar)
+import Control.Concurrent (MVar, newMVar, withMVar, modifyMVar_)
+import qualified Control.Concurrent.STM as STM
 import Control.Concurrent.STM
   ( TVar
-  , readTVarIO
+  , TMVar
   , atomically
-  , readTVar
-  , retry
-  , writeTVar
-  , newTVarIO
   )
-import Control.Exception (bracket)
+import Control.Exception (bracket, bracketOnError)
 import Control.Monad (void, unless, when)
 import qualified Data.Binary as Binary
 import Data.ByteString (ByteString)
@@ -120,7 +117,7 @@ open location name = do
   fd_records <- openNonLockingWritableFD records
   fd_index <- openNonLockingWritableFD index
   handles <- newMVar $ Just (fd_records, fd_index)
-  var <- newTVarIO (count, size)
+  var <- STM.newTVarIO (count, size)
   return FilePartition
     { p_name = PartitionName name
     , p_records = records
@@ -178,10 +175,10 @@ closeNonLockingWritableFD = FD.close
 
 -- A single-threaded file readed.
 -- If you use it from multiple threads you will have problems.
-data FileReader = FileReader PartitionName (MVar ReaderInfo)
+data FileReader = FileReader PartitionName (TMVar ReaderInfo)
 
 data ReaderInfo = ReaderInfo
-  { r_next :: Offset -- ^ offset of next record to be read
+  { r_next :: TVar Offset -- ^ offset of next record to be read
   , r_handle :: Maybe Handle -- ^ Nothing if reader is closed
   , r_length :: Count -- ^ cached partition length
   , r_partition :: FilePartition
@@ -196,11 +193,12 @@ instance Partition FilePartition where
 
   openReader :: FilePartition -> IO FileReader
   openReader p@(FilePartition{..}) = do
-    (len, _) <- readTVarIO p_info
+    (len, _) <- STM.readTVarIO p_info
     handle <- openFile p_records ReadMode
     hLock handle SharedLock
-    var <- newMVar $ ReaderInfo
-      { r_next = Offset 0
+    next <- STM.newTVarIO 0
+    var <- STM.newTMVarIO $ ReaderInfo
+      { r_next = next
       , r_handle = Just handle
       , r_length = len
       , r_partition = p
@@ -209,68 +207,84 @@ instance Partition FilePartition where
 
   closeReader :: FileReader -> IO ()
   closeReader (FileReader _ var) =
-    modifyMVar_ var $ \info -> do
+    modifyTMVarIO_ var $ \info -> do
       maybe (return ()) hClose (r_handle info)
       return info { r_handle = Nothing }
 
   seek :: FileReader -> Position -> IO ()
-  seek (FileReader _ var) pos = do
-    ReaderInfo{..} <- readMVar var
-    (Count count, _) <- readTVarIO (p_info r_partition)
-    let offset = case pos of
-          At (Offset o) -> o
-          Beginning -> 0
-          End -> count - 1
-    if pos == At r_next
-      then return ()
-      else do
-        when (offset > count) $
-          throwErr r_partition $ unwords
-            [ "seek: offset out of bounds."
-            , "Entries:", show count
-            , "Offset:", show offset
-            ]
-        case r_handle of
+  seek (FileReader _ var) pos =
+    bracketOnError acquire undo $ \(next, offset, info) -> do
+      when (next /= offset) $
+        case r_handle info of
           Nothing ->
-            throwErr r_partition "seek: closed reader."
+            throwErr (r_partition info) "seek: closed reader."
           Just handle -> do
-            Bytes byteOffset <- readIndexEntry (p_index r_partition) (Offset offset)
+            Bytes byteOffset <- readIndexEntry (p_index $ r_partition info) offset
             hSeek handle AbsoluteSeek (fromIntegral byteOffset)
+
+      atomically $ do
+        STM.putTMVar var info
+    where
+    acquire = atomically $ do
+      info <- STM.takeTMVar var
+      (Count count, _) <- STM.readTVar $ p_info $ r_partition info
+      let offset = case pos of
+            At o -> o
+            Beginning -> 0
+            End -> Offset count - 1
+
+      when (offset > fromIntegral count) $
+        throwErr (r_partition info) $ unwords
+          [ "seek: offset out of bounds."
+          , "Entries:", show count
+          , "Offset:", show offset
+          ]
+
+      next <- STM.readTVar (r_next info)
+      STM.writeTVar (r_next info) offset
+      return (next, offset, info)
+
+    undo (next,_,info) = atomically $ do
+      STM.putTMVar var info
+      STM.writeTVar (r_next info) next
 
   -- | Reads one record and advances the Reader.
   -- Blocks if there are no more records.
   read :: FileReader -> IO (Offset, Record)
-  read (FileReader _ var) = do
-    modifyMVar var $ \ReaderInfo{..} -> do
-      handle <- case r_handle of
+  read (FileReader _ var) =
+    bracketOnError acquire undo $ \(len, next, info) -> do
+      handle <- case r_handle info of
         Nothing -> error $ unwords
             [ "FilePartition: read: closed reader."
-            , "Partition:", unPartitionName (p_name r_partition)
+            , "Partition:", unPartitionName (p_name $ r_partition info)
             ]
         Just h -> return h
 
-      let offset = r_next -- offset to be read.
-      len <- if fromIntegral r_length > offset
-        then return r_length
-        else do
-          atomically $ do
-            (newLen, _) <- readTVar (p_info r_partition)
-            -- block till there are more elements to read.
-            unless (newLen > fromIntegral offset) retry
-            return newLen
-
       record <- Record <$> Char8.hGetLine handle
 
-      let info = ReaderInfo
-            { r_next = r_next + 1
-            , r_handle = r_handle
-            , r_length = len
-            , r_partition = r_partition
-            }
-      return (info, (offset, record))
+      atomically $ do
+        STM.writeTVar (r_next info) (next + 1)
+        STM.putTMVar var info { r_length = len }
+
+      return (next, record)
+    where
+      acquire = atomically $ do
+        info <- STM.takeTMVar var
+        next <- STM.readTVar (r_next info)
+        partitionLength <-
+          if r_length info > fromIntegral next
+          then return (r_length info)
+          else fst <$> STM.readTVar (p_info $ r_partition info)
+        -- block till there are more elements to read.
+        unless (partitionLength > fromIntegral next) STM.retry
+        return (partitionLength, next, info)
+
+      undo (_,_,info) = atomically $ STM.putTMVar var info
 
   getOffset :: FileReader -> IO Offset
-  getOffset (FileReader _ var) = r_next  <$> readMVar var
+  getOffset (FileReader _ var) = atomically $ do
+    info <- STM.readTMVar var
+    STM.readTVar (r_next info)
 
   write :: FilePartition -> Record -> IO ()
   write (FilePartition{..}) (Record bs)  = do
@@ -281,7 +295,7 @@ instance Partition FilePartition where
       let (fd_records, fd_index) = fromMaybe
               (error "FilePartition: writing to closed partition")
               mhandles
-      (Count count, Bytes partitionSize) <- readTVarIO p_info
+      (Count count, Bytes partitionSize) <- STM.readTVarIO p_info
 
       let entry = bs <> "\n"
           entrySize = fromIntegral (B.length bs)
@@ -291,7 +305,7 @@ instance Partition FilePartition where
 
       writeNonBlocking fd_records entry
       writeNonBlocking fd_index entryByteOffset
-      atomically $ writeTVar p_info (Count newCount, Bytes newSize)
+      atomically $ STM.writeTVar p_info (Count newCount, Bytes newSize)
 
 writeNonBlocking :: FD -> ByteString -> IO ()
 writeNonBlocking fd bs =
@@ -313,3 +327,17 @@ throwErr :: FilePartition -> String -> a
 throwErr p msg =
   error $
     "FilePartition (" <> unPartitionName (p_name p) <> "): " <> msg
+
+modifyTMVarIO :: TMVar a -> (a -> IO (a, b)) -> IO b
+modifyTMVarIO var act =
+  bracketOnError
+    (atomically $ STM.takeTMVar var)
+    (atomically . STM.putTMVar var)
+    $ \x -> do
+      (x', y) <- act x
+      atomically $ STM.putTMVar var x'
+      return y
+
+modifyTMVarIO_ :: TMVar a -> (a -> IO a) -> IO ()
+modifyTMVarIO_ var act =
+  modifyTMVarIO var $ fmap (,()) . act
