@@ -68,27 +68,17 @@ testTopic :: (forall b. PartitionCount -> (Topic -> IO b) -> IO b) -> Spec
 testTopic with = do
   it "reads from a single partition" $
     with (PartitionCount 1) $ \topic -> do
-      one : two : three : _ <- return $ zip ([0..] :: [Int]) messages
+      one : two : _ <- return $ zip ([0..] :: [Int]) messages
       T.withProducer topic fst (unRecord . snd) $ \producer -> do
-        putStrLn "writing one"
         T.write producer one
-        putStrLn "writing two"
         T.write producer two
-        putStrLn "writing three"
-        T.write producer three
-        putStrLn "done writing"
       T.withConsumer topic (ConsumerGroupName "test-group") $ \consumer -> do
-          putStrLn "reading one"
           (one_, Meta _ _ n1) <- T.read consumer
           n1 `shouldBe` 0
-          putStrLn $ show n1
-          putStrLn "reading two"
           (two_, Meta _ _ n2) <- T.read consumer
           n2 `shouldBe` 1
           Record one_ `shouldBe` snd one
           Record two_ `shouldBe` snd two
-          putStrLn "done reading"
-      putStrLn "done"
 
 testPartition :: Partition a => (forall b. FilePath -> (a -> IO b) -> IO b) -> Spec
 testPartition with = do

@@ -1,3 +1,4 @@
+{-# LANGUAGE RecursiveDo #-}
  module Queue.Topic
     ( Topic
     , TopicName(..)
@@ -19,34 +20,21 @@
 
 import Prelude hiding (read)
 
-import Control.Concurrent (threadDelay)
+import qualified Control.Concurrent.Async as Async
 import Control.Concurrent.Async
   ( Async
-  , async
-  , cancel
   , forConcurrently_
   , forConcurrently
   , mapConcurrently_
   )
+import qualified Control.Concurrent.STM as STM
 import Control.Concurrent.STM
   ( STM
   , TVar
   , TMVar
   , atomically
-  , readTVar
-  , newTVarIO
-  , writeTVar
-  , newTVar
-  , newEmptyTMVarIO
-  , readTVarIO
-  , putTMVar
-  , writeTMVar
-  , retry
-  , tryTakeTMVar
-  , tryReadTMVar
-  , modifyTVar
   )
-import Control.Exception (bracket)
+import Control.Exception (bracket, finally)
 import Control.Monad (forM_, forM, when)
 import Data.ByteString (ByteString)
 import Data.Foldable (sequenceA_)
@@ -55,21 +43,19 @@ import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.List (find)
 import Data.List.Extra (chunksOf)
-import Data.Maybe (fromMaybe, isNothing)
+import Data.Maybe (fromMaybe, isNothing, isJust)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Time.Clock (nominalDiffTimeToSeconds)
 import Data.Traversable (mapAccumR)
 import Data.Void (Void)
-import System.IO.Unsafe (unsafePerformIO)
 import System.Random (randomIO)
 
 import Queue.Partition
   ( Partition
   , Offset
   , Record(..)
-  , Reader
   , Position(..)
   )
 import qualified Queue.Partition as Partition
@@ -114,16 +100,13 @@ newtype ConsumerId = ConsumerId UUID
 data Consumer = Consumer Topic (TVar [ReaderInstance])
 
 -- | A single (totally ordered) stream of data from a partition.
-data ReaderInstance =
-  forall a. Partition a => ReaderInstance
-    { r_reader :: Reader a
-    , r_worker :: Async Void
-    , r_next :: TMVar (Offset, Record) -- ^ take this to get the next element
-    , r_nextOffset :: TVar Offset      -- ^ offset we expect in next element.
-                                       --   change this to seek.
-    , r_partition :: PartitionNumber
-    , r_committed :: TVar Offset       -- ^ last committed offset
-    }
+data ReaderInstance = ReaderInstance
+  { r_worker :: Async Void
+  , r_next :: TMVar (Offset, Record) -- ^ take this to get the next element
+  , r_expected :: TVar Offset        -- ^ next offset to be read. Change this to seek.
+  , r_committed :: TVar Offset       -- ^ last committed offset
+  , r_partition :: PartitionNumber
+  }
 
 newtype UUID = UUID Text
   deriving Show
@@ -150,13 +133,13 @@ withTopic name partitions groupOffsets act =
     cgroupsVar <- atomically $ do
       cgroups <- forM groupOffsets $ \partitionOffsets -> do
         offsets <- forM partitionOffsets $ \offset ->
-          newTVar offset
+          STM.newTVar offset
         return ConsumerGroup
           { g_readers = Nothing
           , g_comitted = offsets
           , g_consumers = mempty
           }
-      newTVar cgroups
+      STM.newTVar cgroups
     return Topic
       { t_name = name
       , t_partitions = partitions
@@ -165,10 +148,10 @@ withTopic name partitions groupOffsets act =
 
   delete topic = do
     readers <- atomically $ do
-      groups <- readTVar (t_cgroups topic)
+      groups <- STM.readTVar (t_cgroups topic)
 
       -- empty all groups
-      writeTVar (t_cgroups topic) $ flip fmap groups $ \group ->
+      STM.writeTVar (t_cgroups topic) $ flip fmap groups $ \group ->
         group { g_consumers = mempty }
 
       -- close all consumers
@@ -185,13 +168,13 @@ withTopic name partitions groupOffsets act =
         , reader <- fromMaybe [] (g_readers group)
         ]
 
-    mapConcurrently_ (readerDestroy topic) readers
+    mapConcurrently_ readerDestroy readers
 
 -- | Get the state of the latest committed offsets of the topic.
 getState :: Topic -> STM TopicState
 getState Topic{..} = do
-  cgroups <- readTVar t_cgroups
-  forM cgroups $ \group -> forM (g_comitted group) readTVar
+  cgroups <- STM.readTVar t_cgroups
+  forM cgroups $ \group -> forM (g_comitted group) STM.readTVar
 
 withProducer
   :: Hashable b
@@ -233,17 +216,17 @@ withConsumer topic@Topic{..} gname act = do
     -- retrieve an existing group or create a new one
     retrieve :: ConsumerGroupName -> STM ConsumerGroup
     retrieve name = do
-      groups <- readTVar t_cgroups
+      groups <- STM.readTVar t_cgroups
       group <- case HashMap.lookup name groups of
         Just g -> return g
         Nothing -> do
-          offsets <- traverse (const $ newTVar 0) t_partitions
+          offsets <- traverse (const $ STM.newTVar 0) t_partitions
           return ConsumerGroup
             { g_readers = Nothing
             , g_comitted = offsets
             , g_consumers = mempty
             }
-      writeTVar t_cgroups $ HashMap.insert name group groups
+      STM.writeTVar t_cgroups $ HashMap.insert name group groups
       return group
 
     -- open an existing group's readers
@@ -251,12 +234,12 @@ withConsumer topic@Topic{..} gname act = do
     openReaders group = do
       readers <- forConcurrently (HashMap.toList $ g_comitted group) $ \(pnumber, offsetVar) -> do
         let partition = t_partitions HashMap.! pnumber
-        readerNew partition pnumber offsetVar
+        readerNew t_name partition pnumber offsetVar
       atomically $ do
-        groups <- readTVar t_cgroups
+        groups <- STM.readTVar t_cgroups
         let g = groups HashMap.! gname
             g' = g { g_readers = Just readers }
-        writeTVar t_cgroups $ HashMap.insert gname g' groups
+        STM.writeTVar t_cgroups $ HashMap.insert gname g' groups
 
     add :: ConsumerId -> IO Consumer
     add cid = atomically $ do
@@ -265,16 +248,16 @@ withConsumer topic@Topic{..} gname act = do
       return new
       where
       addConsumer = do
-        groups <- readTVar t_cgroups
+        groups <- STM.readTVar t_cgroups
         newConsumer <- do
-          rvar <- newTVar []
+          rvar <- STM.newTVar []
           return $ Consumer topic rvar
 
         let group = groups HashMap.! gname
             group' = group { g_consumers = HashMap.insert cid newConsumer (g_consumers group) }
 
         -- add new consumer to group
-        writeTVar t_cgroups $ HashMap.insert gname group' groups
+        STM.writeTVar t_cgroups $ HashMap.insert gname group' groups
         return newConsumer
 
     remove :: ConsumerId -> Consumer -> IO ()
@@ -283,11 +266,11 @@ withConsumer topic@Topic{..} gname act = do
         removeConsumer
         rebalance gname
 
-      forConcurrently_ toClose $ readerDestroy topic
+      forConcurrently_ toClose readerDestroy
       where
       removeConsumer = do
         closeConsumer consumer
-        modifyTVar t_cgroups $ \groups ->
+        STM.modifyTVar t_cgroups $ \groups ->
           let group = groups HashMap.! gname
               remaining = HashMap.delete cid (g_consumers group)
               group' = group { g_consumers = remaining }
@@ -298,7 +281,7 @@ withConsumer topic@Topic{..} gname act = do
     -- resets moved readers to the latest checkpoint
     rebalance :: ConsumerGroupName -> STM [ReaderInstance]
     rebalance name = do
-      groups <- readTVar t_cgroups
+      groups <- STM.readTVar t_cgroups
       let group = groups HashMap.! name
           cids = HashMap.keys (g_consumers group)
           readerCount = maybe 0 length (g_readers group)
@@ -312,7 +295,7 @@ withConsumer topic@Topic{..} gname act = do
       forM_ (zip cids readerLists) $ \(c, readers) ->
         case HashMap.lookup c (g_consumers group) of
           Nothing -> error "rebalancing: missing consumer id"
-          Just (Consumer _ rvar) -> writeTVar rvar (cycle readers)
+          Just (Consumer _ rvar) -> STM.writeTVar rvar (cycle readers)
 
       after <- assignments group
 
@@ -320,15 +303,14 @@ withConsumer topic@Topic{..} gname act = do
       -- their last comitted offset.
       let changed = HashMap.elems $ after `HashMap.difference` before
       toReset <- forM changed $ \i -> do
-        offset <- readTVar (r_committed i)
+        offset <- STM.readTVar (r_committed i)
         return (offset, i)
-      forM_ toReset $ \(offset, rinstance) -> do
-        () <- return $ unsafePerformIO $ putStrLn "seeking from rebalance"
+      forM_ toReset $ \(offset, rinstance) ->
         readerSeek rinstance offset
 
       let (toClose, groups') = extractClosableReaders groups
       -- remove readers from groups without a consumer
-      writeTVar t_cgroups groups'
+      STM.writeTVar t_cgroups groups'
       -- return readers from groups without a consumer
       return toClose
       where
@@ -346,7 +328,7 @@ withConsumer topic@Topic{..} gname act = do
           -> STM (HashMap (ConsumerId, PartitionNumber) ReaderInstance)
         assignments g = do
           xss <- forM (HashMap.toList (g_consumers g)) $ \(cid, Consumer _ rvar) -> do
-            readers <- readTVar rvar
+            readers <- STM.readTVar rvar
             let deduped = case readers of
                   [] -> []
                   x:xs -> x : takeWhile (\y -> r_partition y /= r_partition x) xs
@@ -354,7 +336,7 @@ withConsumer topic@Topic{..} gname act = do
           return $ HashMap.fromList (concat xss)
 
 closeConsumer :: Consumer -> STM ()
-closeConsumer (Consumer _ var) =  writeTVar var []
+closeConsumer (Consumer _ var) =  STM.writeTVar var []
 
 newUUID :: IO UUID
 newUUID = do
@@ -368,93 +350,102 @@ data Meta = Meta TopicName PartitionNumber Offset
 -- Blocks until there is a message.
 read :: Consumer -> IO (ByteString, Meta)
 read (Consumer topic var) = atomically $ do
-  readers <- readTVar var
+  readers <- STM.readTVar var
   go [] readers
   where
-  go _ [] = retry
+  go _ [] = STM.retry
   go seen (r:rs) = do
     let pnumber = r_partition r
-    when (pnumber `elem` seen) retry
+    when (pnumber `elem` seen) STM.retry
     mval <- readerTryRead r
     case mval of
       Nothing -> go (pnumber : seen) rs
       Just (offset, Record bs) -> do
-        writeTVar var rs
+        STM.writeTVar var rs
         return (bs, Meta (t_name topic) pnumber offset)
 
 -- | If the partition was moved to a different consumer
 -- the commit will fail silently.
 commit :: Consumer -> Meta -> IO ()
 commit (Consumer _ var) (Meta _ pnumber offset) = atomically $ do
-  readers <- readTVar var
+  readers <- STM.readTVar var
   let mreader = find (\r -> r_partition r == pnumber) readers
   forM_ mreader $ \ReaderInstance{..} ->
-    writeTVar r_committed offset
+    STM.writeTVar r_committed offset
 
 readerSeek :: ReaderInstance -> Offset -> STM ()
 readerSeek ReaderInstance{..} offset = do
-  () <- return $ unsafePerformIO $ putStrLn "seek requested"
-  writeTVar r_nextOffset offset
+  next <- STM.readTVar r_expected
+  when (next /= offset) $ do
+    STM.writeTVar r_expected offset
 
 readerTryRead :: ReaderInstance -> STM (Maybe (Offset, Record))
-readerTryRead ReaderInstance{..} = tryTakeTMVar r_next
+readerTryRead ReaderInstance{..} = do
+  mval <- STM.tryTakeTMVar r_next
+  when (isJust mval) $ STM.modifyTVar r_expected (+1)
+  return mval
 
-readerDestroy :: Topic -> ReaderInstance -> IO ()
-readerDestroy Topic{..} ReaderInstance{..} = do
-  putStrLn "destroying worker"
-  cancel r_worker
-  Partition.closeReader r_reader
-  atomically $ writeTMVar r_next $ error $ unwords
-    [ "Topic (" <> Text.unpack (unTopicName t_name) <> "):"
-    , "reading from destroyed reader"
-    ]
+readerDestroy :: ReaderInstance -> IO ()
+readerDestroy ReaderInstance{..} = Async.cancel r_worker
 
-readerNew :: PartitionInstance -> PartitionNumber -> TVar Offset -> IO ReaderInstance
-readerNew (PartitionInstance partition) number offsetVar = do
+readerNew
+  :: TopicName
+  -> PartitionInstance
+  -> PartitionNumber
+  -> TVar Offset
+  -> IO ReaderInstance
+readerNew (TopicName tname) (PartitionInstance partition) number offsetVar = do
   reader <- Partition.openReader partition
-  start <- readTVarIO offsetVar
-  next <- newEmptyTMVarIO
-  nextOffset <- newTVarIO start
+  start <- STM.readTVarIO offsetVar
+  expectedVar <- STM.newTVarIO start
+  nextVar <- STM.newEmptyTMVarIO
 
-  let work mseek = do
-        const (return ()) $ threadDelay 5_000_000
-        forM_ mseek $ \pos -> do
-          putStrLn $ "seeking to " <>  show pos
-          Partition.seek reader (At pos)
-        -- blocks till a value is ready
+  -- the reader is only controlled by the worker
+  let work needle = do
+        -- check if seek is needed and if value in nextVar is still valid.
+        mseek <- atomically $ do
+          mval <- STM.tryReadTMVar nextVar
+          expected <- STM.readTVar expectedVar
+          case mval of
+            Nothing ->
+              if needle /= expected
+              then return $ Just expected
+              else return Nothing
+            Just (offset, _) ->
+              if offset == expected
+              then STM.retry -- wait till value is consumed
+              else do
+                -- there was a seek since last read.
+                -- Let's discard the value read and
+                -- move the needle to the new position.
+                _ <- STM.takeTMVar nextVar
+                return $ Just expected
+
+        forM_ mseek $ \pos -> Partition.seek reader (At pos)
+
+        -- block till a value is read
         (offset, record) <- Partition.read reader
-        putStrLn $ "just read " <>  show offset
-        mseek' <- atomically $ do
-          mcurrent <- tryReadTMVar next
-          nextO    <- readTVar nextOffset
-          let currentIsPopulated  = case mcurrent of
-                Nothing -> False
-                Just (o, _) -> o == nextO
 
-          if offset == nextO then do
-            () <- return $ unsafePerformIO $ putStrLn $ "work: override " <> show offset
-            writeTMVar next (offset, record) -- override whatever is there.
-            writeTVar nextOffset offset
-            return Nothing
-          else if offset == nextO + 1 && currentIsPopulated then do
-            () <- return $ unsafePerformIO $ putStrLn $ "work: wait to put " <> show offset
-            -- block till previous value is consumed
-            putTMVar next (offset, record)
-            writeTVar nextOffset offset
-            return Nothing
-          else do
-            () <- return $ unsafePerformIO $ putStrLn $ "work: expected " <> show nextO <> " but read " <> show offset
-            _ <- tryTakeTMVar next -- empty TMVar
-            return (Just nextO)
-        work mseek'
+        atomically $ do
+          expected <- STM.readTVar expectedVar
+          when (expected == offset ) $ STM.putTMVar nextVar (offset, record)
 
-  worker <- async (work (Just start))
+        work (offset + 1)
 
-  return ReaderInstance
-    { r_reader = reader
-    , r_worker = worker
-    , r_next = next
-    , r_nextOffset = nextOffset
-    , r_partition = number
-    , r_committed = offsetVar
-    }
+      destroy worker = do
+        Async.cancel worker
+        Partition.closeReader reader
+        atomically $ STM.writeTMVar nextVar $ error $ unwords
+          [ "Topic (" <> Text.unpack tname <> "):"
+          , "reading from destroyed reader"
+          ]
+
+  mdo
+    worker <- Async.async (work 0 `finally` destroy worker)
+    return ReaderInstance
+      { r_worker = worker
+      , r_next = nextVar
+      , r_expected = expectedVar
+      , r_partition = number
+      , r_committed = offsetVar
+      }
