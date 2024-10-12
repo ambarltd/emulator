@@ -73,9 +73,9 @@ testTopic with = do
         T.write producer one
         T.write producer two
       T.withConsumer topic (ConsumerGroupName "test-group") $ \consumer -> do
-          (one_, Meta _ _ n1) <- T.read consumer
+          Right (one_, Meta _ _ n1) <- T.read consumer
           n1 `shouldBe` 0
-          (two_, Meta _ _ n2) <- T.read consumer
+          Right (two_, Meta _ _ n2) <- T.read consumer
           n2 `shouldBe` 1
           Record one_ `shouldBe` snd one
           Record two_ `shouldBe` snd two

@@ -90,7 +90,7 @@ newtype ConsumerId = ConsumerId UUID
 -- The particular instances and their number is adjusted through
 -- rebalances at consumer creation and descruction.
 -- Contains an infinite cycling list of reader instances for round-robin picking
-data Consumer = Consumer Topic (TVar [PartitionReader])
+data Consumer = Consumer Topic (TVar (Maybe [PartitionReader]))
 
 newtype UUID = UUID Text
   deriving Show
@@ -239,7 +239,7 @@ withConsumer topic@Topic{..} gname act = do
       addConsumer = do
         groups <- STM.readTVar t_cgroups
         newConsumer <- do
-          rvar <- STM.newTVar []
+          rvar <- STM.newTVar (Just [])
           return $ Consumer topic rvar
 
         let group = groups HashMap.! gname
@@ -284,7 +284,10 @@ withConsumer topic@Topic{..} gname act = do
       forM_ (zip cids readerLists) $ \(c, readers) ->
         case HashMap.lookup c (g_consumers group) of
           Nothing -> error "rebalancing: missing consumer id"
-          Just (Consumer _ rvar) -> STM.writeTVar rvar (cycle readers)
+          Just (Consumer _ rvar) -> STM.writeTVar rvar $
+            if null readers
+             then Just []
+             else Just (cycle readers)
 
       after <- assignments group
 
@@ -319,13 +322,14 @@ withConsumer topic@Topic{..} gname act = do
           xss <- forM (HashMap.toList (g_consumers g)) $ \(cid, Consumer _ rvar) -> do
             readers <- STM.readTVar rvar
             let deduped = case readers of
-                  [] -> []
-                  x:xs -> x : takeWhile (\y -> r_partition y /= r_partition x) xs
+                  Just [] -> []
+                  Just (x:xs) -> x : takeWhile (\y -> r_partition y /= r_partition x) xs
+                  Nothing -> []
             return [ ((cid, r_partition r), r) | r <- deduped ]
           return $ HashMap.fromList (concat xss)
 
 closeConsumer :: Consumer -> STM ()
-closeConsumer (Consumer _ var) =  STM.writeTVar var []
+closeConsumer (Consumer _ var) =  STM.writeTVar var Nothing
 
 newUUID :: IO UUID
 newUUID = do
@@ -335,12 +339,17 @@ newUUID = do
 
 data Meta = Meta TopicName PartitionNumber Offset
 
+data ReadError
+  = ReadingFromClosedConsumer
+
 -- | Try to read all readers assigned to the consumer in round-robin fashion.
 -- Blocks until there is a message.
-read :: Consumer -> IO (ByteString, Meta)
+read :: Consumer -> IO (Either ReadError (ByteString, Meta))
 read (Consumer topic var) = atomically $ do
-  readers <- STM.readTVar var
-  go [] readers
+  mreaders <- STM.readTVar var
+  case mreaders of
+    Nothing -> return $ Left ReadingFromClosedConsumer
+    Just rs -> go [] rs
   where
   go _ [] = STM.retry
   go seen (PartitionReader reader pnumber _: rs) = do
@@ -349,13 +358,13 @@ read (Consumer topic var) = atomically $ do
     case mval of
       Nothing -> go (pnumber : seen) rs
       Just (offset, Record bs) -> do
-        STM.writeTVar var rs
-        return (bs, Meta (t_name topic) pnumber offset)
+        STM.writeTVar var (Just rs)
+        return $ Right (bs, Meta (t_name topic) pnumber offset)
 
 -- | If the partition was moved to a different consumer
 -- the commit will fail silently.
 commit :: Consumer -> Meta -> IO ()
 commit (Consumer _ var) (Meta _ pnumber offset) = atomically $ do
-  readers <- STM.readTVar var
-  let mreader = find (\r -> r_partition r == pnumber) readers
+  mreaders <- STM.readTVar var
+  let mreader = find (\r -> r_partition r == pnumber) $ fromMaybe [] mreaders
   forM_ mreader $ \r -> STM.writeTVar (r_committed r) offset

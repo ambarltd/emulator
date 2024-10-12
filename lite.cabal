@@ -98,3 +98,4 @@ benchmark lite-bench
         , temporary
         , text
         , time
+        , unordered-containers
