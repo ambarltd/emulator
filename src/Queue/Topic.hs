@@ -31,7 +31,7 @@ import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.List (find)
 import Data.List.Extra (chunksOf)
-import Data.Maybe (fromMaybe, isNothing)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
@@ -73,10 +73,15 @@ data PartitionReader = PartitionReader
   , r_committed :: TVar Offset
   }
 
+data GroupState
+  = Initialising
+  | Ready [PartitionReader]
+  | Closed
+
 -- | A group of ordered readers of independent streams (partitions).
 -- Consumers always stream data from a disjoint sets of partitions.
 data ConsumerGroup = ConsumerGroup
-  { g_readers :: Maybe [PartitionReader]
+  { g_state :: GroupState
   , g_comitted :: HashMap PartitionNumber (TVar Offset)
   -- ^ comitted offsets. The TVar is shared with the STMReader
   , g_consumers :: HashMap ConsumerId Consumer
@@ -90,6 +95,7 @@ newtype ConsumerId = ConsumerId UUID
 -- The particular instances and their number is adjusted through
 -- rebalances at consumer creation and descruction.
 -- Contains an infinite cycling list of reader instances for round-robin picking
+-- A value of Nothing means that the consumer is closed.
 data Consumer = Consumer Topic (TVar (Maybe [PartitionReader]))
 
 newtype UUID = UUID Text
@@ -119,7 +125,7 @@ withTopic name partitions groupOffsets act =
         offsets <- forM partitionOffsets $ \offset ->
           STM.newTVar offset
         return ConsumerGroup
-          { g_readers = Nothing
+          { g_state = Closed
           , g_comitted = offsets
           , g_consumers = mempty
           }
@@ -149,7 +155,8 @@ withTopic name partitions groupOffsets act =
       return
         [ reader
         | group <- HashMap.elems groups
-        , reader <- fromMaybe [] (g_readers group)
+        , Ready readers <- [g_state group]
+        , reader <- readers
         ]
 
     forConcurrently_ readers $ R.destroy . r_reader
@@ -192,21 +199,28 @@ write Producer{..} msg = do
 
 withConsumer :: Topic -> ConsumerGroupName -> (Consumer -> IO b) -> IO b
 withConsumer topic@Topic{..} gname act = do
-  group <- atomically (retrieve gname)
-  when (isNothing $ g_readers group) $ openReaders group
+  group <- atomically (prepare gname)
+  case g_state group of
+    Initialising -> openReaders group
+    Closed -> error "withConsumer: picked closed group"
+    Ready _ -> return ()
   cid <- ConsumerId <$> newUUID
   bracket (add cid) (remove cid) act
   where
     -- retrieve an existing group or create a new one
-    retrieve :: ConsumerGroupName -> STM ConsumerGroup
-    retrieve name = do
+    prepare :: ConsumerGroupName -> STM ConsumerGroup
+    prepare name = do
       groups <- STM.readTVar t_cgroups
       group <- case HashMap.lookup name groups of
-        Just g -> return g
+        Just g -> case g_state g of
+          Closed -> return g { g_state = Initialising } -- we will initialise the group
+          Initialising -> STM.retry              -- someone else is initialising it. Let's wait
+          Ready _ -> return g
         Nothing -> do
+          -- create a new group
           offsets <- traverse (const $ STM.newTVar 0) t_partitions
           return ConsumerGroup
-            { g_readers = Nothing
+            { g_state = Initialising
             , g_comitted = offsets
             , g_consumers = mempty
             }
@@ -227,7 +241,7 @@ withConsumer topic@Topic{..} gname act = do
       atomically $ do
         groups <- STM.readTVar t_cgroups
         let g = groups HashMap.! gname
-            g' = g { g_readers = Just readers }
+            g' = g { g_state = Ready readers }
         STM.writeTVar t_cgroups $ HashMap.insert gname g' groups
 
     add :: ConsumerId -> IO Consumer
@@ -273,10 +287,14 @@ withConsumer topic@Topic{..} gname act = do
       groups <- STM.readTVar t_cgroups
       let group = groups HashMap.! name
           cids = HashMap.keys (g_consumers group)
-          readerCount = maybe 0 length (g_readers group)
+          allReaders = case g_state group of
+            Ready rs -> rs
+            Closed -> []
+            Initialising -> []
+          readerCount = length allReaders
           consumerCount = length cids
           chunkSize = ceiling @Double $ fromIntegral readerCount / fromIntegral consumerCount
-          readerLists = chunksOf chunkSize (fromMaybe [] $ g_readers group) ++ repeat []
+          readerLists = chunksOf chunkSize allReaders ++ repeat []
 
       before <- assignments group
 
@@ -306,12 +324,16 @@ withConsumer topic@Topic{..} gname act = do
       -- return readers from groups without a consumer
       return toClose
       where
-        extractClosableReaders groups = mapAccumR f [] groups
+        extractClosableReaders = mapAccumR f []
           where
           f acc g =
-            let readers = fromMaybe [] (g_readers g) in
+            let readers = case g_state g of
+                  Ready rs -> rs
+                  Closed -> []
+                  Initialising -> []
+            in
             if HashMap.null (g_consumers g)
-               then (readers ++ acc, g { g_readers = Nothing })
+               then (readers ++ acc, g { g_state = Closed })
                else (acc, g)
 
         -- get readers assigned to each consumer id.

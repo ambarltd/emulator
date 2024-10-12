@@ -70,7 +70,7 @@ benchTopic preFilled msgs = Criterion.bgroup "topic" $
   )
   ++
   flip fmap preFilled (\(PartitionCount n, topic) ->
-    Criterion.bench (unwords ["read", show count, "messages,", show n, "partitions,", show n, "consumer"]) $
+    Criterion.bench (unwords ["read", show count, "messages,", show n, "partitions,", show n, "consumer" <> plural n]) $
     Criterion.whnfIO $
       replicateConcurrently_ n $ do
         T.withConsumer topic (ConsumerGroupName "bench-group") $ \consumer ->
@@ -145,8 +145,10 @@ withTempPath :: (FilePath -> IO a) -> IO a
 withTempPath = withSystemTempDirectory "partition-XXXXX"
 
 withFilePartition  :: FilePath -> (F.FilePartition -> IO b) -> IO b
-withFilePartition path act =
-  F.withFilePartition path "file-partition" act
+withFilePartition path = F.withFilePartition path "file-partition"
+
+plural :: Int -> String
+plural n = if n == 1 then "" else "s"
 
 newtype PartitionCount = PartitionCount Int
   deriving newtype (Num, Eq, Ord)
