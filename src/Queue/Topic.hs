@@ -23,7 +23,7 @@ import Control.Concurrent.Async (forConcurrently_ , forConcurrently)
 import qualified Control.Concurrent.STM as STM
 import Control.Concurrent.STM (STM , TVar)
 import Control.Exception (bracket)
-import Control.Monad (forM_, forM, when)
+import Control.Monad (forM_, forM, when, unless)
 import Data.ByteString (ByteString)
 import Data.Foldable (sequenceA_)
 import Data.Hashable (Hashable(..))
@@ -36,7 +36,6 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Time.Clock (nominalDiffTimeToSeconds)
-import Data.Traversable (mapAccumR)
 import GHC.Stack (HasCallStack)
 import System.Random (randomIO)
 
@@ -203,30 +202,36 @@ write Producer{..} msg = do
 withConsumer :: HasCallStack => Topic -> ConsumerGroupName -> (Consumer -> IO b) -> IO b
 withConsumer topic@Topic{..} gname act = do
   cid <- ConsumerId <$> newUUID
-  bracket (acquire gname cid) (remove cid) act
+  bracket (acquire gname cid) (remove gname cid) act
   where
     acquire name cid = do
       (new, mg) <- STM.atomically $ do
-        group <- prepare name
-        let shouldOpenReaders = case g_state group of
-              Initialising -> True
-              Closed -> error "picked closed group"
-              Ready _ -> False
-        new <- addConsumer cid
-        _ <- rebalance gname
-        mg <- if shouldOpenReaders
-           then Just . (HashMap.! name) <$> STM.readTVar t_cgroups
-           else return Nothing
-        return (new, mg)
+        groups <- STM.readTVar t_cgroups
+        group <- prepare name groups
+        new <- do
+          rvar <- STM.newTVar (Just [])
+          return $ Consumer topic rvar
+
+        let group' = group { g_consumers = HashMap.insert cid new (g_consumers group) }
+
+        rebalance group'
+
+        STM.writeTVar t_cgroups $ HashMap.insert name group' groups
+        return $ case g_state group' of
+          Initialising -> (new, Just group')
+          Closed -> error "closed group"
+          Ready _ -> (new, Nothing)
 
       forM_ mg $ openReaders name
       return new
 
     -- retrieve an existing group or create a new one
-    prepare :: ConsumerGroupName -> STM ConsumerGroup
-    prepare name = do
-      groups <- STM.readTVar t_cgroups
-      group <- case HashMap.lookup name groups of
+    prepare
+      :: ConsumerGroupName
+      -> HashMap ConsumerGroupName ConsumerGroup
+      -> STM ConsumerGroup
+    prepare name groups =
+      case HashMap.lookup name groups of
         Just g -> case g_state g of
           Closed -> return g { g_state = Initialising } -- we will initialise the group
           Initialising -> STM.retry                     -- someone else is initialising it. Let's wait
@@ -239,22 +244,6 @@ withConsumer topic@Topic{..} gname act = do
             , g_comitted = offsets
             , g_consumers = mempty
             }
-      STM.writeTVar t_cgroups $ HashMap.insert name group groups
-      return group
-
-    addConsumer :: ConsumerId -> STM Consumer
-    addConsumer cid = do
-      groups <- STM.readTVar t_cgroups
-      newConsumer <- do
-        rvar <- STM.newTVar (Just [])
-        return $ Consumer topic rvar
-
-      let group = groups HashMap.! gname
-          group' = group { g_consumers = HashMap.insert cid newConsumer (g_consumers group) }
-
-      -- add new consumer to group
-      STM.writeTVar t_cgroups $ HashMap.insert gname group' groups
-      return newConsumer
 
     -- open an existing group's readers
     openReaders :: ConsumerGroupName -> ConsumerGroup -> IO ()
@@ -274,32 +263,38 @@ withConsumer topic@Topic{..} gname act = do
         STM.writeTVar t_cgroups $ HashMap.insert name g' groups
 
 
-    remove :: ConsumerId -> Consumer -> IO ()
-    remove cid consumer = do
+    remove :: ConsumerGroupName -> ConsumerId -> Consumer -> IO ()
+    remove name cid consumer = do
       toClose <- atomicallyNamed "topic 6" $ do
-        removeConsumer
-        rebalance gname
+        closeConsumer consumer
+        groups <- STM.readTVar t_cgroups
+        let group_before = groups HashMap.! gname
+            remaining = HashMap.delete cid (g_consumers group_before)
+            group = group_before
+              { g_consumers = remaining
+              , g_state =
+                  if HashMap.null remaining
+                  then Closed
+                  else g_state group_before
+              }
+        unless (HashMap.null remaining) $ rebalance group
+        STM.writeTVar t_cgroups $ HashMap.insert name group groups
+        return $ case g_state group of
+          Initialising -> error "unexpected initialising state"
+          Ready _ -> []
+          Closed -> case g_state group_before of
+            Ready rs -> rs
+            _ -> []
 
       forConcurrently_ toClose $ R.destroy . r_reader
-      where
-      removeConsumer = do
-        closeConsumer consumer
-        STM.modifyTVar t_cgroups $ \groups ->
-          let group = groups HashMap.! gname
-              remaining = HashMap.delete cid (g_consumers group)
-              group' = group { g_consumers = remaining }
-          in
-          HashMap.insert gname group' groups
 
     -- re-distribute readers across all existing consumers
     -- resets moved readers to the latest checkpoint
-    rebalance :: ConsumerGroupName -> STM [PartitionReader]
-    rebalance name = do
-      groups <- STM.readTVar t_cgroups
-      let group = groups HashMap.! name
+    rebalance :: ConsumerGroup -> STM ()
+    rebalance group =
       case g_state group of
         Closed -> error "rebalancing closed consumer"
-        Initialising -> return []
+        Initialising -> error "rebalancing initialising consumer"
         Ready allReaders -> do
           let cids = HashMap.keys (g_consumers group)
               readerCount = length allReaders
@@ -323,30 +318,10 @@ withConsumer topic@Topic{..} gname act = do
           -- readers assigned to different customers should be reset to
           -- their last comitted offset.
           let changed = HashMap.elems $ after `HashMap.difference` before
-          toReset <- forM changed $ \(PartitionReader reader _ committedVar) -> do
+          forM_ changed $ \(PartitionReader reader _ committedVar) -> do
             offset <- STM.readTVar committedVar
-            return (offset, reader)
-          forM_ toReset $ \(offset, rinstance) ->
-            R.seek rinstance offset
-
-          let (toClose, groups') = extractClosableReaders groups
-          -- remove readers from groups without a consumer
-          STM.writeTVar t_cgroups groups'
-          -- return readers from groups without a consumer
-          return toClose
+            R.seek reader offset
       where
-        extractClosableReaders = mapAccumR f []
-          where
-          f acc g =
-            let readers = case g_state g of
-                  Ready rs -> rs
-                  Closed -> []
-                  Initialising -> []
-            in
-            if HashMap.null (g_consumers g)
-               then (readers ++ acc, g { g_state = Closed })
-               else (acc, g)
-
         -- get readers assigned to each consumer id.
         assignments
           :: ConsumerGroup
