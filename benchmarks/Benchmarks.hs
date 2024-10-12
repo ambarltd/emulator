@@ -74,7 +74,7 @@ benchTopic preFilled msgs = Criterion.bgroup "topic" $
     Criterion.whnfIO $
       replicateConcurrently_ n $ do
         T.withConsumer topic (ConsumerGroupName "bench-group") $ \consumer ->
-          replicateM_ count (T.read consumer)
+          replicateM_ (count `div` n) (T.read consumer)
   )
   ++
   [ Criterion.bench (unwords ["write", show count, "messages to 1 partition in series"]) $

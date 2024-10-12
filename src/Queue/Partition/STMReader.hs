@@ -17,7 +17,6 @@ import Control.Concurrent.STM
   ( STM
   , TVar
   , TMVar
-  , atomically
   )
 import Control.Exception (finally)
 import Control.Monad (forM_, when)
@@ -29,6 +28,7 @@ import Queue.Partition
   , Offset
   , Record(..)
   , Position(..)
+  , atomicallyNamed
   )
 
 import qualified Queue.Partition as Partition
@@ -68,7 +68,7 @@ new partition start = do
   -- the reader is only controlled by the worker
   let work needle = do
         -- check if seek is needed and if value in nextVar is still valid.
-        mseek <- atomically $ do
+        mseek <- atomicallyNamed "STMReader" $ do
           mval <- STM.tryReadTMVar nextVar
           expected <- STM.readTVar expectedVar
           case mval of
@@ -91,7 +91,7 @@ new partition start = do
         -- block till a value is read
         (offset, record) <- Partition.read reader
 
-        atomically $ do
+        atomicallyNamed "STMReader" $ do
           expected <- STM.readTVar expectedVar
           when (expected == offset ) $ STM.putTMVar nextVar (offset, record)
 
@@ -99,7 +99,7 @@ new partition start = do
 
       cleanup = do
         Partition.closeReader reader
-        atomically $ STM.writeTMVar nextVar $ error $ unwords
+        atomicallyNamed "STMReader" $ STM.writeTMVar nextVar $ error $ unwords
           [ "reading from destroyed reader" ]
 
   worker <- Async.async (work 0 `finally` cleanup)
