@@ -8,6 +8,7 @@
     , Consumer
     , ConsumerGroupName(..)
     , Meta(..)
+    , ReadError(..)
     , withConsumer
     , read
     , commit
@@ -57,6 +58,7 @@ data Topic = Topic
   }
 
 newtype TopicName = TopicName { unTopicName :: Text }
+  deriving Show
   deriving newtype (Eq, Ord)
 
 newtype PartitionNumber = PartitionNumber { unPartitionNumber :: Int }
@@ -362,11 +364,13 @@ newUUID = do
   return $ UUID $ Text.pack $ show now <> show fixed
 
 data Meta = Meta TopicName PartitionNumber Offset
+  deriving (Show, Eq, Ord)
 
 data ReadError
   = ClosedConsumer
   | EndOfPartition -- ^ only thrown if there is no more possibility of
                    -- other threads writing to the Topic.
+  deriving (Show, Eq, Ord)
 
 -- | Try to read all readers assigned to the consumer in round-robin fashion.
 -- Blocks until there is a message.
@@ -376,7 +380,6 @@ read (Consumer topic var) = do
     mreaders <- STM.readTVar var
     case mreaders of
       Nothing -> return $ Left ClosedConsumer
-      Just [] -> return $ Left ClosedConsumer
       Just rs -> go [] rs
   where
     -- if we are blocked is because no new writing threads can be
