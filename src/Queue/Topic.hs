@@ -14,6 +14,8 @@
 
     , Producer
     , withProducer
+    , hashPartitioner
+    , modPartitioner
     , write
     ) where
 
@@ -43,10 +45,10 @@ import Queue.Partition
   ( Partition
   , Offset
   , Record(..)
-  , atomicallyNamed
   )
 import qualified Queue.Partition as Partition
 import qualified Queue.Partition.STMReader as R
+import Utils.STM (atomicallyNamed)
 
 -- | Abstraction for a group of independent streams (partitions)
 data Topic = Topic
@@ -166,17 +168,29 @@ getState Topic{..} = do
   cgroups <- STM.readTVar t_cgroups
   forM cgroups $ \group -> forM (g_comitted group) STM.readTVar
 
+newtype Partitioner a = Partitioner (Int -> a -> PartitionNumber)
+
+-- | Choose a partition based on the hash of a partitioning key.
+hashPartitioner :: Hashable key => (a -> key) -> Partitioner a
+hashPartitioner f = Partitioner $ \partitionCount x ->
+  PartitionNumber $ hash (f x) `mod` partitionCount
+
+-- | Control exactly which partition to use for a message.
+modPartitioner :: (a -> Int) -> Partitioner a
+modPartitioner f = Partitioner $ \partitionCount x ->
+  PartitionNumber $ f x `mod` partitionCount
+
 withProducer
-  :: (HasCallStack, Hashable b)
+  :: HasCallStack
   => Topic
-  -> (a -> b)              -- ^ partitioner
+  -> Partitioner a
   -> (a -> ByteString)     -- ^ encoder
   -> (Producer a -> IO c)
   -> IO c
-withProducer topic partitioner encode act =
+withProducer topic (Partitioner p) encode act =
   act $ Producer
     { p_topic = topic
-    , p_select = PartitionNumber . (`mod` partitionCount) . hash . partitioner
+    , p_select = p partitionCount
     , p_encode = Record . encode
     }
   where

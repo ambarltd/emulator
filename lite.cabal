@@ -46,6 +46,7 @@ library lite-lib
         Queue.Partition
         Queue.Partition.File
         Queue.Partition.STMReader
+        Utils.STM
     build-depends:
         base ^>=4.17.2.1
         , async

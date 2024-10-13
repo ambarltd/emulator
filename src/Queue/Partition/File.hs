@@ -40,6 +40,7 @@ import System.Directory (doesFileExist, getFileSize, removeFile)
 import System.FilePath ((</>))
 
 import Queue.Partition
+import Utils.STM (atomicallyNamed)
 
 -- | A file-backed Partition for unformatted JSON entries.
 --

@@ -28,8 +28,8 @@ import Queue.Partition
   , Offset
   , Record(..)
   , Position(..)
-  , atomicallyNamed
   )
+import Utils.STM (atomicallyNamed)
 
 import qualified Queue.Partition as Partition
 

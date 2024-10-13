@@ -4,11 +4,7 @@ module Queue.Partition
   , Offset(..)
   , Record(..)
   , withReader
-  , atomicallyNamed
   ) where
-
-import qualified Control.Exception as E
-import qualified Control.Concurrent.STM as STM
 
 import Control.Exception (bracket)
 import Data.ByteString (ByteString)
@@ -48,20 +44,4 @@ withReader partition position act =
   bracket (openReader partition) closeReader $ \reader -> do
     seek reader position
     act reader
-
-atomicallyNamed :: String -> STM.STM a -> IO a
-atomicallyNamed msg = E.handle f . STM.atomically
-  where
-  f :: E.BlockedIndefinitelyOnSTM -> IO a
-  f = E.throwIO . AnnotatedException msg . E.toException
-
-data AnnotatedException = AnnotatedException String E.SomeException
-  deriving Show
-
-instance E.Exception AnnotatedException where
-  displayException (AnnotatedException msg ex) =
-    unlines
-      [ msg
-      , E.displayException ex
-      ]
 

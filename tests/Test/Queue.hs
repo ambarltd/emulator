@@ -66,18 +66,35 @@ newtype PartitionCount = PartitionCount Int
 
 testTopic :: (forall b. PartitionCount -> (Topic -> IO b) -> IO b) -> Spec
 testTopic with = do
-  it "reads from a single partition" $
+  it "1 consumer reads from 1 partition" $
     with (PartitionCount 1) $ \topic -> do
       one : two : _ <- return $ zip ([0..] :: [Int]) messages
-      T.withProducer topic fst (unRecord . snd) $ \producer -> do
+      T.withProducer topic (T.modPartitioner fst) (unRecord . snd) $ \producer -> do
         T.write producer one
         T.write producer two
       T.withConsumer topic (ConsumerGroupName "test-group") $ \consumer -> do
           Right (one_, Meta _ _ n1) <- T.read consumer
           n1 `shouldBe` 0
+          Record one_ `shouldBe` snd one
           Right (two_, Meta _ _ n2) <- T.read consumer
           n2 `shouldBe` 1
+          Record two_ `shouldBe` snd two
+
+  it "1 consumer reads from 2 partitions" $
+    with (PartitionCount 2) $ \topic -> do
+      one : two : _ <- return $ zip ([0..] :: [Int]) messages
+      T.withProducer topic (T.modPartitioner fst) (unRecord . snd) $ \producer -> do
+        T.write producer one
+        T.write producer two
+      T.withConsumer topic (ConsumerGroupName "test-group") $ \consumer -> do
+          Right (one_, Meta _ p1 n1) <- T.read consumer
+          p1 `shouldBe` 0
+          n1 `shouldBe` 0
           Record one_ `shouldBe` snd one
+
+          Right (two_, Meta _ p2 n2) <- T.read consumer
+          p2 `shouldBe` 1
+          n2 `shouldBe` 0
           Record two_ `shouldBe` snd two
 
 testPartition :: Partition a => (forall b. FilePath -> (a -> IO b) -> IO b) -> Spec
