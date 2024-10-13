@@ -2,13 +2,16 @@ module Test.Queue (testQueues) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, wait, concurrently)
-import Control.Monad (replicateM)
+import Control.Monad (replicateM, forM_)
 import Data.Char (isAscii)
+import Data.Either (isRight)
+import Data.List ((\\))
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Text as Text
+import Data.Foldable (traverse_)
 import Data.Text.Encoding as Text
 import System.IO.Temp (withSystemTempDirectory)
-import Test.Hspec (shouldBe, Spec, it, describe)
+import Test.Hspec (Spec, it, describe, shouldBe, shouldSatisfy)
 import Foreign.Marshal.Utils (withMany)
 
 import Queue.Topic
@@ -97,11 +100,28 @@ testTopic with = do
         n2 `shouldBe` 0
         Record two_ `shouldBe` snd two
 
-  it "detects end of partition" $
-    with (PartitionCount 1) $ \topic -> do
-      T.withConsumer topic group $ \consumer -> do
-        r <- T.read consumer
-        r `shouldBe` Left T.EndOfPartition
+  it "allows consumers without readers" $
+    with (PartitionCount 0) $ \topic ->
+      T.withConsumer topic group $ \_ -> return ()
+
+  it "reads ordered per partition" $ do
+    with (PartitionCount 2) $ \topic -> do
+      let count' = 20
+          msgs' = take count' msgs
+
+      withProducer topic $ \producer ->
+        traverse_ (T.write producer) msgs'
+
+      T.withConsumer topic group $ \consumer1 ->
+        T.withConsumer topic group $ \consumer2 ->
+        forM_ [consumer1, consumer2] $ \consumer -> do
+          rs <- replicateM (count' `div` 2) (T.read consumer)
+          -- all succeed
+          rs `shouldSatisfy` all isRight
+          -- keeps order in which was written
+          Right recs <- return $ traverse (fmap $ Record . fst) rs
+          let written = fmap snd msgs'
+          recs `shouldBe` (written \\ (written \\ recs))
   where
     msgs :: [(Int, Record)]
     msgs = zip ([0..] :: [Int]) messages

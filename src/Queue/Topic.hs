@@ -312,13 +312,16 @@ withConsumer topic@Topic{..} name act = do
   rebalance group =
     case g_state group of
       Closed -> error "rebalancing closed consumer"
-      Initialising -> error $ "rebalancing initialising consumer"
+      Initialising -> error "rebalancing initialising consumer"
       Ready allReaders -> do
         let cids = HashMap.keys (g_consumers group)
             readerCount = length allReaders
             consumerCount = length cids
             chunkSize = ceiling @Double $ fromIntegral readerCount / fromIntegral consumerCount
-            readerLists = chunksOf chunkSize allReaders ++ repeat []
+            chunks = if chunkSize > 0
+              then chunksOf chunkSize allReaders
+              else []
+            readerLists = chunks ++ repeat []
 
         before <- assignments group
 
