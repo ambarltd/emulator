@@ -23,8 +23,8 @@ import Prelude hiding (read)
 
 import Control.Concurrent.Async (forConcurrently_ , forConcurrently)
 import qualified Control.Concurrent.STM as STM
-import Control.Concurrent.STM (STM , TVar)
-import Control.Exception (bracket)
+import Control.Concurrent.STM (STM, TVar, atomically)
+import Control.Exception (bracket, handle, BlockedIndefinitelyOnSTM)
 import Control.Monad (forM_, forM, when, unless)
 import Data.ByteString (ByteString)
 import Data.Foldable (sequenceA_)
@@ -48,7 +48,6 @@ import Queue.Partition
   )
 import qualified Queue.Partition as Partition
 import qualified Queue.Partition.STMReader as R
-import Utils.STM (atomicallyNamed)
 
 -- | Abstraction for a group of independent streams (partitions)
 data Topic = Topic
@@ -282,7 +281,7 @@ withConsumer topic@Topic{..} name act = do
 
   remove :: ConsumerId -> Consumer -> IO ()
   remove cid consumer = do
-    toClose <- atomicallyNamed "topic 6" $ do
+    toClose <- atomically $ do
       closeConsumer consumer
       groups <- STM.readTVar t_cgroups
       let group_before = groups HashMap.! name
@@ -365,32 +364,40 @@ newUUID = do
 data Meta = Meta TopicName PartitionNumber Offset
 
 data ReadError
-  = ReadingFromClosedConsumer
+  = ClosedConsumer
+  | EndOfPartition -- ^ only thrown if there is no more possibility of
+                   -- other threads writing to the Topic.
 
 -- | Try to read all readers assigned to the consumer in round-robin fashion.
 -- Blocks until there is a message.
 read :: HasCallStack => Consumer -> IO (Either ReadError (ByteString, Meta))
-read (Consumer topic var) = atomicallyNamed "topic 7" $ do
-  mreaders <- STM.readTVar var
-  case mreaders of
-    Nothing -> return $ Left ReadingFromClosedConsumer
-    Just [] -> return $ Left ReadingFromClosedConsumer
-    Just rs -> go [] rs
+read (Consumer topic var) = do
+  handle whenBlocked $ atomically $ do
+    mreaders <- STM.readTVar var
+    case mreaders of
+      Nothing -> return $ Left ClosedConsumer
+      Just [] -> return $ Left ClosedConsumer
+      Just rs -> go [] rs
   where
-  go _ [] = STM.retry
-  go seen (PartitionReader reader pnumber _: rs) = do
-    when (pnumber `elem` seen) STM.retry
-    mval <- R.tryRead reader
-    case mval of
-      Nothing -> go (pnumber : seen) rs
-      Just (offset, Record bs) -> do
-        STM.writeTVar var (Just rs)
-        return $ Right (bs, Meta (t_name topic) pnumber offset)
+    -- if we are blocked is because no new writing threads can be
+    -- created and we are at the end of the partition.
+    whenBlocked :: BlockedIndefinitelyOnSTM -> IO (Either ReadError a)
+    whenBlocked _ = return $ Left EndOfPartition
+
+    go _ [] = STM.retry
+    go seen (PartitionReader reader pnumber _: rs) = do
+      when (pnumber `elem` seen) STM.retry
+      mval <- R.tryRead reader
+      case mval of
+        Nothing -> go (pnumber : seen) rs
+        Just (offset, Record bs) -> do
+          STM.writeTVar var (Just rs)
+          return $ Right (bs, Meta (t_name topic) pnumber offset)
 
 -- | If the partition was moved to a different consumer
 -- the commit will fail silently.
 commit :: HasCallStack => Consumer -> Meta -> IO ()
-commit (Consumer _ var) (Meta _ pnumber offset) = atomicallyNamed "topic 8" $ do
+commit (Consumer _ var) (Meta _ pnumber offset) = atomically $ do
   mreaders <- STM.readTVar var
   let mreader = find (\r -> r_partition r == pnumber) $ fromMaybe [] mreaders
   forM_ mreader $ \r -> STM.writeTVar (r_committed r) offset

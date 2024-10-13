@@ -11,6 +11,7 @@ import qualified Control.Concurrent.STM as STM
 import Control.Concurrent.STM
   ( TVar
   , TMVar
+  , atomically
   )
 import Control.Exception (bracket, bracketOnError)
 import Control.Monad (void, unless, when)
@@ -222,10 +223,10 @@ instance Partition FilePartition where
             Bytes byteOffset <- readIndexEntry (p_index $ r_partition info) offset
             hSeek handle AbsoluteSeek (fromIntegral byteOffset)
 
-      atomicallyNamed "File" $ do
+      atomicallyNamed "file.seek" $ do
         STM.putTMVar var info
     where
-    acquire = atomicallyNamed "File" $ do
+    acquire = atomicallyNamed "file.seek.acquire" $ do
       info <- STM.takeTMVar var
       (Count count, _) <- STM.readTVar $ p_info $ r_partition info
       let offset = case pos of
@@ -244,7 +245,7 @@ instance Partition FilePartition where
       STM.writeTVar (r_next info) offset
       return (next, offset, info)
 
-    undo (next,_,info) = atomicallyNamed "File" $ do
+    undo (next,_,info) = atomicallyNamed "file.undo" $ do
       STM.putTMVar var info
       STM.writeTVar (r_next info) next
 
@@ -262,13 +263,13 @@ instance Partition FilePartition where
 
       record <- Record <$> Char8.hGetLine handle
 
-      atomicallyNamed "File" $ do
+      atomicallyNamed "file.read" $ do
         STM.writeTVar (r_next info) (next + 1)
         STM.putTMVar var info { r_length = len }
 
       return (next, record)
     where
-      acquire = atomicallyNamed "File" $ do
+      acquire = atomicallyNamed "file.read.acquire" $ do
         info <- STM.takeTMVar var
         next <- STM.readTVar (r_next info)
         partitionLength <-
@@ -279,10 +280,10 @@ instance Partition FilePartition where
         unless (partitionLength > fromIntegral next) STM.retry
         return (partitionLength, next, info)
 
-      undo (_,_,info) = atomicallyNamed "File" $ STM.putTMVar var info
+      undo (_,_,info) = atomicallyNamed "file.read.undo" $ STM.putTMVar var info
 
   getOffset :: FileReader -> IO Offset
-  getOffset (FileReader _ var) = atomicallyNamed "File" $ do
+  getOffset (FileReader _ var) = atomically $ do
     info <- STM.readTMVar var
     STM.readTVar (r_next info)
 
@@ -305,7 +306,7 @@ instance Partition FilePartition where
 
       writeNonBlocking fd_records entry
       writeNonBlocking fd_index entryByteOffset
-      atomicallyNamed "File" $ STM.writeTVar p_info (Count newCount, Bytes newSize)
+      atomicallyNamed "file.write" $ STM.writeTVar p_info (Count newCount, Bytes newSize)
 
 writeNonBlocking :: FD -> ByteString -> IO ()
 writeNonBlocking fd bs =
@@ -331,11 +332,11 @@ throwErr p msg =
 modifyTMVarIO :: TMVar a -> (a -> IO (a, b)) -> IO b
 modifyTMVarIO var act =
   bracketOnError
-    (atomicallyNamed "File" $ STM.takeTMVar var)
-    (atomicallyNamed "File" . STM.putTMVar var)
+    (atomically $ STM.takeTMVar var)
+    (atomically . STM.putTMVar var)
     $ \x -> do
       (x', y) <- act x
-      atomicallyNamed "File" $ STM.putTMVar var x'
+      atomically $ STM.putTMVar var x'
       return y
 
 modifyTMVarIO_ :: TMVar a -> (a -> IO a) -> IO ()

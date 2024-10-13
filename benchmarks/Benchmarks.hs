@@ -56,7 +56,7 @@ main =
   withPopulatedTopic :: PartitionCount -> ((PartitionCount, Topic) -> IO a) -> IO a
   withPopulatedTopic n f =
     withFileTopic n $ \topic -> do
-      T.withProducer topic (unOffset . fst) (unRecord . snd) $ \p ->
+      T.withProducer topic (T.modPartitioner $ unOffset . fst) (unRecord . snd) $ \p ->
         forM_ (zip [0..] messages) $ T.write p
       f (n, topic)
 
@@ -80,19 +80,19 @@ benchTopic preFilled msgs = Criterion.bgroup "topic" $
   [ Criterion.bench (unwords ["write", show count, "messages to 1 partition in series"]) $
     Criterion.whnfIO $
       withFileTopic (PartitionCount 1) $ \topic -> do
-      T.withProducer topic (unOffset . fst) (unRecord . snd) $ \p ->
+      T.withProducer topic (T.modPartitioner $ unOffset . fst) (unRecord . snd) $ \p ->
         forM_ (zip [0..] msgs) $ T.write p
   , Criterion.bench (unwords ["write", show count, "messages to 5 partitions in series"]) $
     Criterion.whnfIO $
       withFileTopic (PartitionCount 5) $ \topic -> do
-      T.withProducer topic (fst @Int) (unRecord . snd) $ \p ->
+      T.withProducer topic (T.modPartitioner $ fst @Int) (unRecord . snd) $ \p ->
         forM_ (zip [0..] msgs) $ T.write p
   , let n = 10 in
     Criterion.bench (unwords ["write", show count, "messages to", show n, "partitions in parallel"]) $
     Criterion.whnfIO $
       withFileTopic (PartitionCount n) $ \topic ->
       forConcurrently_ [1..n] $ \k ->
-        T.withProducer topic (const k) unRecord $ \p ->
+        T.withProducer topic (T.modPartitioner $ const k) unRecord $ \p ->
           forM_ (take (count `div` 5) msgs) $ T.write p
   ]
   where
