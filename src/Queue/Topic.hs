@@ -197,45 +197,32 @@ write Producer{..} msg = do
     ]
 
 withConsumer :: HasCallStack => Topic -> ConsumerGroupName -> (Consumer -> IO b) -> IO b
-withConsumer topic@Topic{..} gname act = do
+withConsumer topic@Topic{..} name act = do
   cid <- ConsumerId <$> newUUID
-  bracket (add gname cid) (remove gname cid) act
+  bracket (add cid) (remove cid . fst) $ \(consumer, group) -> do
+    initialise group
+    act consumer
   where
-  add name cid = do
-    (consumer, group) <- STM.atomically $ do
-      consumer <- do
-        rvar <- STM.newTVar (Just [])
-        return $ Consumer topic rvar
-      groups <- STM.readTVar t_cgroups
-      group <- prepare name (cid, consumer) groups
-      STM.writeTVar t_cgroups $ HashMap.insert name group groups
-      case g_state group of
-        Ready _ -> rebalance group
-        Closed -> error "closed group"
-        Initialising -> return () -- will be rebalanced after initialisation
-      return (consumer, group)
-
+  add cid = STM.atomically $ do
+    consumer <- do
+      rvar <- STM.newTVar (Just [])
+      return $ Consumer topic rvar
+    groups <- STM.readTVar t_cgroups
+    group <- prepare cid consumer groups
+    STM.writeTVar t_cgroups $ HashMap.insert name group groups
     case g_state group of
-      Initialising -> do
-        readers <- openReaders group
-        STM.atomically $ do
-          groups <- STM.readTVar t_cgroups
-          let group' = (groups HashMap.! name) { g_state = Ready readers }
-          let groups' = HashMap.insert name group' groups
-          STM.writeTVar t_cgroups groups'
-          rebalance group'
+      Ready _ -> rebalance group
       Closed -> error "closed group"
-      Ready _ -> return ()
-
-    return consumer
+      Initialising -> return () -- will be rebalanced after initialisation
+    return (consumer, group)
 
   -- retrieve an existing group or create a new one
   prepare
-    :: ConsumerGroupName
-    -> (ConsumerId, Consumer)
+    :: ConsumerId
+    -> Consumer
     -> HashMap ConsumerGroupName ConsumerGroup
     -> STM ConsumerGroup
-  prepare name (cid, consumer) groups =
+  prepare cid consumer groups =
     case HashMap.lookup name groups of
       Just group -> case g_state group of
         Closed -> return group      -- we will initialise the group
@@ -255,6 +242,19 @@ withConsumer topic@Topic{..} gname act = do
           , g_consumers = HashMap.singleton cid consumer
           }
 
+  initialise group =
+    case g_state group of
+      Initialising -> do
+        readers <- openReaders group
+        STM.atomically $ do
+          groups <- STM.readTVar t_cgroups
+          let group' = (groups HashMap.! name) { g_state = Ready readers }
+          let groups' = HashMap.insert name group' groups
+          STM.writeTVar t_cgroups groups'
+          rebalance group'
+      Closed -> error "closed group"
+      Ready _ -> return ()
+
   -- open an existing group's readers
   openReaders :: ConsumerGroup -> IO [PartitionReader]
   openReaders group =
@@ -266,12 +266,12 @@ withConsumer topic@Topic{..} gname act = do
           r <- R.new partition start
           return $ PartitionReader r pnumber offsetVar
 
-  remove :: ConsumerGroupName -> ConsumerId -> Consumer -> IO ()
-  remove name cid consumer = do
+  remove :: ConsumerId -> Consumer -> IO ()
+  remove cid consumer = do
     toClose <- atomicallyNamed "topic 6" $ do
       closeConsumer consumer
       groups <- STM.readTVar t_cgroups
-      let group_before = groups HashMap.! gname
+      let group_before = groups HashMap.! name
           remaining = HashMap.delete cid (g_consumers group_before)
           group = group_before
             { g_consumers = remaining
