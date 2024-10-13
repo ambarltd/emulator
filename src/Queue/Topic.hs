@@ -118,31 +118,26 @@ withTopic
   -> TopicState
   -> (Topic -> IO a)
   -> IO a
-withTopic name partitions groupOffsets act = bracket create delete act
+withTopic name partitions groupOffsets act = bracket setup teardown act
   where
-  create = STM.atomically $ do
-    cgroups <- forM groupOffsets $ \partitionOffsets -> do
-      offsets <- forM partitionOffsets $ \offset ->
-        STM.newTVar offset
+  setup = STM.atomically $ do
+    groups <- forM groupOffsets $ \partitionOffsets -> do
+      offsets <- forM partitionOffsets STM.newTVar
       return ConsumerGroup
         { g_state = Closed
         , g_comitted = offsets
         , g_consumers = mempty
         }
-    cgroupsVar <- STM.newTVar cgroups
+    var <- STM.newTVar groups
     return Topic
       { t_name = name
       , t_partitions = partitions
-      , t_cgroups = cgroupsVar
+      , t_cgroups = var
       }
 
-  delete topic = do
-    readers <- atomicallyNamed "topic 2" $ do
+  teardown topic = do
+    readers <- STM.atomically $ do
       groups <- STM.readTVar (t_cgroups topic)
-
-      -- empty all groups
-      STM.writeTVar (t_cgroups topic) $ flip fmap groups $ \group ->
-        group { g_consumers = mempty }
 
       -- close all consumers
       sequenceA_
@@ -151,7 +146,11 @@ withTopic name partitions groupOffsets act = bracket create delete act
         , consumer <- HashMap.elems (g_consumers group)
         ]
 
-      -- collect all readers to close
+      -- close all groups
+      let close g = g { g_consumers = mempty, g_state = Closed }
+      STM.writeTVar (t_cgroups topic) $ fmap close groups
+
+      -- collect all readers to destroy
       return
         [ reader
         | group <- HashMap.elems groups
@@ -211,7 +210,7 @@ withConsumer topic@Topic{..} gname act = do
       group <- prepare name (cid, consumer) groups
       STM.writeTVar t_cgroups $ HashMap.insert name group groups
       case g_state group of
-        Ready _ -> rebalance True group
+        Ready _ -> rebalance group
         Closed -> error "closed group"
         Initialising -> return () -- will be rebalanced after initialisation
       return (consumer, group)
@@ -224,7 +223,7 @@ withConsumer topic@Topic{..} gname act = do
           let group' = (groups HashMap.! name) { g_state = Ready readers }
           let groups' = HashMap.insert name group' groups
           STM.writeTVar t_cgroups groups'
-          rebalance True group'
+          rebalance group'
       Closed -> error "closed group"
       Ready _ -> return ()
 
@@ -281,7 +280,7 @@ withConsumer topic@Topic{..} gname act = do
                 then Closed
                 else g_state group_before
             }
-      unless (HashMap.null remaining) $ rebalance False group
+      unless (HashMap.null remaining) $ rebalance group
       STM.writeTVar t_cgroups $ HashMap.insert name group groups
       return $ case g_state group of
         Initialising -> error "unexpected initialising state"
@@ -294,11 +293,11 @@ withConsumer topic@Topic{..} gname act = do
 
   -- re-distribute readers across all existing consumers
   -- resets moved readers to the latest checkpoint
-  rebalance :: Bool -> ConsumerGroup -> STM ()
-  rebalance isStart group =
+  rebalance :: ConsumerGroup -> STM ()
+  rebalance group =
     case g_state group of
       Closed -> error "rebalancing closed consumer"
-      Initialising -> error $ "rebalancing initialising consumer " <> show isStart
+      Initialising -> error $ "rebalancing initialising consumer"
       Ready allReaders -> do
         let cids = HashMap.keys (g_consumers group)
             readerCount = length allReaders
