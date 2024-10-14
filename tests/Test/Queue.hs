@@ -1,18 +1,32 @@
 module Test.Queue (testQueues) where
 
+import Prelude hiding (read)
+
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, wait, concurrently)
 import Control.Exception (fromException)
-import Control.Monad (replicateM, forM_)
+import Control.Monad (replicateM, forM_, replicateM_)
+import Data.ByteString (ByteString)
 import Data.Char (isAscii)
 import Data.Either (isRight)
-import Data.List ((\\))
+import Data.IORef (newIORef, atomicModifyIORef)
+import Data.List ((\\), sort)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Text as Text
 import Data.Foldable (traverse_)
 import Data.Text.Encoding as Text
 import System.IO.Temp (withSystemTempDirectory)
-import Test.Hspec (Spec, it, describe, shouldBe, shouldSatisfy, shouldThrow, expectationFailure)
+import Test.Hspec
+  ( Spec
+  , it
+  , describe
+  , shouldBe
+  , shouldNotBe
+  , shouldSatisfy
+  , shouldThrow
+  , shouldContain
+  , expectationFailure
+  )
 import Foreign.Marshal.Utils (withMany)
 
 import Queue.Topic
@@ -21,10 +35,12 @@ import Queue.Topic
   , Meta(..)
   , ConsumerGroupName(..)
   , PartitionInstance(..)
+  , PartitionNumber(..)
+  , ReadError(..)
   , withTopic
   )
 import qualified Queue.Topic as T
-import Queue.Partition (Partition(..), Position(..), Record(..))
+import Queue.Partition (Partition, Position(..), Record(..))
 import qualified Queue.Partition as P
 import qualified Queue.Partition.File as FilePartition
 
@@ -92,14 +108,29 @@ testTopic with = do
         T.write producer two
       T.withConsumer topic group $ \consumer -> do
         Right (one_, Meta _ p1 n1) <- T.read consumer
-        p1 `shouldBe` 0
-        n1 `shouldBe` 0
-        Record one_ `shouldBe` snd one
-
         Right (two_, Meta _ p2 n2) <- T.read consumer
-        p2 `shouldBe` 1
-        n2 `shouldBe` 0
-        Record two_ `shouldBe` snd two
+        sort
+          [ (p1,n1,one_)
+          , (p2,n2,two_)
+          ]
+          `shouldBe`
+          [ (0,0,unRecord $ snd one)
+          , (1,0,unRecord $ snd two)
+          ]
+
+  it "2 producers write to 1 partition" $
+    with (PartitionCount 1) $ \topic -> do
+      let count = 20
+          msgs' = take count msgs
+      withProducer topic $ \producer1 ->
+        withProducer topic $ \producer2 -> do
+          let (one, two) = splitAt (count `div` 2) msgs'
+          traverse_ (T.write producer1) one
+          traverse_ (T.write producer2) two
+
+      T.withConsumer topic group $ \consumer -> do
+        Right xs <- sequenceA <$> replicateM count (T.read consumer)
+        fmap fst xs `shouldBe` fmap (unRecord . snd) msgs'
 
   it "allows consumers without readers" $
     with (PartitionCount 0) $ \topic ->
@@ -107,8 +138,8 @@ testTopic with = do
 
   it "reads ordered per partition" $ do
     with (PartitionCount 2) $ \topic -> do
-      let count' = 20
-          msgs' = take count' msgs
+      let count = 20
+          msgs' = take count msgs
 
       withProducer topic $ \producer ->
         traverse_ (T.write producer) msgs'
@@ -116,14 +147,67 @@ testTopic with = do
       T.withConsumer topic group $ \consumer1 ->
         T.withConsumer topic group $ \consumer2 ->
         forM_ [consumer1, consumer2] $ \consumer -> do
-          rs <- replicateM (count' `div` 2) (T.read consumer)
+          rs <- replicateM (count `div` 2) (T.read consumer)
           -- all succeed
           rs `shouldSatisfy` all isRight
           -- keeps order in which was written
           Right recs <- return $ traverse (fmap $ Record . fst) rs
           let written = fmap snd msgs'
           recs `shouldBe` (written \\ (written \\ recs))
+
+  it "rebalance splits partitions between consumers" $
+    with (PartitionCount 2) $ \topic ->
+      withProducer topic $ \producer -> do
+      var <- newIORef msgs
+      let write = do
+            msg <- atomicModifyIORef var $ \xs -> (tail xs, head xs)
+            T.write producer msg
+
+          read consumer = pnumber <$> T.read consumer
+
+      T.withConsumer topic group $ \consumer1 -> do
+        replicateM_ 2 write
+
+        -- first consumer reads from both partitions
+        ps <- replicateM 2 (read consumer1)
+        ps `shouldContain` [0]
+        ps `shouldContain` [1]
+
+        -- add a second consumer
+        T.withConsumer topic group $ \consumer2 -> do
+          replicateM_ 4 write
+          -- now first consumer only reads from one partition
+          [p1, p2] <- replicateM 2 (read consumer1)
+          p1 `shouldBe` p2
+
+          -- second consumer only reads from other partition
+          [p3, p4] <- replicateM 2 (read consumer2)
+          p3 `shouldBe` p4
+
+          -- they read from different partitions
+          p1 `shouldNotBe` p3
+
+  it "rebalance joins partitions in consumers" $
+    with (PartitionCount 2) $ \topic -> do
+      withProducer topic $ \producer ->
+        traverse_ (T.write producer) $ take 6 msgs
+
+      T.withConsumer topic group $ \consumer1 -> do
+        T.withConsumer topic group $ \consumer2 -> do
+          p1 <- pnumber <$> T.read consumer1
+          p2 <- pnumber <$> T.read consumer2
+          -- first and second consumers read from different partitions
+          p1 `shouldNotBe` p2
+        ps <- fmap pnumber <$> replicateM 5 (T.read consumer1)
+        -- now consumer 1 reads from both partitions
+        ps `shouldContain` [0]
+        ps `shouldContain` [1]
   where
+    pnumber :: Either ReadError (ByteString, Meta) -> PartitionNumber
+    pnumber = \case
+      Left err -> error (show err)
+      Right (_, Meta _ p _) -> p
+
     msgs :: [(Int, Record)]
     msgs = zip ([0..] :: [Int]) messages
 

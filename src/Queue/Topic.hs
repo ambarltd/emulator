@@ -2,6 +2,7 @@
     ( Topic
     , TopicName(..)
     , PartitionInstance(..)
+    , PartitionNumber(..)
     , withTopic
     , getState
 
