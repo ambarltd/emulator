@@ -15,11 +15,15 @@ common common
         RecordWildCards
         InstanceSigs
         DerivingStrategies
+        DeriveAnyClass
         GeneralizedNewtypeDeriving
         TypeApplications
         RankNTypes
         NumericUnderscores
         BangPatterns
+        LambdaCase
+        TupleSections
+        ExistentialQuantification
 
 executable lite
     import: common
@@ -38,15 +42,27 @@ library lite-lib
     ghc-options: -Wall -Werror -fprof-auto
     hs-source-dirs: src
     exposed-modules:
+        Queue
+        Queue.Topic
         Queue.Partition
         Queue.Partition.File
+        Queue.Partition.STMReader
+        Utils.STM
     build-depends:
         base ^>=4.17.2.1
+        , async
         , bytestring
         , binary
-        , stm
-        , filepath
+        , containers
         , directory
+        , extra
+        , filepath
+        , hashable
+        , random
+        , stm
+        , text
+        , time
+        , unordered-containers
 
 test-suite lite-tests
     import: common
@@ -68,6 +84,7 @@ test-suite lite-tests
         , QuickCheck
         , temporary
         , text
+        , unordered-containers
 
 benchmark lite-bench
   import: common
@@ -83,3 +100,4 @@ benchmark lite-bench
         , temporary
         , text
         , time
+        , unordered-containers

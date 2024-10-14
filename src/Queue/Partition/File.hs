@@ -2,11 +2,20 @@ module Queue.Partition.File
   ( FilePartition
   , FileReader
   , withFilePartition
+  , open
+  , close
+  , OpenError(..)
+  , WriteError(..)
   ) where
 
-import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar)
-import Control.Concurrent.STM (TVar, readTVarIO, atomically, readTVar, retry, writeTVar, newTVarIO)
-import Control.Exception (bracket)
+import Control.Concurrent (MVar, newMVar, withMVar, modifyMVar_)
+import qualified Control.Concurrent.STM as STM
+import Control.Concurrent.STM
+  ( TVar
+  , TMVar
+  , atomically
+  )
+import Control.Exception (Exception(..), bracket, bracketOnError, throwIO)
 import Control.Monad (void, unless, when)
 import qualified Data.Binary as Binary
 import Data.ByteString (ByteString)
@@ -20,18 +29,20 @@ import GHC.IO.Handle (hLock, LockMode(..))
 import GHC.IO.FD (FD)
 import qualified GHC.IO.FD as FD
 import qualified GHC.IO.Device as FD
-import GHC.Stack (HasCallStack)
 import System.IO
   ( Handle
   , hSeek
   , withFile
+  , openFile
+  , hClose
   , IOMode(..)
   , SeekMode(..)
   )
-import System.Directory (doesFileExist, getFileSize)
+import System.Directory (doesFileExist, getFileSize, removeFile)
 import System.FilePath ((</>))
 
 import Queue.Partition
+import Utils.STM (atomicallyNamed)
 
 -- | A file-backed Partition for unformatted JSON entries.
 --
@@ -43,18 +54,25 @@ import Queue.Partition
 --
 -- Concurrent writes are not supported.
 data FilePartition = FilePartition
-  { p_records:: FilePath
+  { p_name :: PartitionName
+  , p_records:: FilePath
   , p_index :: FilePath
-  , p_handles :: MVar (FD.FD, FD.FD) -- ^ write lock. (records, index)
+  , p_lock :: FilePath
+  , p_handles :: MVar (Maybe (FD.FD, FD.FD))
+      -- ^ write handles (records, index)
+      -- is Nothing when file partition is closed
   , p_info :: TVar (Count, Bytes) -- ^ record count and size
   }
+
+newtype PartitionName = PartitionName { unPartitionName :: String }
 
 -- | Size in bytes
 newtype Bytes = Bytes Word64
   deriving (Eq, Show)
 
 newtype Count = Count Int
-  deriving (Eq, Show)
+  deriving (Show)
+  deriving newtype (Eq, Ord, Enum, Integral, Real, Num)
 
 {-| Note [File Partition Design]
 
@@ -78,35 +96,62 @@ As a consequence of the 'readable in a text editor' requirement, the '\n'
 character is used as the record separator and is therefore not allowed in the
 record. That's why this structure is targets unformatted JSON records.
 
+We create a lock file to prevent a partition to be opened more than once from
+the same or different processes.
+
 -}
 
-withFilePartition :: HasCallStack => FilePath -> String -> (FilePartition -> IO a) -> IO a
-withFilePartition location name act = do
+withFilePartition :: FilePath -> String -> (FilePartition -> IO a) -> IO a
+withFilePartition location name = bracket (open location name) close
+
+data OpenError
+  = AlreadyOpen FilePath
+  | MissingRecords FilePath
+  | MissingIndex FilePath
+  deriving Show
+
+instance Exception OpenError where
+  displayException = \case
+    AlreadyOpen path -> "Lock found. Partition already open: " <> path
+    MissingRecords path -> "Missing records file: " <> path
+    MissingIndex path -> "Missing index file: " <> path
+
+open :: FilePath -> String -> IO FilePartition
+open location name = do
   let records = location </> name <> ".records"
       index   = location </> name <> ".index"
-  exists_records <- doesFileExist records
-  exists_index <- doesFileExist index
-  when (exists_records /= exists_index) $
-    if not exists_records
-    then error $ "Missing records file: " <> records
-    else error $ "Missing index file: " <> index
-
+      lock    = location </> name <> ".lock"
+  exists <- checkExistence records index lock
   (count, size) <-
-    if not exists_index
+    if not exists
     then createIndex index
     else loadIndex index
 
-  withNonLockingWritableFD records $ \fd_records ->
-    withNonLockingWritableFD index $ \fd_index -> do
-    lock <- newMVar (fd_records, fd_index)
-    var <- newTVarIO (count, size)
-    act FilePartition
-      { p_records = records
-      , p_index = index
-      , p_handles = lock
-      , p_info = var
-      }
+  writeFile lock "locked"
+  fd_records <- openNonLockingWritableFD records
+  fd_index <- openNonLockingWritableFD index
+  handles <- newMVar $ Just (fd_records, fd_index)
+  var <- STM.newTVarIO (count, size)
+  return FilePartition
+    { p_name = PartitionName name
+    , p_records = records
+    , p_index = index
+    , p_lock = lock
+    , p_handles = handles
+    , p_info = var
+    }
   where
+    checkExistence records index lock = do
+      exists_records <- doesFileExist records
+      exists_index <- doesFileExist index
+      exists_lock <- doesFileExist lock
+      when exists_lock $ throwIO $ AlreadyOpen lock
+      when (exists_records /= exists_index) $
+        if not exists_records
+        then throwIO $ MissingRecords records
+        else throwIO $ MissingIndex index
+      return exists_records
+
     createIndex index = do
       -- The index file starts with an entry for the position of the zeroeth element.
       -- Therefore the index always contains one more entry than the records file.
@@ -119,94 +164,157 @@ withFilePartition location name act = do
       byteOffsetOfNextEntry <- readIndexEntry index (Offset count)
       return (Count count, byteOffsetOfNextEntry)
 
+close :: FilePartition -> IO ()
+close FilePartition{..} =
+  modifyMVar_ p_handles $ \case
+    Nothing -> return Nothing -- already closed
+    Just (fd_records, fd_index) -> do
+      removeFile p_lock
+      closeNonLockingWritableFD fd_records
+      closeNonLockingWritableFD fd_index
+      return Nothing
+
 -- | GHC's implementation prevents the overlapping acquisition of write and
 -- read handles for files. And write handles are exclusive.
 -- To support reads in parallel to writes we need to use a lower level abstraction.
-withNonLockingWritableFD :: FilePath -> (FD -> IO a) -> IO a
-withNonLockingWritableFD path act = bracket open close act
-  where
-  open = do
+openNonLockingWritableFD :: FilePath -> IO FD
+openNonLockingWritableFD path = do
     (fd, _) <- FD.openFile path AppendMode True
     FD.release fd
     return fd
-  close = FD.close
 
+closeNonLockingWritableFD :: FD -> IO ()
+closeNonLockingWritableFD = FD.close
 
 -- A single-threaded file readed.
-newtype FileReader = FileReader (MVar ReaderInfo)
+-- If you use it from multiple threads you will have problems.
+data FileReader = FileReader PartitionName (TMVar ReaderInfo)
 
 data ReaderInfo = ReaderInfo
-  { r_next :: Offset -- ^ offset of next record to be read
-  , r_handle :: Handle
-  , r_length :: Int -- ^ cached partition length
-  , r_info :: TVar (Count, Bytes) -- ^ record count and size of partition.
+  { r_next :: TVar Offset -- ^ offset of next record to be read
+  , r_handle :: Maybe Handle -- ^ Nothing if reader is closed
+  , r_length :: Count -- ^ cached partition length
+  , r_partition :: FilePartition
   }
 
 -- | Size in bytes of 64 bits unsigned integer.
 _WORD64_SIZE :: Int
 _WORD64_SIZE = 8
 
+data WriteError
+  = ClosedPartition
+  deriving Show
+
+instance Exception WriteError where
+  displayException = \case
+    ClosedPartition -> "writing to closed partition"
+
 instance Partition FilePartition where
   type Reader FilePartition = FileReader
 
-  seek :: FilePartition -> Position -> (FileReader -> IO a) -> IO a
-  seek (FilePartition{..}) pos act =
-    case pos of
-      At i -> readerFrom i
-      Beginning -> readerFrom (Offset 0)
-      End -> do
-        (Count count, _) <- readTVarIO p_info
-        readerFrom $ Offset $ count - 1
+  openReader :: FilePartition -> IO FileReader
+  openReader p@(FilePartition{..}) = do
+    (len, _) <- STM.readTVarIO p_info
+    handle <- openFile p_records ReadMode
+    hLock handle SharedLock
+    next <- STM.newTVarIO 0
+    var <- STM.newTMVarIO $ ReaderInfo
+      { r_next = next
+      , r_handle = Just handle
+      , r_length = len
+      , r_partition = p
+      }
+    return $ FileReader p_name var
+
+  closeReader :: FileReader -> IO ()
+  closeReader (FileReader _ var) =
+    modifyTMVarIO_ var $ \info -> do
+      maybe (return ()) hClose (r_handle info)
+      return info { r_handle = Nothing }
+
+  seek :: FileReader -> Position -> IO ()
+  seek (FileReader _ var) pos =
+    bracketOnError acquire undo $ \(next, offset, info) -> do
+      when (next /= offset) $
+        case r_handle info of
+          Nothing ->
+            throwErr (r_partition info) "seek: closed reader."
+          Just handle -> do
+            Bytes byteOffset <- readIndexEntry (p_index $ r_partition info) offset
+            hSeek handle AbsoluteSeek (fromIntegral byteOffset)
+
+      atomicallyNamed "file.seek" $ do
+        STM.putTMVar var info
     where
-    readerFrom offset =  do
-      (Count len, _) <- readTVarIO p_info
-      Bytes byteOffset <- readIndexEntry p_index offset
-      withFile p_records ReadMode $ \handle -> do
-        hLock handle SharedLock
-        hSeek handle AbsoluteSeek (fromIntegral byteOffset)
-        var <- newMVar $ ReaderInfo
-          { r_next = offset
-          , r_handle = handle
-          , r_length = len
-          , r_info = p_info
-          }
-        act $ FileReader var
+    acquire = atomicallyNamed "file.seek.acquire" $ do
+      info <- STM.takeTMVar var
+      (Count count, _) <- STM.readTVar $ p_info $ r_partition info
+      let offset = case pos of
+            At o -> o
+            Beginning -> 0
+            End -> Offset count - 1
+
+      when (offset > fromIntegral count) $
+        throwErr (r_partition info) $ unwords
+          [ "seek: offset out of bounds."
+          , "Entries:", show count
+          , "Offset:", show offset
+          ]
+
+      next <- STM.readTVar (r_next info)
+      STM.writeTVar (r_next info) offset
+      return (next, offset, info)
+
+    undo (next,_,info) = atomicallyNamed "file.undo" $ do
+      STM.putTMVar var info
+      STM.writeTVar (r_next info) next
 
   -- | Reads one record and advances the Reader.
   -- Blocks if there are no more records.
   read :: FileReader -> IO (Offset, Record)
-  read (FileReader var) = do
-    modifyMVar var $ \ReaderInfo{..} -> do
-      let offset = r_next -- offset to be read.
-      len <- if r_length > unOffset offset
-        then return r_length
-        else do
-          atomically $ do
-            (Count newLen, _) <- readTVar r_info
-            -- block till there are more elements to read.
-            unless (newLen > unOffset offset) retry
-            return newLen
+  read (FileReader _ var) =
+    bracketOnError acquire undo $ \(len, next, info) -> do
+      handle <- case r_handle info of
+        Nothing -> error $ unwords
+            [ "FilePartition: read: closed reader."
+            , "Partition:", unPartitionName (p_name $ r_partition info)
+            ]
+        Just h -> return h
 
-      record <- Record <$> Char8.hGetLine r_handle
+      record <- Record <$> Char8.hGetLine handle
 
-      let info = ReaderInfo
-            { r_next = r_next + 1
-            , r_handle = r_handle
-            , r_length = len
-            , r_info = r_info
-            }
-      return (info, (offset, record))
+      atomicallyNamed "file.read" $ do
+        STM.writeTVar (r_next info) (next + 1)
+        STM.putTMVar var info { r_length = len }
+
+      return (next, record)
+    where
+      acquire = atomicallyNamed "file.read.acquire" $ do
+        info <- STM.takeTMVar var
+        next <- STM.readTVar (r_next info)
+        partitionLength <-
+          if r_length info > fromIntegral next
+          then return (r_length info)
+          else fst <$> STM.readTVar (p_info $ r_partition info)
+        -- block till there are more elements to read.
+        unless (partitionLength > fromIntegral next) STM.retry
+        return (partitionLength, next, info)
+
+      undo (_,_,info) = atomicallyNamed "file.read.undo" $ STM.putTMVar var info
 
   getOffset :: FileReader -> IO Offset
-  getOffset (FileReader var) = withMVar var $ return . r_next
+  getOffset (FileReader _ var) = atomically $ do
+    info <- STM.readTMVar var
+    STM.readTVar (r_next info)
 
   write :: FilePartition -> Record -> IO ()
   write (FilePartition{..}) (Record bs)  = do
     when (Char8.elem '\n' bs) $
       error "FilePartition write: record contains newline character"
 
-    withMVar p_handles $ \(fd_records, fd_index) -> do
-      (Count count, Bytes partitionSize) <- readTVarIO p_info
+    withMVar p_handles $ \mhandles -> do
+      (fd_records, fd_index) <- maybe (throwIO ClosedPartition) return mhandles
+      (Count count, Bytes partitionSize) <- STM.readTVarIO p_info
 
       let entry = bs <> "\n"
           entrySize = fromIntegral (B.length bs)
@@ -216,7 +324,7 @@ instance Partition FilePartition where
 
       writeNonBlocking fd_records entry
       writeNonBlocking fd_index entryByteOffset
-      atomically $ writeTVar p_info (Count newCount, Bytes newSize)
+      atomicallyNamed "file.write" $ STM.writeTVar p_info (Count newCount, Bytes newSize)
 
 writeNonBlocking :: FD -> ByteString -> IO ()
 writeNonBlocking fd bs =
@@ -224,8 +332,8 @@ writeNonBlocking fd bs =
   FD.writeNonBlocking fd (coerce ptr) 0 (fromIntegral len)
 
 readIndexEntry :: FilePath -> Offset -> IO Bytes
-readIndexEntry path (Offset offset)  =
-  withFile path ReadMode $ \handle -> do
+readIndexEntry indexPath (Offset offset)  =
+  withFile indexPath ReadMode $ \handle -> do
     hLock handle SharedLock
     hSeek handle AbsoluteSeek $ fromIntegral $ offset * _WORD64_SIZE
     bytes <- B.hGet handle _WORD64_SIZE
@@ -233,3 +341,23 @@ readIndexEntry path (Offset offset)  =
       Left (_,_,err) -> error $ "FilePartition: Error reading index: " <> err
       Right  (_,_,n) -> return n
     return $ Bytes byteOffset
+
+throwErr :: FilePartition -> String -> a
+throwErr p msg =
+  error $
+    "FilePartition (" <> unPartitionName (p_name p) <> "): " <> msg
+
+modifyTMVarIO :: TMVar a -> (a -> IO (a, b)) -> IO b
+modifyTMVarIO var act =
+  bracketOnError
+    (atomically $ STM.takeTMVar var)
+    (atomically . STM.putTMVar var)
+    $ \x -> do
+      (x', y) <- act x
+      atomically $ STM.putTMVar var x'
+      return y
+
+modifyTMVarIO_ :: TMVar a -> (a -> IO a) -> IO ()
+modifyTMVarIO_ var act =
+  modifyTMVarIO var $ fmap (,()) . act
+

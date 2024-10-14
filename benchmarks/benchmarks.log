@@ -1,33 +1,45 @@
 Up to date
-benchmarking queue/file partition/read 10000 messages
-time                 1.105 ms   (1.101 ms .. 1.109 ms)
+benchmarking queue/topic/read 10000 messages, 1 partitions, 1 consumer
+time                 87.20 ms   (86.53 ms .. 87.87 ms)
                      1.000 R²   (1.000 R² .. 1.000 R²)
-mean                 1.110 ms   (1.106 ms .. 1.114 ms)
-std dev              14.80 μs   (12.00 μs .. 19.98 μs)
+mean                 86.20 ms   (85.25 ms .. 86.78 ms)
+std dev              1.167 ms   (760.4 μs .. 1.777 ms)
 
-benchmarking queue/file partition/read 10000 messages 3x in parallel
-time                 1.676 ms   (1.643 ms .. 1.705 ms)
-                     0.997 R²   (0.996 R² .. 0.998 R²)
-mean                 1.649 ms   (1.628 ms .. 1.669 ms)
-std dev              74.57 μs   (66.77 μs .. 90.51 μs)
-variance introduced by outliers: 31% (moderately inflated)
+benchmarking queue/topic/read 10000 messages, 10 partitions, 1 consumer
+time                 19.23 ms   (16.80 ms .. 21.01 ms)
+                     0.964 R²   (0.934 R² .. 0.986 R²)
+mean                 20.96 ms   (19.73 ms .. 22.86 ms)
+std dev              3.709 ms   (2.063 ms .. 5.361 ms)
+variance introduced by outliers: 75% (severely inflated)
 
-benchmarking queue/file partition/write 10000 messages
-time                 29.02 ms   (28.64 ms .. 29.39 ms)
-                     0.999 R²   (0.997 R² .. 1.000 R²)
-mean                 29.01 ms   (28.81 ms .. 29.42 ms)
-std dev              579.8 μs   (256.9 μs .. 978.9 μs)
+benchmarking queue/topic/read 10000 messages, 1 partitions, 1 consumer
+time                 60.59 ms   (60.06 ms .. 61.63 ms)
+                     1.000 R²   (0.999 R² .. 1.000 R²)
+mean                 61.11 ms   (60.77 ms .. 61.55 ms)
+std dev              720.3 μs   (517.4 μs .. 909.7 μs)
 
-benchmarking queue/file partition/write and read 10000 messages in series
-time                 31.36 ms   (30.18 ms .. 33.40 ms)
-                     0.995 R²   (0.989 R² .. 1.000 R²)
-mean                 30.40 ms   (30.16 ms .. 31.05 ms)
-std dev              812.4 μs   (290.1 μs .. 1.462 ms)
+benchmarking queue/topic/read 10000 messages, 10 partitions, 10 consumers
+time                 10.44 ms   (10.14 ms .. 10.86 ms)
+                     0.994 R²   (0.990 R² .. 0.998 R²)
+mean                 10.50 ms   (10.34 ms .. 10.69 ms)
+std dev              454.2 μs   (334.2 μs .. 680.4 μs)
+variance introduced by outliers: 16% (moderately inflated)
 
-benchmarking queue/file partition/write and read 10000 messages in parallel
-time                 43.18 ms   (39.63 ms .. 48.39 ms)
-                     0.970 R²   (0.934 R² .. 0.994 R²)
-mean                 45.47 ms   (44.01 ms .. 47.66 ms)
-std dev              3.814 ms   (2.360 ms .. 5.589 ms)
-variance introduced by outliers: 27% (moderately inflated)
+benchmarking queue/topic/write 10000 messages to 1 partition in series
+time                 29.56 ms   (29.19 ms .. 29.83 ms)
+                     0.999 R²   (0.999 R² .. 1.000 R²)
+mean                 29.52 ms   (29.30 ms .. 29.80 ms)
+std dev              487.5 μs   (395.5 μs .. 647.5 μs)
+
+benchmarking queue/topic/write 10000 messages to 5 partitions in series
+time                 35.45 ms   (35.05 ms .. 35.84 ms)
+                     0.999 R²   (0.999 R² .. 1.000 R²)
+mean                 34.84 ms   (34.41 ms .. 35.16 ms)
+std dev              733.5 μs   (560.5 μs .. 1.017 ms)
+
+benchmarking queue/topic/write 10000 messages to 10 partitions in parallel
+time                 72.30 ms   (72.17 ms .. 72.45 ms)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 72.46 ms   (72.35 ms .. 72.69 ms)
+std dev              297.7 μs   (191.8 μs .. 435.3 μs)
 
