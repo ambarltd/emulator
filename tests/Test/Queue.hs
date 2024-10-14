@@ -202,7 +202,33 @@ testTopic with = do
         -- now consumer 1 reads from both partitions
         ps `shouldContain` [0]
         ps `shouldContain` [1]
+
+  it "rebalance rewinds to last comitted offset" $
+    with (PartitionCount 2) $ \topic -> do
+      withProducer topic $ \producer ->
+        traverse_ (T.write producer) $ take 6 msgs
+
+      T.withConsumer topic group $ \consumer -> do
+        -- read all 6 messages
+        replicateM_ 6 $ pnumber <$> T.read consumer
+        -- commit the 2nd message from partition 1.
+        T.commit consumer (Meta (error "no topic name") 1 1)
+
+      -- with a new consumer
+      T.withConsumer topic group $ \consumer -> do
+        -- we should be able to read 4 messages.
+        metas <- replicateM 4 $ mmeta <$> T.read consumer
+        let metaPartition (Meta _ p _) = p
+            metaOffset (Meta _ _ o) = o
+        sort (metaOffset <$> metas) `shouldBe` [0,1,2,2]
+        sort (metaPartition <$> metas) `shouldBe` [0,0,0,1]
   where
+    mmeta :: Either ReadError (ByteString, Meta) -> Meta
+    mmeta = \case
+      Left err -> error (show err)
+      Right (_, m) -> m
+
+
     pnumber :: Either ReadError (ByteString, Meta) -> PartitionNumber
     pnumber = \case
       Left err -> error (show err)

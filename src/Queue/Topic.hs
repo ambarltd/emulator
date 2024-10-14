@@ -407,5 +407,8 @@ commit :: HasCallStack => Consumer -> Meta -> IO ()
 commit (Consumer _ var) (Meta _ pnumber offset) = atomically $ do
   mreaders <- STM.readTVar var
   let mreader = find (\r -> r_partition r == pnumber) $ fromMaybe [] mreaders
-  forM_ mreader $ \r -> STM.writeTVar (r_committed r) offset
+  forM_ mreader $ \r ->
+    -- we save `offset + 1` because it denotes the reset point,
+    -- not the actual ofset value saved.
+    STM.writeTVar (r_committed r) (offset + 1)
 
