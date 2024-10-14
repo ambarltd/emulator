@@ -15,6 +15,7 @@ common common
         RecordWildCards
         InstanceSigs
         DerivingStrategies
+        DeriveAnyClass
         GeneralizedNewtypeDeriving
         TypeApplications
         RankNTypes

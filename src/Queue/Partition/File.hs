@@ -4,6 +4,8 @@ module Queue.Partition.File
   , withFilePartition
   , open
   , close
+  , OpenError(..)
+  , WriteError(..)
   ) where
 
 import Control.Concurrent (MVar, newMVar, withMVar, modifyMVar_)
@@ -13,7 +15,7 @@ import Control.Concurrent.STM
   , TMVar
   , atomically
   )
-import Control.Exception (bracket, bracketOnError)
+import Control.Exception (Exception(..), bracket, bracketOnError, throwIO)
 import Control.Monad (void, unless, when)
 import qualified Data.Binary as Binary
 import Data.ByteString (ByteString)
@@ -22,7 +24,6 @@ import qualified Data.ByteString.Unsafe as B (unsafeUseAsCStringLen)
 import qualified Data.ByteString.Char8 as Char8
 import qualified Data.ByteString.Lazy as LB
 import Data.Coerce (coerce)
-import Data.Maybe (fromMaybe)
 import Data.Word (Word64)
 import GHC.IO.Handle (hLock, LockMode(..))
 import GHC.IO.FD (FD)
@@ -103,6 +104,18 @@ the same or different processes.
 withFilePartition :: FilePath -> String -> (FilePartition -> IO a) -> IO a
 withFilePartition location name = bracket (open location name) close
 
+data OpenError
+  = AlreadyOpen FilePath
+  | MissingRecords FilePath
+  | MissingIndex FilePath
+  deriving Show
+
+instance Exception OpenError where
+  displayException = \case
+    AlreadyOpen path -> "Lock found. Partition already open: " <> path
+    MissingRecords path -> "Missing records file: " <> path
+    MissingIndex path -> "Missing index file: " <> path
+
 open :: FilePath -> String -> IO FilePartition
 open location name = do
   let records = location </> name <> ".records"
@@ -132,12 +145,11 @@ open location name = do
       exists_records <- doesFileExist records
       exists_index <- doesFileExist index
       exists_lock <- doesFileExist lock
-      when exists_lock $
-        error $ "Lock found. Partition already open: " <> lock
+      when exists_lock $ throwIO $ AlreadyOpen lock
       when (exists_records /= exists_index) $
         if not exists_records
-        then error $ "Missing records file: " <> records
-        else error $ "Missing index file: " <> index
+        then throwIO $ MissingRecords records
+        else throwIO $ MissingIndex index
       return exists_records
 
     createIndex index = do
@@ -188,6 +200,14 @@ data ReaderInfo = ReaderInfo
 -- | Size in bytes of 64 bits unsigned integer.
 _WORD64_SIZE :: Int
 _WORD64_SIZE = 8
+
+data WriteError
+  = ClosedPartition
+  deriving Show
+
+instance Exception WriteError where
+  displayException = \case
+    ClosedPartition -> "writing to closed partition"
 
 instance Partition FilePartition where
   type Reader FilePartition = FileReader
@@ -293,9 +313,7 @@ instance Partition FilePartition where
       error "FilePartition write: record contains newline character"
 
     withMVar p_handles $ \mhandles -> do
-      let (fd_records, fd_index) = fromMaybe
-              (error "FilePartition: writing to closed partition")
-              mhandles
+      (fd_records, fd_index) <- maybe (throwIO ClosedPartition) return mhandles
       (Count count, Bytes partitionSize) <- STM.readTVarIO p_info
 
       let entry = bs <> "\n"

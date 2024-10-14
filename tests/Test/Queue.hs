@@ -2,6 +2,7 @@ module Test.Queue (testQueues) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, wait, concurrently)
+import Control.Exception (fromException)
 import Control.Monad (replicateM, forM_)
 import Data.Char (isAscii)
 import Data.Either (isRight)
@@ -11,7 +12,7 @@ import qualified Data.Text as Text
 import Data.Foldable (traverse_)
 import Data.Text.Encoding as Text
 import System.IO.Temp (withSystemTempDirectory)
-import Test.Hspec (Spec, it, describe, shouldBe, shouldSatisfy)
+import Test.Hspec (Spec, it, describe, shouldBe, shouldSatisfy, shouldThrow, expectationFailure)
 import Foreign.Marshal.Utils (withMany)
 
 import Queue.Topic
@@ -19,10 +20,10 @@ import Queue.Topic
   , TopicName(..)
   , Meta(..)
   , ConsumerGroupName(..)
+  , PartitionInstance(..)
   , withTopic
   )
 import qualified Queue.Topic as T
-import Queue.Topic (PartitionInstance(..))
 import Queue.Partition (Partition(..), Position(..), Record(..))
 import qualified Queue.Partition as P
 import qualified Queue.Partition.File as FilePartition
@@ -159,6 +160,19 @@ testPartition with = do
           (_, two_) <- P.read reader
           one_ `shouldBe` one
           two_ `shouldBe` two
+
+  it "no concurrent opens" $
+    withTempPath $ \path ->
+      let openError e
+            | Just (FilePartition.AlreadyOpen _) <- fromException e = True
+            | otherwise = False
+
+          openTwice =
+            with path $ \_ ->
+            with path $ \_ ->
+              expectationFailure "Should not have opened the partition twice"
+      in
+      openTwice `shouldThrow` openError
 
   it "blocks reads when reaches the end" $
     withTempPath $ \path ->
