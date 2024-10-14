@@ -1,45 +1,51 @@
 Up to date
 benchmarking queue/topic/read 10000 messages, 1 partitions, 1 consumer
-time                 87.20 ms   (86.53 ms .. 87.87 ms)
-                     1.000 R²   (1.000 R² .. 1.000 R²)
-mean                 86.20 ms   (85.25 ms .. 86.78 ms)
-std dev              1.167 ms   (760.4 μs .. 1.777 ms)
+time                 85.97 ms   (84.08 ms .. 87.20 ms)
+                     0.999 R²   (0.999 R² .. 1.000 R²)
+mean                 85.49 ms   (85.08 ms .. 85.99 ms)
+std dev              752.0 μs   (553.5 μs .. 1.047 ms)
 
 benchmarking queue/topic/read 10000 messages, 10 partitions, 1 consumer
-time                 19.23 ms   (16.80 ms .. 21.01 ms)
-                     0.964 R²   (0.934 R² .. 0.986 R²)
-mean                 20.96 ms   (19.73 ms .. 22.86 ms)
-std dev              3.709 ms   (2.063 ms .. 5.361 ms)
-variance introduced by outliers: 75% (severely inflated)
+time                 16.11 ms   (12.78 ms .. 19.56 ms)
+                     0.846 R²   (0.718 R² .. 0.935 R²)
+mean                 27.06 ms   (23.41 ms .. 32.37 ms)
+std dev              9.774 ms   (5.488 ms .. 15.59 ms)
+variance introduced by outliers: 94% (severely inflated)
 
 benchmarking queue/topic/read 10000 messages, 1 partitions, 1 consumer
-time                 60.59 ms   (60.06 ms .. 61.63 ms)
-                     1.000 R²   (0.999 R² .. 1.000 R²)
-mean                 61.11 ms   (60.77 ms .. 61.55 ms)
-std dev              720.3 μs   (517.4 μs .. 909.7 μs)
+time                 61.73 ms   (58.62 ms .. 63.10 ms)
+                     0.995 R²   (0.983 R² .. 1.000 R²)
+mean                 61.09 ms   (59.27 ms .. 61.70 ms)
+std dev              1.875 ms   (617.1 μs .. 3.335 ms)
 
 benchmarking queue/topic/read 10000 messages, 10 partitions, 10 consumers
-time                 10.44 ms   (10.14 ms .. 10.86 ms)
-                     0.994 R²   (0.990 R² .. 0.998 R²)
-mean                 10.50 ms   (10.34 ms .. 10.69 ms)
-std dev              454.2 μs   (334.2 μs .. 680.4 μs)
-variance introduced by outliers: 16% (moderately inflated)
+time                 10.00 ms   (9.255 ms .. 12.18 ms)
+                     0.548 R²   (0.273 R² .. 0.994 R²)
+mean                 10.62 ms   (9.598 ms .. 14.57 ms)
+std dev              5.073 ms   (744.0 μs .. 10.27 ms)
+variance introduced by outliers: 96% (severely inflated)
 
 benchmarking queue/topic/write 10000 messages to 1 partition in series
-time                 29.56 ms   (29.19 ms .. 29.83 ms)
-                     0.999 R²   (0.999 R² .. 1.000 R²)
-mean                 29.52 ms   (29.30 ms .. 29.80 ms)
-std dev              487.5 μs   (395.5 μs .. 647.5 μs)
+time                 30.78 ms   (29.97 ms .. 31.47 ms)
+                     0.998 R²   (0.997 R² .. 1.000 R²)
+mean                 30.41 ms   (30.08 ms .. 30.82 ms)
+std dev              798.2 μs   (583.5 μs .. 1.027 ms)
 
 benchmarking queue/topic/write 10000 messages to 5 partitions in series
-time                 35.45 ms   (35.05 ms .. 35.84 ms)
-                     0.999 R²   (0.999 R² .. 1.000 R²)
-mean                 34.84 ms   (34.41 ms .. 35.16 ms)
-std dev              733.5 μs   (560.5 μs .. 1.017 ms)
+time                 35.61 ms   (34.93 ms .. 36.55 ms)
+                     0.998 R²   (0.995 R² .. 1.000 R²)
+mean                 35.68 ms   (35.44 ms .. 36.13 ms)
+std dev              762.0 μs   (390.8 μs .. 1.029 ms)
 
 benchmarking queue/topic/write 10000 messages to 10 partitions in parallel
-time                 72.30 ms   (72.17 ms .. 72.45 ms)
-                     1.000 R²   (1.000 R² .. 1.000 R²)
-mean                 72.46 ms   (72.35 ms .. 72.69 ms)
-std dev              297.7 μs   (191.8 μs .. 435.3 μs)
+time                 78.95 ms   (74.19 ms .. 82.77 ms)
+                     0.996 R²   (0.990 R² .. 0.999 R²)
+mean                 77.75 ms   (76.51 ms .. 80.25 ms)
+std dev              2.601 ms   (1.526 ms .. 3.487 ms)
+
+benchmarking queue/topic/read and write 10000 messages in parallel
+time                 65.49 ms   (63.63 ms .. 68.13 ms)
+                     0.998 R²   (0.996 R² .. 1.000 R²)
+mean                 64.37 ms   (63.41 ms .. 65.11 ms)
+std dev              1.581 ms   (1.099 ms .. 2.294 ms)
 
