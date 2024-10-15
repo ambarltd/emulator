@@ -1,25 +1,27 @@
- module Queue.Topic
-    ( Topic
-    , TopicName(..)
-    , PartitionInstance(..)
-    , PartitionNumber(..)
-    , withTopic
-    , getState
+module Queue.Topic
+  ( Topic
+  , TopicState
+  , PartitionInstance(..)
+  , PartitionNumber(..)
+  , withTopic
+  , openTopic
+  , closeTopic
+  , getState
 
-    , Consumer
-    , ConsumerGroupName(..)
-    , Meta(..)
-    , ReadError(..)
-    , withConsumer
-    , read
-    , commit
+  , Consumer
+  , ConsumerGroupName(..)
+  , Meta(..)
+  , ReadError(..)
+  , withConsumer
+  , read
+  , commit
 
-    , Producer
-    , withProducer
-    , hashPartitioner
-    , modPartitioner
-    , write
-    ) where
+  , Producer
+  , withProducer
+  , hashPartitioner
+  , modPartitioner
+  , write
+  ) where
 
 import Prelude hiding (read)
 
@@ -53,14 +55,9 @@ import qualified Queue.Partition.STMReader as R
 
 -- | Abstraction for a group of independent streams (partitions)
 data Topic = Topic
-  { t_name :: TopicName
-  , t_partitions :: HashMap PartitionNumber PartitionInstance
+  { t_partitions :: HashMap PartitionNumber PartitionInstance
   , t_cgroups :: TVar (HashMap ConsumerGroupName ConsumerGroup)
   }
-
-newtype TopicName = TopicName { unTopicName :: Text }
-  deriving Show
-  deriving newtype (Eq, Ord)
 
 newtype PartitionNumber = PartitionNumber { unPartitionNumber :: Int }
   deriving Show
@@ -117,52 +114,57 @@ type TopicState = HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
 
 withTopic
   :: HasCallStack
-  => TopicName
-  -> HashMap PartitionNumber PartitionInstance
+  => HashMap PartitionNumber PartitionInstance
   -> TopicState
   -> (Topic -> IO a)
   -> IO a
-withTopic name partitions groupOffsets act = bracket setup teardown act
-  where
-  setup = STM.atomically $ do
-    groups <- forM groupOffsets $ \partitionOffsets -> do
-      offsets <- forM partitionOffsets STM.newTVar
-      return ConsumerGroup
-        { g_state = Closed
-        , g_comitted = offsets
-        , g_consumers = mempty
-        }
-    var <- STM.newTVar groups
-    return Topic
-      { t_name = name
-      , t_partitions = partitions
-      , t_cgroups = var
+withTopic partitions groupOffsets =
+  bracket (openTopic partitions groupOffsets) closeTopic
+
+openTopic
+  :: HasCallStack
+  => HashMap PartitionNumber PartitionInstance
+  -> TopicState
+  -> IO Topic
+openTopic partitions groupOffsets = STM.atomically $ do
+  groups <- forM groupOffsets $ \partitionOffsets -> do
+    offsets <- forM partitionOffsets STM.newTVar
+    return ConsumerGroup
+      { g_state = Closed
+      , g_comitted = offsets
+      , g_consumers = mempty
       }
+  var <- STM.newTVar groups
+  return Topic
+    { t_partitions = partitions
+    , t_cgroups = var
+    }
 
-  teardown topic = do
-    readers <- STM.atomically $ do
-      groups <- STM.readTVar (t_cgroups topic)
+closeTopic :: Topic -> IO ()
+closeTopic topic = do
+  readers <- STM.atomically $ do
+    groups <- STM.readTVar (t_cgroups topic)
 
-      -- close all consumers
-      sequenceA_
-        [ closeConsumer consumer
-        | group <- HashMap.elems groups
-        , consumer <- HashMap.elems (g_consumers group)
-        ]
+    -- close all consumers
+    sequenceA_
+      [ closeConsumer consumer
+      | group <- HashMap.elems groups
+      , consumer <- HashMap.elems (g_consumers group)
+      ]
 
-      -- close all groups
-      let close g = g { g_consumers = mempty, g_state = Closed }
-      STM.writeTVar (t_cgroups topic) $ fmap close groups
+    -- close all groups
+    let close g = g { g_consumers = mempty, g_state = Closed }
+    STM.writeTVar (t_cgroups topic) $ fmap close groups
 
-      -- collect all readers to destroy
-      return
-        [ reader
-        | group <- HashMap.elems groups
-        , Ready readers <- [g_state group]
-        , reader <- readers
-        ]
+    -- collect all readers to destroy
+    return
+      [ reader
+      | group <- HashMap.elems groups
+      , Ready readers <- [g_state group]
+      , reader <- readers
+      ]
 
-    forConcurrently_ readers $ R.destroy . r_reader
+  forConcurrently_ readers $ R.destroy . r_reader
 
 -- | Get the state of the latest committed offsets of the topic.
 getState :: Topic -> STM TopicState
@@ -208,8 +210,6 @@ write Producer{..} msg = do
   err = error $ unwords
     [ "Queue: unknown partition"
     <> show (unPartitionNumber pid)
-    <> "on topic"
-    <> Text.unpack (unTopicName $ t_name p_topic)
     ]
 
 withConsumer :: HasCallStack => Topic -> ConsumerGroupName -> (Consumer -> IO b) -> IO b
@@ -367,7 +367,7 @@ newUUID = do
   fixed <- randomIO @Int
   return $ UUID $ Text.pack $ show now <> show fixed
 
-data Meta = Meta TopicName PartitionNumber Offset
+data Meta = Meta PartitionNumber Offset
   deriving (Show, Eq, Ord)
 
 data ReadError
@@ -379,7 +379,7 @@ data ReadError
 -- | Try to read all readers assigned to the consumer in round-robin fashion.
 -- Blocks until there is a message.
 read :: HasCallStack => Consumer -> IO (Either ReadError (ByteString, Meta))
-read (Consumer topic var) = do
+read (Consumer _ var) = do
   handle whenBlocked $ atomically $ do
     mreaders <- STM.readTVar var
     case mreaders of
@@ -399,12 +399,12 @@ read (Consumer topic var) = do
         Nothing -> go (pnumber : seen) rs
         Just (offset, Record bs) -> do
           STM.writeTVar var (Just rs)
-          return $ Right (bs, Meta (t_name topic) pnumber offset)
+          return $ Right (bs, Meta pnumber offset)
 
 -- | If the partition was moved to a different consumer
 -- the commit will fail silently.
 commit :: HasCallStack => Consumer -> Meta -> IO ()
-commit (Consumer _ var) (Meta _ pnumber offset) = atomically $ do
+commit (Consumer _ var) (Meta pnumber offset) = atomically $ do
   mreaders <- STM.readTVar var
   let mreader = find (\r -> r_partition r == pnumber) $ fromMaybe [] mreaders
   forM_ mreader $ \r ->

@@ -1,100 +1,105 @@
 module Queue where
 
+import Control.Concurrent (MVar, newMVar)
+import Control.Exception (bracket, throwIO, Exception(..))
 import Control.Monad (forM)
-import Control.Concurrent (MVar, modifyMVar)
-import Data.Bifunctor (second)
-import Data.ByteString (ByteString)
-import Data.Hashable (Hashable(..))
+import Data.Hashable (Hashable)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
+import Data.HashSet (HashSet)
+import qualified Data.HashSet as HashSet
 import Data.Text (Text)
+import qualified Data.Text as Text
+import System.FilePath ((</>))
 
-import Queue.Partition (Partition, Offset, Record(..))
-import qualified Queue.Partition as P
+import Queue.Topic
+  ( Topic
+  , TopicState
+  , PartitionNumber(..)
+  , PartitionInstance(..)
+  )
+import qualified Queue.Topic as T
+import qualified Queue.Partition.File as FilePartition
 
-newtype Topic = Topic { unTopic :: Text }
-  deriving newtype (Eq, Ord, Hashable)
+newtype Queue = Queue (MVar QState)
 
-newtype PartitionNumber = PartitionNumber { unPartitionNumber :: Int }
-  deriving newtype (Eq, Ord, Hashable)
+newtype StorePath = StorePath FilePath
 
-data Meta = Meta
-  { meta_topic :: Topic
-  , meta_partition :: PartitionNumber
-  , meta_offset :: Offset
+data QState = QState
+  { q_store :: StorePath
+  , q_topics :: MVar (HashMap TopicName Topic)
   }
-
-data PartitionInstance =
-  forall a. Partition a => PartitionInstance a
 
 newtype Inventory = Inventory
-  (HashMap Topic (HashMap PartitionNumber (Maybe PartitionInstance)))
+  (HashMap TopicName (HashSet PartitionNumber, TopicState))
 
-data Consumer = Consumer
+newtype TopicName = TopicName { unTopicName :: Text }
+  deriving Show
+  deriving newtype (Eq, Ord, Hashable)
 
-data Producer a = Producer
-  { p_topic :: Topic
-  , p_partitions :: HashMap PartitionNumber PartitionInstance
-  , p_select :: a -> PartitionNumber
-  , p_encode :: a -> Record
-  }
+data OpenQueueError
+  = CorruptedInventory
+  deriving Show
 
-data Queue = Queue
-  { q_openPartition :: Topic -> PartitionNumber -> IO PartitionInstance
-  , q_partitionsPerTopic :: Int
-  , q_inventory :: MVar Inventory
-  }
+instance Exception OpenQueueError where
+  displayException = \case
+    CorruptedInventory -> "Inventory file is corrupetd."
 
-withProducer
-  :: Hashable b
-  => Queue
-  -> Topic
-  -> (a -> b)              -- ^ partitioner
-  -> (a -> ByteString)     -- ^ encoder
-  -> (Producer a -> IO b)
-  -> IO b
-withProducer Queue{..} topic partitioner encode act = do
-  partitions <- modifyMVar q_inventory $ \(Inventory inventory) -> do
-    partitions <- case HashMap.lookup topic inventory of
-      Nothing ->
-        forM [0 .. q_partitionsPerTopic - 1] $ \n ->
-          (PartitionNumber n,) <$> q_openPartition topic (PartitionNumber n)
-      Just ps ->
-        forM (HashMap.toList ps) $ \(pid, mp) ->
-          (pid,) <$> maybe (q_openPartition topic pid) return mp
-    return
-      ( Inventory
-        $ HashMap.insert topic
-        (HashMap.fromList $ fmap (second Just) partitions)
-        inventory
-      , partitions
-      )
-  act $ Producer
-    { p_topic = topic
-    , p_partitions = HashMap.fromList partitions
-    , p_select = PartitionNumber . (`mod` q_partitionsPerTopic) . hash . partitioner
-    , p_encode = Record . encode
-    }
-
-write :: Producer a -> a -> IO ()
-write Producer{..} msg = do
-  PartitionInstance partition <- maybe err return (HashMap.lookup pid p_partitions)
-  P.write partition (p_encode msg)
+withQueue :: FilePath -> (Queue -> IO a) -> IO a
+withQueue path = bracket open close
   where
-  pid = p_select msg
-  err = error $ unwords
-    [ "Queue: unknown partition"
-    <> show (unPartitionNumber pid)
-    <> "on topic"
-    <> show (unTopic p_topic)
-    ]
+  store = StorePath path
+  open = do
+    e <- inventoryRead store
+    inventory <- case e of
+      Left Missing -> return $ Inventory mempty
+      Left Unreadable -> throwIO CorruptedInventory
+      Right i -> return i
 
-withConsumer :: Queue -> (Consumer -> IO b) -> IO b
-withConsumer = undefined
+    topics <- openTopics inventory
+    topicsVar <- newMVar topics
+    Queue <$> newMVar QState
+      { q_store = store
+      , q_topics = topicsVar
+      }
 
--- | blocks until there is a message.
-read :: Consumer -> IO (ByteString, Meta)
-read  = undefined
+  openTopics :: Inventory -> IO (HashMap TopicName Topic)
+  openTopics (Inventory inventory) = do
+    flip HashMap.traverseWithKey inventory $ \name (pset, state) -> do
+      partitions <- openPartitions name pset
+      T.openTopic partitions state
 
-commit :: Consumer -> Meta -> IO ()
-commit  = undefined
+  openPartitions
+    :: TopicName
+    -> HashSet PartitionNumber
+    -> IO (HashMap PartitionNumber PartitionInstance)
+  openPartitions name pset = do
+    let numbers = HashSet.toList pset
+        hmap = HashMap.fromList $ zip numbers numbers
+    forM hmap $ \pnumber -> do
+      let (fpath, fname) = partitionPath store name pnumber
+      filePartition <- FilePartition.open fpath fname
+      return (PartitionInstance filePartition)
+
+
+  close _ = return ()
+
+partitionPath :: StorePath -> TopicName -> PartitionNumber -> (FilePath, String)
+partitionPath (StorePath path) (TopicName name) (PartitionNumber n) =
+  ( path </> Text.unpack name
+  , show n <> ".partition"
+  )
+
+inventoryPath :: StorePath -> FilePath
+inventoryPath (StorePath path) = path </> "inventory.bin"
+
+inventoryWrite :: StorePath -> Inventory -> IO ()
+inventoryWrite = undefined
+
+data InventoryReadError
+  = Missing
+  | Unreadable
+
+inventoryRead :: StorePath -> IO (Either InventoryReadError Inventory)
+inventoryRead = undefined
+

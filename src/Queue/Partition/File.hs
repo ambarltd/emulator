@@ -70,10 +70,6 @@ newtype PartitionName = PartitionName { unPartitionName :: String }
 newtype Bytes = Bytes Word64
   deriving (Eq, Show)
 
-newtype Count = Count Int
-  deriving (Show)
-  deriving newtype (Eq, Ord, Enum, Integral, Real, Num)
-
 {-| Note [File Partition Design]
 
 The implementation involves 2 files, one index and a records file.
@@ -301,11 +297,6 @@ instance Partition FilePartition where
         return (partitionLength, next, info)
 
       undo (_,_,info) = atomicallyNamed "file.read.undo" $ STM.putTMVar var info
-
-  getOffset :: FileReader -> IO Offset
-  getOffset (FileReader _ var) = atomically $ do
-    info <- STM.readTMVar var
-    STM.readTVar (r_next info)
 
   write :: FilePartition -> Record -> IO ()
   write (FilePartition{..}) (Record bs)  = do
