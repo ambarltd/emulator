@@ -1,4 +1,10 @@
-module Queue where
+module Queue
+  ( Queue
+  , withQueue
+  , openTopic
+  , TopicName(..)
+  )
+  where
 
 import Control.Concurrent (threadDelay, MVar, newMVar, modifyMVar, withMVar)
 import Control.Concurrent.Async (withAsync)
@@ -104,20 +110,22 @@ every (Seconds s) act = forever $ do
 openTopics :: Store -> Inventory -> IO (HashMap TopicName Topic)
 openTopics store (Inventory inventory) = do
   flip HashMap.traverseWithKey inventory $ \name (TopicState ps cs) -> do
-    partitions <- openPartitions name ps
+    partitions <- openPartitions store name ps
     T.openTopic partitions cs
+
+openPartitions
+  :: Store
+  -> TopicName
+  -> Set PartitionNumber
+  -> IO (HashMap PartitionNumber PartitionInstance)
+openPartitions store name pset = forM hmap openPartition
   where
-  openPartitions
-    :: TopicName
-    -> Set PartitionNumber
-    -> IO (HashMap PartitionNumber PartitionInstance)
-  openPartitions name pset = do
-    let numbers = Set.toList pset
-        hmap = HashMap.fromList $ zip numbers numbers
-    forM hmap $ \pnumber -> do
-      let (fpath, fname) = partitionPath store name pnumber
-      filePartition <- FilePartition.open fpath fname
-      return (PartitionInstance filePartition)
+  numbers = Set.toList pset
+  hmap = HashMap.fromList $ zip numbers numbers
+  openPartition pnumber = do
+    let (fpath, fname) = partitionPath store name pnumber
+    filePartition <- FilePartition.open fpath fname
+    return (PartitionInstance filePartition)
 
 partitionPath :: Store -> TopicName -> PartitionNumber -> (FilePath, String)
 partitionPath (Store path) (TopicName name) (PartitionNumber n) =
@@ -147,5 +155,22 @@ inventoryLoad store = do
       return $ case r of
         Left err -> Left (Unreadable err)
         Right i -> Right i
+
+_DEFAULT_PARTITION_COUNT :: Int
+_DEFAULT_PARTITION_COUNT = 10
+
+openTopic :: Queue -> TopicName -> IO Topic
+openTopic (Queue store var) name =
+  modifyMVar var $ \topics ->
+  case HashMap.lookup name topics of
+    Just topic -> return (topics, topic)
+    Nothing -> do
+      let pnumbers = Set.fromList $ fmap PartitionNumber [0.._DEFAULT_PARTITION_COUNT - 1]
+      partitions <- openPartitions store name pnumbers
+      topic <- T.openTopic partitions mempty
+      return (HashMap.insert name topic topics, topic)
+
+
+
 
 

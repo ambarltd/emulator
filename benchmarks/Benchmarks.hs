@@ -184,7 +184,6 @@ withFileTopic (PartitionCount n) act =
   withTempPath $ \path ->
   withMany (f path) [0..n-1] $ \pinstances ->
   T.withTopic
-    (T.TopicName "test-topic")
     (HashMap.fromList $ zip [0..] pinstances)
     mempty
     act

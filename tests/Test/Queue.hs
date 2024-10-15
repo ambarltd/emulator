@@ -31,7 +31,6 @@ import Foreign.Marshal.Utils (withMany)
 
 import Queue.Topic
   ( Topic
-  , TopicName(..)
   , Meta(..)
   , ConsumerGroupName(..)
   , PartitionInstance(..)
@@ -59,7 +58,6 @@ testQueues  = describe "queue" $ do
     withTempPath $ \path ->
     withMany (f path) [0..n-1] $ \pinstances ->
     withTopic
-      (TopicName "test-topic")
       (HashMap.fromList $ zip [0..] pinstances)
       mempty
       act
@@ -93,10 +91,10 @@ testTopic with = do
         T.write producer one
         T.write producer two
       T.withConsumer topic group $ \consumer -> do
-        Right (one_, Meta _ _ n1) <- T.read consumer
+        Right (one_, Meta _ n1) <- T.read consumer
         n1 `shouldBe` 0
         Record one_ `shouldBe` snd one
-        Right (two_, Meta _ _ n2) <- T.read consumer
+        Right (two_, Meta _ n2) <- T.read consumer
         n2 `shouldBe` 1
         Record two_ `shouldBe` snd two
 
@@ -107,8 +105,8 @@ testTopic with = do
         T.write producer one
         T.write producer two
       T.withConsumer topic group $ \consumer -> do
-        Right (one_, Meta _ p1 n1) <- T.read consumer
-        Right (two_, Meta _ p2 n2) <- T.read consumer
+        Right (one_, Meta p1 n1) <- T.read consumer
+        Right (two_, Meta p2 n2) <- T.read consumer
         sort
           [ (p1,n1,one_)
           , (p2,n2,two_)
@@ -212,14 +210,14 @@ testTopic with = do
         -- read all 6 messages
         replicateM_ 6 $ pnumber <$> T.read consumer
         -- commit the 2nd message from partition 1.
-        T.commit consumer (Meta (error "no topic name") 1 1)
+        T.commit consumer (Meta 1 1)
 
       -- with a new consumer
       T.withConsumer topic group $ \consumer -> do
         -- we should be able to read 4 messages.
         metas <- replicateM 4 $ mmeta <$> T.read consumer
-        let metaPartition (Meta _ p _) = p
-            metaOffset (Meta _ _ o) = o
+        let metaPartition (Meta p _) = p
+            metaOffset (Meta _ o) = o
         sort (metaOffset <$> metas) `shouldBe` [0,1,2,2]
         sort (metaPartition <$> metas) `shouldBe` [0,0,0,1]
   where
@@ -232,7 +230,7 @@ testTopic with = do
     pnumber :: Either ReadError (ByteString, Meta) -> PartitionNumber
     pnumber = \case
       Left err -> error (show err)
-      Right (_, Meta _ p _) -> p
+      Right (_, Meta p _) -> p
 
     msgs :: [(Int, Record)]
     msgs = zip ([0..] :: [Int]) messages
