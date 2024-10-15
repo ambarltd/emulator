@@ -1,6 +1,6 @@
 module Queue.Topic
   ( Topic
-  , TopicState
+  , TopicState(..)
   , PartitionInstance(..)
   , PartitionNumber(..)
   , withTopic
@@ -38,6 +38,8 @@ import qualified Data.HashMap.Strict as HashMap
 import Data.List (find)
 import Data.List.Extra (chunksOf)
 import Data.Maybe (fromMaybe)
+import qualified Data.Set as Set
+import Data.Set (Set)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
@@ -110,12 +112,15 @@ data Producer a = Producer
   , p_encode :: a -> Record
   }
 
-type TopicState = HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
+data TopicState = TopicState
+  { s_partitions :: Set PartitionNumber
+  , s_consumers :: HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
+  }
 
 withTopic
   :: HasCallStack
   => HashMap PartitionNumber PartitionInstance
-  -> TopicState
+  -> HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
   -> (Topic -> IO a)
   -> IO a
 withTopic partitions groupOffsets =
@@ -124,7 +129,7 @@ withTopic partitions groupOffsets =
 openTopic
   :: HasCallStack
   => HashMap PartitionNumber PartitionInstance
-  -> TopicState
+  -> HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
   -> IO Topic
 openTopic partitions groupOffsets = STM.atomically $ do
   groups <- forM groupOffsets $ \partitionOffsets -> do
@@ -170,7 +175,11 @@ closeTopic topic = do
 getState :: Topic -> STM TopicState
 getState Topic{..} = do
   cgroups <- STM.readTVar t_cgroups
-  forM cgroups $ \group -> forM (g_comitted group) STM.readTVar
+  consumers <- forM cgroups $ \group -> forM (g_comitted group) STM.readTVar
+  return TopicState
+    { s_partitions = Set.fromList $ HashMap.keys t_partitions
+    , s_consumers = consumers
+    }
 
 newtype Partitioner a = Partitioner (Int -> a -> PartitionNumber)
 
