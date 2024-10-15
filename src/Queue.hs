@@ -1,8 +1,8 @@
 module Queue where
 
-import Control.Concurrent (MVar, newMVar)
+import Control.Concurrent (MVar, newMVar, modifyMVar, readMVar)
 import Control.Exception (bracket, throwIO, Exception(..))
-import Control.Monad (forM)
+import Control.Monad (forM, forM_)
 import Data.Hashable (Hashable)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
@@ -49,6 +49,8 @@ withQueue :: FilePath -> (Queue -> IO a) -> IO a
 withQueue path = bracket open close
   where
   store = StorePath path
+
+  open :: IO Queue
   open = do
     e <- inventoryRead store
     inventory <- case e of
@@ -81,8 +83,12 @@ withQueue path = bracket open close
       filePartition <- FilePartition.open fpath fname
       return (PartitionInstance filePartition)
 
-
-  close _ = return ()
+  close :: Queue -> IO ()
+  close (Queue var) =
+    modifyMVar var $ \queue -> do
+      topics <- readMVar (q_topics queue)
+      forM_ topics T.closeTopic
+      return (error "Queue: used after closed", ())
 
 partitionPath :: StorePath -> TopicName -> PartitionNumber -> (FilePath, String)
 partitionPath (StorePath path) (TopicName name) (PartitionNumber n) =
