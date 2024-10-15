@@ -1,15 +1,17 @@
 module Queue
   ( Queue
+  , TopicName(..)
+  , OpenQueueError(..)
+  , PartitionCount(..)
   , withQueue
   , openTopic
-  , TopicName(..)
   )
   where
 
 import Control.Concurrent (threadDelay, MVar, newMVar, modifyMVar, withMVar)
 import Control.Concurrent.Async (withAsync)
 import Control.Exception (bracket, throwIO, Exception(..))
-import Control.Monad (forM, forM_, forever)
+import Control.Monad (forM, forM_, forever, when)
 import qualified Data.ByteString.Lazy as LB
 import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 import qualified Data.Aeson as Aeson
@@ -22,7 +24,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Void (Void)
-import System.Directory (doesFileExist)
+import System.Directory (doesFileExist, removeFile)
 import System.FilePath ((</>))
 
 import Queue.Topic
@@ -36,6 +38,7 @@ import qualified Queue.Partition.File as FilePartition
 
 data Queue = Queue
   { q_store :: Store
+  , q_count :: PartitionCount
   , q_topics :: MVar (HashMap TopicName Topic)
   }
 
@@ -52,25 +55,33 @@ newtype TopicName = TopicName { unTopicName :: Text }
   deriving Show
   deriving newtype (Eq, Ord, Hashable, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 
-newtype OpenQueueError
+data OpenQueueError
   = CorruptedInventory String
+  | QueueLocked FilePath
   deriving Show
 
 instance Exception OpenQueueError where
   displayException = \case
     CorruptedInventory err -> "Inventory file is corrupetd: " <> err
+    QueueLocked path -> "Queue locked. The queue is already open. Lock found at: " <> path
 
-withQueue :: FilePath -> (Queue -> IO a) -> IO a
-withQueue path act =
-  bracket (open (Store path)) close $ \queue ->
+newtype PartitionCount = PartitionCount Int
+
+withQueue
+  :: FilePath
+  -> PartitionCount  -- ^ default partition count for new topics
+  -> (Queue -> IO a) -> IO a
+withQueue path count act =
+  bracket (open (Store path) count) close $ \queue ->
     withAsync (saver queue) $ \_ ->
       act queue
   where
   saver :: Queue -> IO Void
   saver queue = every (Seconds 5) (save queue)
 
-open :: Store -> IO Queue
-open store = do
+open :: Store -> PartitionCount -> IO Queue
+open store count = do
+  inventoryLock store
   e <- inventoryLoad store
   inventory <- case e of
     Left Missing -> return $ Inventory mempty
@@ -81,18 +92,20 @@ open store = do
   topicsVar <- newMVar topics
   return $ Queue
     { q_store = store
+    , q_count = count
     , q_topics = topicsVar
     }
 
 close :: Queue -> IO ()
-close queue@(Queue _ var) = do
+close queue@(Queue store _ var) = do
   save queue
   modifyMVar var $ \topics -> do
     forM_ topics T.closeTopic
     return (error "Queue: use after closed", ())
+  inventoryRelease store
 
 save :: Queue -> IO ()
-save (Queue store var) =
+save (Queue store _ var) =
   withMVar var $ \topics -> do
   -- do it in separate STM transactions to minimise retries.
   -- any offset moved during a `getState` operation
@@ -134,7 +147,7 @@ partitionPath (Store path) (TopicName name) (PartitionNumber n) =
   )
 
 inventoryPath :: Store -> FilePath
-inventoryPath (Store path) = path </> "inventory.bin"
+inventoryPath (Store path) = path </> "inventory.json"
 
 inventoryWrite :: Store -> Inventory -> IO ()
 inventoryWrite store inventory = do
@@ -156,19 +169,28 @@ inventoryLoad store = do
         Left err -> Left (Unreadable err)
         Right i -> Right i
 
-_DEFAULT_PARTITION_COUNT :: Int
-_DEFAULT_PARTITION_COUNT = 10
-
 openTopic :: Queue -> TopicName -> IO Topic
-openTopic (Queue store var) name =
+openTopic (Queue store (PartitionCount count) var) name =
   modifyMVar var $ \topics ->
   case HashMap.lookup name topics of
     Just topic -> return (topics, topic)
     Nothing -> do
-      let pnumbers = Set.fromList $ fmap PartitionNumber [0.._DEFAULT_PARTITION_COUNT - 1]
+      let pnumbers = Set.fromList $ fmap PartitionNumber [0..count - 1]
       partitions <- openPartitions store name pnumbers
       topic <- T.openTopic partitions mempty
       return (HashMap.insert name topic topics, topic)
+
+inventoryLock :: Store -> IO ()
+inventoryLock (Store path) = do
+  let lock = path </> "inventory.lock"
+  exists <- doesFileExist lock
+  when exists (throwIO $ QueueLocked lock)
+  writeFile lock "locked"
+
+inventoryRelease :: Store -> IO ()
+inventoryRelease (Store path) = do
+  let lock = path </> "inventory.lock"
+  removeFile lock
 
 
 
