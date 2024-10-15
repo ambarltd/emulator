@@ -437,5 +437,5 @@ commit (Consumer _ var) (Meta pnumber offset) = atomically $ do
   forM_ mreader $ \r ->
     -- we save `offset + 1` because it denotes the reset point,
     -- not the actual ofset value saved.
-    STM.writeTVar (r_committed r) (offset + 1)
+    STM.modifyTVar (r_committed r) $ \previous -> max previous (offset + 1)
 
