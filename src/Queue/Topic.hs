@@ -56,6 +56,20 @@ import qualified Queue.Partition as Partition
 import qualified Queue.Partition.STMReader as R
 
 -- | Abstraction for a group of independent streams (partitions)
+--
+-- * One Topic is composed of a number of Partitions.
+-- * One Topic can have any number of Producers.
+-- * One Producer can produce to any Partition, as determined by the Producer's
+--    partitioning function
+-- * One Topic can have any number of Consumer Groups.
+-- * One Consumer Group can have any number of Consumers.
+-- * One Consumer reads messages from one or more Partitions in order.
+-- * A Consumer will return the first available Message from its
+--    Partitions in round-robin manner.
+-- * A Message is first read and later its offset can be committed.
+-- * Adding and removing Consumers causes a rebalance.
+-- * Partitions that change consumers during a rebalance are rewinded to the
+--    latest committed Offset.
 data Topic = Topic
   { t_partitions :: HashMap PartitionNumber PartitionInstance
   , t_cgroups :: TVar (HashMap ConsumerGroupName ConsumerGroup)
