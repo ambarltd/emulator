@@ -4,6 +4,10 @@ import Control.Concurrent (threadDelay, MVar, newMVar, modifyMVar, withMVar)
 import Control.Concurrent.Async (withAsync)
 import Control.Exception (bracket, throwIO, Exception(..))
 import Control.Monad (forM, forM_, forever)
+import qualified Data.ByteString.Lazy as LB
+import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Encode.Pretty as Aeson (encodePretty)
 import Data.Hashable (Hashable)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
@@ -12,6 +16,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Void (Void)
+import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
 import Queue.Topic
@@ -35,51 +40,50 @@ newtype Store = Store FilePath
 -- Has enough information to re-instantiate a queue to resume
 -- consumption and production from any arbitrary point.
 newtype Inventory = Inventory (HashMap TopicName TopicState)
+  deriving newtype (FromJSON, ToJSON)
 
 newtype TopicName = TopicName { unTopicName :: Text }
   deriving Show
-  deriving newtype (Eq, Ord, Hashable)
+  deriving newtype (Eq, Ord, Hashable, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 
-data OpenQueueError
-  = CorruptedInventory
+newtype OpenQueueError
+  = CorruptedInventory String
   deriving Show
 
 instance Exception OpenQueueError where
   displayException = \case
-    CorruptedInventory -> "Inventory file is corrupetd."
+    CorruptedInventory err -> "Inventory file is corrupetd: " <> err
 
 withQueue :: FilePath -> (Queue -> IO a) -> IO a
 withQueue path act =
-  bracket open close $ \queue ->
+  bracket (open (Store path)) close $ \queue ->
     withAsync (saver queue) $ \_ ->
       act queue
   where
-  store = Store path
-
-  open :: IO Queue
-  open = do
-    e <- inventoryLoad store
-    inventory <- case e of
-      Left Missing -> return $ Inventory mempty
-      Left Unreadable -> throwIO CorruptedInventory
-      Right i -> return i
-
-    topics <- openTopics store inventory
-    topicsVar <- newMVar topics
-    return $ Queue
-      { q_store = store
-      , q_topics = topicsVar
-      }
-
-  close :: Queue -> IO ()
-  close queue@(Queue _ var) = do
-    save queue
-    modifyMVar var $ \topics -> do
-      forM_ topics T.closeTopic
-      return (error "Queue: use after closed", ())
-
   saver :: Queue -> IO Void
   saver queue = every (Seconds 5) (save queue)
+
+open :: Store -> IO Queue
+open store = do
+  e <- inventoryLoad store
+  inventory <- case e of
+    Left Missing -> return $ Inventory mempty
+    Left (Unreadable err) -> throwIO $ CorruptedInventory err
+    Right i -> return i
+
+  topics <- openTopics store inventory
+  topicsVar <- newMVar topics
+  return $ Queue
+    { q_store = store
+    , q_topics = topicsVar
+    }
+
+close :: Queue -> IO ()
+close queue@(Queue _ var) = do
+  save queue
+  modifyMVar var $ \topics -> do
+    forM_ topics T.closeTopic
+    return (error "Queue: use after closed", ())
 
 save :: Queue -> IO ()
 save (Queue store var) =
@@ -125,13 +129,23 @@ inventoryPath :: Store -> FilePath
 inventoryPath (Store path) = path </> "inventory.bin"
 
 inventoryWrite :: Store -> Inventory -> IO ()
-inventoryWrite = undefined
+inventoryWrite store inventory = do
+  LB.writeFile (inventoryPath store) (Aeson.encodePretty inventory)
 
 data InventoryReadError
   = Missing
-  | Unreadable
+  | Unreadable String
 
 inventoryLoad :: Store -> IO (Either InventoryReadError Inventory)
-inventoryLoad = undefined
+inventoryLoad store = do
+  let path = inventoryPath store
+  exists <- doesFileExist path
+  if not exists
+    then return (Left Missing)
+    else do
+      r <- Aeson.eitherDecodeFileStrict (inventoryPath store)
+      return $ case r of
+        Left err -> Left (Unreadable err)
+        Right i -> Right i
 
 

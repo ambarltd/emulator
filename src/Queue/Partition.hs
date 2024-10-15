@@ -8,6 +8,7 @@ module Queue.Partition
   ) where
 
 import Control.Exception (bracket)
+import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 import Data.ByteString (ByteString)
 
 data Position
@@ -19,7 +20,7 @@ data Position
 -- | A reader's position in the records sequence.
 newtype Offset = Offset { unOffset :: Int }
   deriving Show
-  deriving newtype (Eq, Ord, Enum, Integral, Real, Num)
+  deriving newtype (Eq, Ord, Enum, Integral, Real, Num, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 
 -- The total number of records in a partition.
 newtype Count = Count Int

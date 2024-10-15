@@ -30,6 +30,7 @@ import qualified Control.Concurrent.STM as STM
 import Control.Concurrent.STM (STM, TVar, atomically)
 import Control.Exception (bracket, handle, BlockedIndefinitelyOnSTM)
 import Control.Monad (forM_, forM, when, unless)
+import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 import Data.ByteString (ByteString)
 import Data.Foldable (sequenceA_)
 import Data.Hashable (Hashable(..))
@@ -44,6 +45,7 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Time.Clock (nominalDiffTimeToSeconds)
+import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import System.Random (randomIO)
 
@@ -77,13 +79,13 @@ data Topic = Topic
 
 newtype PartitionNumber = PartitionNumber { unPartitionNumber :: Int }
   deriving Show
-  deriving newtype (Eq, Ord, Enum, Integral, Real, Num, Hashable)
+  deriving newtype (Eq, Ord, Enum, Integral, Real, Num, Hashable, FromJSONKey, ToJSONKey, FromJSON, ToJSON)
 
 data PartitionInstance =
   forall a. Partition a => PartitionInstance a
 
 newtype ConsumerGroupName = ConsumerGroupName Text
-  deriving newtype (Eq, Ord, Hashable)
+  deriving newtype (Eq, Ord, Hashable, FromJSONKey, ToJSONKey)
 
 data PartitionReader = PartitionReader
   { r_reader :: R.STMReader
@@ -130,6 +132,8 @@ data TopicState = TopicState
   { s_partitions :: Set PartitionNumber
   , s_consumers :: HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
   }
+  deriving (Generic)
+  deriving anyclass (FromJSON, ToJSON)
 
 withTopic
   :: HasCallStack
