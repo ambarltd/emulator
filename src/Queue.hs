@@ -1,8 +1,9 @@
 module Queue where
 
-import Control.Concurrent (MVar, newMVar, modifyMVar)
+import Control.Concurrent (threadDelay, MVar, newMVar, modifyMVar, withMVar)
+import Control.Concurrent.Async (withAsync)
 import Control.Exception (bracket, throwIO, Exception(..))
-import Control.Monad (forM, forM_)
+import Control.Monad (forM, forM_, forever)
 import Data.Hashable (Hashable)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
@@ -10,6 +11,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Void (Void)
 import System.FilePath ((</>))
 
 import Queue.Topic
@@ -47,13 +49,16 @@ instance Exception OpenQueueError where
     CorruptedInventory -> "Inventory file is corrupetd."
 
 withQueue :: FilePath -> (Queue -> IO a) -> IO a
-withQueue path = bracket open close
+withQueue path act =
+  bracket open close $ \queue ->
+    withAsync (saver queue) $ \_ ->
+      act queue
   where
   store = Store path
 
   open :: IO Queue
   open = do
-    e <- inventoryRead store
+    e <- inventoryLoad store
     inventory <- case e of
       Left Missing -> return $ Inventory mempty
       Left Unreadable -> throwIO CorruptedInventory
@@ -67,15 +72,30 @@ withQueue path = bracket open close
       }
 
   close :: Queue -> IO ()
-  close (Queue _ var) =
+  close queue@(Queue _ var) = do
+    save queue
     modifyMVar var $ \topics -> do
       forM_ topics T.closeTopic
       return (error "Queue: use after closed", ())
 
-  --save :: Queue -> IO ()
-  --save (Queue _ var) = do
-  --  topics <- readMvar var
-  --  state <-
+  saver :: Queue -> IO Void
+  saver queue = every (Seconds 5) (save queue)
+
+save :: Queue -> IO ()
+save (Queue store var) =
+  withMVar var $ \topics -> do
+  -- do it in separate STM transactions to minimise retries.
+  -- any offset moved during a `getState` operation
+  inventory <- Inventory <$> forM topics T.getState
+  inventoryWrite store inventory
+
+newtype Seconds = Seconds Int
+
+every :: Seconds -> IO a -> IO b
+every (Seconds s) act = forever $ do
+  threadDelay nanoseconds
+  act
+  where nanoseconds = s * 1_000_000
 
 openTopics :: Store -> Inventory -> IO (HashMap TopicName Topic)
 openTopics store (Inventory inventory) = do
@@ -111,6 +131,7 @@ data InventoryReadError
   = Missing
   | Unreadable
 
-inventoryRead :: Store -> IO (Either InventoryReadError Inventory)
-inventoryRead = undefined
+inventoryLoad :: Store -> IO (Either InventoryReadError Inventory)
+inventoryLoad = undefined
+
 

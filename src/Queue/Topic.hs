@@ -186,8 +186,8 @@ closeTopic topic = do
   forConcurrently_ readers $ R.destroy . r_reader
 
 -- | Get the state of the latest committed offsets of the topic.
-getState :: Topic -> STM TopicState
-getState Topic{..} = do
+getState :: Topic -> IO TopicState
+getState Topic{..} = STM.atomically $ do
   cgroups <- STM.readTVar t_cgroups
   consumers <- forM cgroups $ \group -> forM (g_comitted group) STM.readTVar
   return TopicState
