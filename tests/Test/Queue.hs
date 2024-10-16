@@ -29,9 +29,10 @@ import Test.Hspec
   )
 import Foreign.Marshal.Utils (withMany)
 
+import qualified Queue
+import Queue (TopicName(..), PartitionCount(..))
 import Queue.Topic
   ( Topic
-  , TopicName(..)
   , Meta(..)
   , ConsumerGroupName(..)
   , PartitionInstance(..)
@@ -45,7 +46,9 @@ import qualified Queue.Partition as P
 import qualified Queue.Partition.File as FilePartition
 
 testQueues :: Spec
-testQueues  = describe "queue" $ do
+testQueues = do
+  describe "queue" $ do
+    testQueue
   describe "partition" $ do
     testPartition withFilePartition
   describe "topic" $ do
@@ -59,7 +62,6 @@ testQueues  = describe "queue" $ do
     withTempPath $ \path ->
     withMany (f path) [0..n-1] $ \pinstances ->
     withTopic
-      (TopicName "test-topic")
       (HashMap.fromList $ zip [0..] pinstances)
       mempty
       act
@@ -82,7 +84,76 @@ messages = toRecord <$> zipWith take lengths sentences
       then succ c
       else '#' -- chr 35
 
-newtype PartitionCount = PartitionCount Int
+testQueue :: Spec
+testQueue = do
+  it "no concurrent opens" $
+    withTempPath $ \path ->
+    Queue.withQueue path (PartitionCount 1) $ \_ -> do
+      let openError e
+            | Just (Queue.QueueLocked _) <- fromException e = True
+            | otherwise = False
+      Queue.withQueue path (PartitionCount 1) (const $ return ()) `shouldThrow` openError
+
+  it "restores state as it was" $
+    withTempPath $ \path -> do
+    let tname = TopicName "test-topic"
+    state1 <- Queue.withQueue path (PartitionCount 2) $ \queue -> do
+      topic <- Queue.openTopic queue tname
+      withProducer topic $ \producer ->
+        traverse_ (T.write producer) (take 40 msgs)
+
+      T.withConsumer topic group $ \c1 ->
+        T.withConsumer topic group $ \c2 ->
+          forM_ [c1, c2] $ \c -> do
+            replicateM_ 10 $ do
+              Right (_, meta) <- T.read c
+              T.commit c meta
+      T.getState topic
+
+    state2 <- Queue.withQueue path (PartitionCount 10) $ \queue -> do
+      topic <- Queue.openTopic queue tname
+      T.getState topic
+
+    state1 `shouldBe` state2
+
+  it "resumes consumption from last commit" $
+    withTempPath $ \path -> do
+    let tname = TopicName "test-topic"
+    metas1 <- Queue.withQueue path (PartitionCount 1) $ \queue -> do
+      topic <- Queue.openTopic queue tname
+      withProducer topic $ \producer ->
+        traverse_ (T.write producer) (take 20 msgs)
+
+      T.withConsumer topic group $ \c -> do
+        -- consume and commit 10
+        replicateM_ 10 $ do
+          Right (_, meta) <- T.read c
+          T.commit c meta
+
+        -- consume 10 without comitting
+        replicateM 10 $ do
+          Right (_, meta) <- T.read c
+          return meta
+
+    metas2 <- Queue.withQueue path (PartitionCount 10) $ \queue -> do
+      topic <- Queue.openTopic queue tname
+      T.withConsumer topic group $ \c ->
+        -- consume 10 again
+        replicateM 10 $ do
+          Right (_, meta) <- T.read c
+          return meta
+
+    metas1 `shouldBe` metas2
+  where
+  msgs :: [(Int, Record)]
+  msgs = zip ([0..] :: [Int]) messages
+
+  group = ConsumerGroupName "test-group"
+
+  withProducer topic = T.withProducer topic (T.modPartitioner fst) (unRecord . snd)
+
+
+
 
 testTopic :: (forall b. PartitionCount -> (Topic -> IO b) -> IO b) -> Spec
 testTopic with = do
@@ -93,10 +164,10 @@ testTopic with = do
         T.write producer one
         T.write producer two
       T.withConsumer topic group $ \consumer -> do
-        Right (one_, Meta _ _ n1) <- T.read consumer
+        Right (one_, Meta _ n1) <- T.read consumer
         n1 `shouldBe` 0
         Record one_ `shouldBe` snd one
-        Right (two_, Meta _ _ n2) <- T.read consumer
+        Right (two_, Meta _ n2) <- T.read consumer
         n2 `shouldBe` 1
         Record two_ `shouldBe` snd two
 
@@ -107,8 +178,8 @@ testTopic with = do
         T.write producer one
         T.write producer two
       T.withConsumer topic group $ \consumer -> do
-        Right (one_, Meta _ p1 n1) <- T.read consumer
-        Right (two_, Meta _ p2 n2) <- T.read consumer
+        Right (one_, Meta p1 n1) <- T.read consumer
+        Right (two_, Meta p2 n2) <- T.read consumer
         sort
           [ (p1,n1,one_)
           , (p2,n2,two_)
@@ -212,14 +283,14 @@ testTopic with = do
         -- read all 6 messages
         replicateM_ 6 $ pnumber <$> T.read consumer
         -- commit the 2nd message from partition 1.
-        T.commit consumer (Meta (error "no topic name") 1 1)
+        T.commit consumer (Meta 1 1)
 
       -- with a new consumer
       T.withConsumer topic group $ \consumer -> do
         -- we should be able to read 4 messages.
         metas <- replicateM 4 $ mmeta <$> T.read consumer
-        let metaPartition (Meta _ p _) = p
-            metaOffset (Meta _ _ o) = o
+        let metaPartition (Meta p _) = p
+            metaOffset (Meta _ o) = o
         sort (metaOffset <$> metas) `shouldBe` [0,1,2,2]
         sort (metaPartition <$> metas) `shouldBe` [0,0,0,1]
   where
@@ -232,7 +303,7 @@ testTopic with = do
     pnumber :: Either ReadError (ByteString, Meta) -> PartitionNumber
     pnumber = \case
       Left err -> error (show err)
-      Right (_, Meta _ p _) -> p
+      Right (_, Meta p _) -> p
 
     msgs :: [(Int, Record)]
     msgs = zip ([0..] :: [Int]) messages

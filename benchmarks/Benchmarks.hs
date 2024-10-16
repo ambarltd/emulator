@@ -98,6 +98,15 @@ benchTopic preFilled msgs = Criterion.bgroup "topic" $
       forConcurrently_ [1..n] $ \k ->
         T.withProducer topic (T.modPartitioner $ const k) unRecord $ \p ->
           forM_ (take (count `div` 5) msgs) $ T.write p
+  , Criterion.bench (unwords ["read and write", show count, "messages in parallel"]) $
+    Criterion.whnfIO $
+      withFileTopic (PartitionCount 1) $ \topic -> do
+        group <- uniqueGroup
+        T.withProducer topic (T.modPartitioner $ const 0) unRecord $ \p ->
+          forM_ (take count msgs) (T.write p)
+          `concurrently_`
+          readFrom topic group count
+
   ]
   where
   count = length msgs
@@ -175,7 +184,6 @@ withFileTopic (PartitionCount n) act =
   withTempPath $ \path ->
   withMany (f path) [0..n-1] $ \pinstances ->
   T.withTopic
-    (T.TopicName "test-topic")
     (HashMap.fromList $ zip [0..] pinstances)
     mempty
     act

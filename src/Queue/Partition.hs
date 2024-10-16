@@ -3,10 +3,12 @@ module Queue.Partition
   , Position(..)
   , Offset(..)
   , Record(..)
+  , Count(..)
   , withReader
   ) where
 
 import Control.Exception (bracket)
+import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 import Data.ByteString (ByteString)
 
 data Position
@@ -15,8 +17,14 @@ data Position
   | End
   deriving (Eq, Ord)
 
+-- | A reader's position in the records sequence.
 newtype Offset = Offset { unOffset :: Int }
   deriving Show
+  deriving newtype (Eq, Ord, Enum, Integral, Real, Num, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
+
+-- The total number of records in a partition.
+newtype Count = Count Int
+  deriving (Show)
   deriving newtype (Eq, Ord, Enum, Integral, Real, Num)
 
 newtype Record = Record { unRecord :: ByteString }
@@ -34,8 +42,6 @@ class Partition a where
   -- | Reads one record and advances the Reader.
   -- Blocks if there are no more records.
   read :: Reader a -> IO (Offset, Record)
-
-  getOffset :: Reader a -> IO Offset
 
   write :: a -> Record -> IO ()
 
