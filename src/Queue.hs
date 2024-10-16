@@ -24,7 +24,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Void (Void)
-import System.Directory (doesFileExist, removeFile)
+import System.Directory (doesFileExist, removeFile, createDirectoryIfMissing)
 import System.FilePath ((</>))
 
 import Queue.Topic
@@ -35,11 +35,17 @@ import Queue.Topic
   )
 import qualified Queue.Topic as T
 import qualified Queue.Partition.File as FilePartition
+import Queue.Partition.File (FilePartition)
 
 data Queue = Queue
   { q_store :: Store
-  , q_count :: PartitionCount
-  , q_topics :: MVar (HashMap TopicName Topic)
+  , q_count :: PartitionCount -- ^ default number of partitions in new topics
+  , q_topics :: MVar (HashMap TopicName TopicData)
+  }
+
+data TopicData = TopicData
+  { d_topic :: Topic
+  , d_partitions :: HashMap PartitionNumber FilePartition
   }
 
 -- | Where Queue information is stored.
@@ -100,7 +106,9 @@ close :: Queue -> IO ()
 close queue@(Queue store _ var) = do
   save queue
   modifyMVar var $ \topics -> do
-    forM_ topics T.closeTopic
+    forM_ topics $ \tdata -> do
+      T.closeTopic $ d_topic tdata
+      traverse FilePartition.close $ d_partitions tdata
     return (error "Queue: use after closed", ())
   inventoryRelease store
 
@@ -109,7 +117,7 @@ save (Queue store _ var) =
   withMVar var $ \topics -> do
   -- do it in separate STM transactions to minimise retries.
   -- any offset moved during a `getState` operation
-  inventory <- Inventory <$> forM topics T.getState
+  inventory <- Inventory <$> forM topics (T.getState . d_topic)
   inventoryWrite store inventory
 
 newtype Seconds = Seconds Int
@@ -120,25 +128,26 @@ every (Seconds s) act = forever $ do
   act
   where nanoseconds = s * 1_000_000
 
-openTopics :: Store -> Inventory -> IO (HashMap TopicName Topic)
+openTopics :: Store -> Inventory -> IO (HashMap TopicName TopicData)
 openTopics store (Inventory inventory) = do
   flip HashMap.traverseWithKey inventory $ \name (TopicState ps cs) -> do
     partitions <- openPartitions store name ps
-    T.openTopic partitions cs
+    topic <- T.openTopic (PartitionInstance <$> partitions) cs
+    return $ TopicData topic partitions
 
 openPartitions
   :: Store
   -> TopicName
   -> Set PartitionNumber
-  -> IO (HashMap PartitionNumber PartitionInstance)
+  -> IO (HashMap PartitionNumber FilePartition)
 openPartitions store name pset = forM hmap openPartition
   where
   numbers = Set.toList pset
   hmap = HashMap.fromList $ zip numbers numbers
   openPartition pnumber = do
-    let (fpath, fname) = partitionPath store name pnumber
-    filePartition <- FilePartition.open fpath fname
-    return (PartitionInstance filePartition)
+    let (path, fname) = partitionPath store name pnumber
+    createDirectoryIfMissing True path
+    FilePartition.open path fname
 
 partitionPath :: Store -> TopicName -> PartitionNumber -> (FilePath, String)
 partitionPath (Store path) (TopicName name) (PartitionNumber n) =
@@ -173,12 +182,13 @@ openTopic :: Queue -> TopicName -> IO Topic
 openTopic (Queue store (PartitionCount count) var) name =
   modifyMVar var $ \topics ->
   case HashMap.lookup name topics of
-    Just topic -> return (topics, topic)
+    Just (TopicData topic _) -> return (topics, topic)
     Nothing -> do
       let pnumbers = Set.fromList $ fmap PartitionNumber [0..count - 1]
       partitions <- openPartitions store name pnumbers
-      topic <- T.openTopic partitions mempty
-      return (HashMap.insert name topic topics, topic)
+      topic <- T.openTopic (PartitionInstance <$> partitions) mempty
+      let tdata = TopicData topic partitions
+      return (HashMap.insert name tdata topics, topic)
 
 inventoryLock :: Store -> IO ()
 inventoryLock (Store path) = do

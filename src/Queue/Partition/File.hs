@@ -27,6 +27,7 @@ import Data.Coerce (coerce)
 import Data.Word (Word64)
 import GHC.IO.Handle (hLock, LockMode(..))
 import GHC.IO.FD (FD)
+import GHC.Stack (HasCallStack)
 import qualified GHC.IO.FD as FD
 import qualified GHC.IO.Device as FD
 import System.IO
@@ -112,7 +113,7 @@ instance Exception OpenError where
     MissingRecords path -> "Missing records file: " <> path
     MissingIndex path -> "Missing index file: " <> path
 
-open :: FilePath -> String -> IO FilePartition
+open :: HasCallStack => FilePath -> String -> IO FilePartition
 open location name = do
   let records = location </> name <> ".records"
       index   = location </> name <> ".index"
@@ -160,7 +161,7 @@ open location name = do
       byteOffsetOfNextEntry <- readIndexEntry index (Offset count)
       return (Count count, byteOffsetOfNextEntry)
 
-close :: FilePartition -> IO ()
+close :: HasCallStack => FilePartition -> IO ()
 close FilePartition{..} =
   modifyMVar_ p_handles $ \case
     Nothing -> return Nothing -- already closed
@@ -173,7 +174,7 @@ close FilePartition{..} =
 -- | GHC's implementation prevents the overlapping acquisition of write and
 -- read handles for files. And write handles are exclusive.
 -- To support reads in parallel to writes we need to use a lower level abstraction.
-openNonLockingWritableFD :: FilePath -> IO FD
+openNonLockingWritableFD :: HasCallStack => FilePath -> IO FD
 openNonLockingWritableFD path = do
     (fd, _) <- FD.openFile path AppendMode True
     FD.release fd
@@ -208,7 +209,7 @@ instance Exception WriteError where
 instance Partition FilePartition where
   type Reader FilePartition = FileReader
 
-  openReader :: FilePartition -> IO FileReader
+  openReader :: HasCallStack => FilePartition -> IO FileReader
   openReader p@(FilePartition{..}) = do
     (len, _) <- STM.readTVarIO p_info
     handle <- openFile p_records ReadMode
@@ -222,13 +223,13 @@ instance Partition FilePartition where
       }
     return $ FileReader p_name var
 
-  closeReader :: FileReader -> IO ()
+  closeReader :: HasCallStack => FileReader -> IO ()
   closeReader (FileReader _ var) =
     modifyTMVarIO_ var $ \info -> do
       maybe (return ()) hClose (r_handle info)
       return info { r_handle = Nothing }
 
-  seek :: FileReader -> Position -> IO ()
+  seek :: HasCallStack => FileReader -> Position -> IO ()
   seek (FileReader _ var) pos =
     bracketOnError acquire undo $ \(next, offset, info) -> do
       when (next /= offset) $
@@ -267,7 +268,7 @@ instance Partition FilePartition where
 
   -- | Reads one record and advances the Reader.
   -- Blocks if there are no more records.
-  read :: FileReader -> IO (Offset, Record)
+  read :: HasCallStack => FileReader -> IO (Offset, Record)
   read (FileReader _ var) =
     bracketOnError acquire undo $ \(len, next, info) -> do
       handle <- case r_handle info of
@@ -298,7 +299,7 @@ instance Partition FilePartition where
 
       undo (_,_,info) = atomicallyNamed "file.read.undo" $ STM.putTMVar var info
 
-  write :: FilePartition -> Record -> IO ()
+  write :: HasCallStack => FilePartition -> Record -> IO ()
   write (FilePartition{..}) (Record bs)  = do
     when (Char8.elem '\n' bs) $
       error "FilePartition write: record contains newline character"
@@ -317,13 +318,13 @@ instance Partition FilePartition where
       writeNonBlocking fd_index entryByteOffset
       atomicallyNamed "file.write" $ STM.writeTVar p_info (Count newCount, Bytes newSize)
 
-writeNonBlocking :: FD -> ByteString -> IO ()
+writeNonBlocking :: HasCallStack => FD -> ByteString -> IO ()
 writeNonBlocking fd bs =
   void $ B.unsafeUseAsCStringLen bs $ \(ptr, len) ->
   FD.writeNonBlocking fd (coerce ptr) 0 (fromIntegral len)
 
-readIndexEntry :: FilePath -> Offset -> IO Bytes
-readIndexEntry indexPath (Offset offset)  =
+readIndexEntry :: HasCallStack => FilePath -> Offset -> IO Bytes
+readIndexEntry indexPath (Offset offset)  = do
   withFile indexPath ReadMode $ \handle -> do
     hLock handle SharedLock
     hSeek handle AbsoluteSeek $ fromIntegral $ offset * _WORD64_SIZE

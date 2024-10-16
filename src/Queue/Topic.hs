@@ -1,5 +1,6 @@
 module Queue.Topic
   ( Topic
+  , t_partitions
   , TopicState(..)
   , PartitionInstance(..)
   , PartitionNumber(..)
@@ -85,6 +86,7 @@ data PartitionInstance =
   forall a. Partition a => PartitionInstance a
 
 newtype ConsumerGroupName = ConsumerGroupName Text
+  deriving Show
   deriving newtype (Eq, Ord, Hashable, FromJSONKey, ToJSONKey)
 
 data PartitionReader = PartitionReader
@@ -132,7 +134,7 @@ data TopicState = TopicState
   { s_partitions :: Set PartitionNumber
   , s_consumers :: HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
   }
-  deriving (Generic)
+  deriving (Generic, Eq, Show)
   deriving anyclass (FromJSON, ToJSON)
 
 withTopic
