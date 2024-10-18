@@ -25,6 +25,7 @@ common common
         TypeApplications
         TypeFamilies
         TypeFamilyDependencies
+        MultiParamTypeClasses
 
 executable lite
     import: common

@@ -35,7 +35,7 @@ import Queue.Topic
 import qualified Queue.Topic as T
 import qualified Queue.Partition.File as FilePartition
 import Queue.Partition.File (FilePartition)
-import Utils.Delay (every, Duration(..))
+import Utils.Delay (every, seconds)
 import Utils.Some (Some(..))
 
 data Queue = Queue
@@ -84,7 +84,7 @@ withQueue path count act =
       act queue
   where
   saver :: Queue -> IO Void
-  saver queue = every (Seconds 5) (save queue)
+  saver queue = every (seconds 5) (save queue)
 
 open :: Store -> PartitionCount -> IO Queue
 open store count = do
