@@ -2,7 +2,7 @@ module Connector.SQL
    ( Boundaries(..)
    , SQLConnector(..)
    , connect
-   , BoundaryTracker
+   , BoundaryTracker(..)
    , rangeTracker
    ) where
 
@@ -19,6 +19,7 @@ import Utils.Delay (Duration, delay, fromDiffTime, toDiffTime)
 
 -- | List of ID ranges to exclude
 newtype Boundaries id = Boundaries [(id, id)]
+   deriving (Show, Eq)
 
 data SQLConnector item id = SQLConnector
    { c_getId :: item -> id
@@ -30,27 +31,27 @@ data SQLConnector item id = SQLConnector
 
 -- | Tracks seen ID boundaries
 data BoundaryTracker id = forall state. Monoid state => BoundaryTracker
-   { _t_mark :: POSIXTime -> id -> state -> state
-   , _t_boundary :: POSIXTime -> state -> Boundaries id
+   { t_mark :: POSIXTime -> id -> state -> state
+   , t_boundaries :: state -> Boundaries id
    -- remove all relevant entries before given time.
-   , _t_cleanup :: POSIXTime -> state -> state
+   , t_cleanup :: POSIXTime -> state -> state
    }
 
 connect :: BoundaryTracker id -> SQLConnector item id -> IO Void
 connect
-   (BoundaryTracker mark boundary cleanup)
+   (BoundaryTracker mark boundaries cleanup)
    (SQLConnector getId poll interval maxTransTime producer) = do
    now <- getPOSIXTime
    go now mempty
    where
    diff = toDiffTime maxTransTime
-   go before tracker = do
+   go before tracker_ = do
       now <- getPOSIXTime
       delay $ max 0 $ interval - fromDiffTime (now - before)
-      items <- poll (boundary now tracker)
+      let tracker = cleanup (now - diff) tracker_
+      items <- poll (boundaries tracker)
       forM_ items (Topic.write producer)
-      let tracker' = cleanup (now - diff) $ foldr (mark now . getId) tracker items
-      go now tracker'
+      go now $ foldr (mark now . getId) tracker items
 
 -- | Boundary tracker for enumerable ids. Takes advantage of ranges.
 newtype EnumTracker a = EnumTracker (Map a (Range a)) -- map by range low Id
@@ -60,10 +61,11 @@ data Range a = Range
    { _r_low :: (POSIXTime, a)
    , _r_high :: (POSIXTime, a)
    }
+   deriving Show
 
 -- | Track id ranges.
-rangeTracker :: (Ord a, Enum a) => BoundaryTracker a
-rangeTracker = BoundaryTracker mark boundary cleanup
+rangeTracker :: (Show a, Ord a, Enum a) => BoundaryTracker a
+rangeTracker = BoundaryTracker mark boundaries cleanup
    where
    mark :: (Ord a, Enum a) => POSIXTime -> a -> EnumTracker a -> EnumTracker a
    mark time el (EnumTracker m) = EnumTracker $
@@ -72,9 +74,15 @@ rangeTracker = BoundaryTracker mark boundary cleanup
         Just (_, Range (low_t, low) (_, high))
             -- already in range
             | el <= high -> m
-            -- extends range upwards
             | el == succ high ->
-               Map.insert low (Range (low_t, low) (time , el)) m
+               case Map.lookup (succ el) m of
+                  Just (Range _ h) ->
+                     -- join ranges
+                     Map.insert low (Range (low_t, low) h) $
+                     Map.delete (succ el) m
+                  Nothing ->
+                     -- extend range upwards
+                     Map.insert low (Range (low_t, low) (time , el)) m
             | otherwise -> checkAbove
       where
       checkAbove =
@@ -91,15 +99,14 @@ rangeTracker = BoundaryTracker mark boundary cleanup
                | otherwise ->
                   Map.insert el (Range (time, el) (time, el)) m
 
-   boundary :: Ord a => POSIXTime -> EnumTracker a -> Boundaries a
-   boundary time (EnumTracker m) =
+   boundaries :: Ord a => EnumTracker a -> Boundaries a
+   boundaries (EnumTracker m) =
       Boundaries
       [ (low, high)
-      | Range (_, low) (t_high, high) <- Map.elems m
-      , t_high > time
+      | Range (_, low) (_, high) <- Map.elems m
       ]
 
-   cleanup :: POSIXTime -> EnumTracker a -> EnumTracker a
+   cleanup :: Show a => POSIXTime -> EnumTracker a -> EnumTracker a
    cleanup bound (EnumTracker m) =
       EnumTracker $ Map.filter (\(Range _ (t_high,_)) -> t_high > bound) m
 

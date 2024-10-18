@@ -29,7 +29,7 @@ import Test.Hspec
 import Foreign.Marshal.Utils (withMany)
 
 import Utils.Some (Some(..))
-import Utils.Delay (delay, Duration(..))
+import Utils.Delay (delay, millis)
 import qualified Queue
 import Queue (TopicName(..), PartitionCount(..))
 import Queue.Topic
@@ -370,7 +370,7 @@ testPartition with = do
 
       r <- async read'
       _ <- async $ do
-        delay (Milliseconds 5)
+        delay (millis 5)
         write'
       (one_, two_) <- wait r
       one_ `shouldBe` one

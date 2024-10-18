@@ -78,6 +78,7 @@ test-suite lite-tests
     main-is: Tests.hs
     other-modules:
         Test.Queue
+        Test.Connector
     type:    exitcode-stdio-1.0
     build-depends:
         base ^>=4.17.2.1
