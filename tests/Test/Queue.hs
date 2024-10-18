@@ -14,7 +14,7 @@ import Data.List ((\\), sort)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Text as Text
 import Data.Foldable (traverse_)
-import Data.Text.Encoding as Text
+import qualified Data.Text.Encoding as Text
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
   ( Spec
@@ -29,13 +29,13 @@ import Test.Hspec
   )
 import Foreign.Marshal.Utils (withMany)
 
+import Data.Some (Some(..))
 import qualified Queue
 import Queue (TopicName(..), PartitionCount(..))
 import Queue.Topic
   ( Topic
   , Meta(..)
   , ConsumerGroupName(..)
-  , PartitionInstance(..)
   , PartitionNumber(..)
   , ReadError(..)
   , withTopic
@@ -67,7 +67,7 @@ testQueues = do
       act
     where
     f path pnumber g = do
-      FilePartition.withFilePartition path (show pnumber) (g . PartitionInstance)
+      FilePartition.withFilePartition path (show pnumber) (g . Some)
 
 withTempPath :: (FilePath -> IO a) -> IO a
 withTempPath = withSystemTempDirectory "partition-XXXXX"
@@ -76,7 +76,7 @@ withTempPath = withSystemTempDirectory "partition-XXXXX"
 messages :: [Record]
 messages = toRecord <$> zipWith take lengths sentences
   where
-    toRecord str = Record $ encodeUtf8 $ Text.pack str
+    toRecord str = Record $ Text.encodeUtf8 $ Text.pack str
     lengths = fmap (\n -> 1 + n `mod` 12) [1..]
     sentences = "lorem ipsum" : fmap (fmap nextAscii) sentences
     nextAscii c =

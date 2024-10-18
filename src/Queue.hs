@@ -27,11 +27,11 @@ import Data.Void (Void)
 import System.Directory (doesFileExist, removeFile, createDirectoryIfMissing)
 import System.FilePath ((</>))
 
+import Data.Some (Some(..))
 import Queue.Topic
   ( Topic
   , TopicState(..)
   , PartitionNumber(..)
-  , PartitionInstance(..)
   )
 import qualified Queue.Topic as T
 import qualified Queue.Partition.File as FilePartition
@@ -132,7 +132,7 @@ openTopics :: Store -> Inventory -> IO (HashMap TopicName TopicData)
 openTopics store (Inventory inventory) = do
   flip HashMap.traverseWithKey inventory $ \name (TopicState ps cs) -> do
     partitions <- openPartitions store name ps
-    topic <- T.openTopic (PartitionInstance <$> partitions) cs
+    topic <- T.openTopic (Some <$> partitions) cs
     return $ TopicData topic partitions
 
 openPartitions
@@ -186,7 +186,7 @@ openTopic (Queue store (PartitionCount count) var) name =
     Nothing -> do
       let pnumbers = Set.fromList $ fmap PartitionNumber [0..count - 1]
       partitions <- openPartitions store name pnumbers
-      topic <- T.openTopic (PartitionInstance <$> partitions) mempty
+      topic <- T.openTopic (Some <$> partitions) mempty
       let tdata = TopicData topic partitions
       return (HashMap.insert name tdata topics, topic)
 

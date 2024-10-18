@@ -2,7 +2,6 @@ module Queue.Topic
   ( Topic
   , t_partitions
   , TopicState(..)
-  , PartitionInstance(..)
   , PartitionNumber(..)
   , withTopic
   , openTopic
@@ -50,6 +49,7 @@ import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import System.Random (randomIO)
 
+import Data.Some (Some(..))
 import Queue.Partition
   ( Partition
   , Offset
@@ -74,16 +74,13 @@ import qualified Queue.Partition.STMReader as R
 -- * Partitions that change consumers during a rebalance are rewinded to the
 --    latest committed Offset.
 data Topic = Topic
-  { t_partitions :: HashMap PartitionNumber PartitionInstance
+  { t_partitions :: HashMap PartitionNumber (Some Partition)
   , t_cgroups :: TVar (HashMap ConsumerGroupName ConsumerGroup)
   }
 
 newtype PartitionNumber = PartitionNumber { unPartitionNumber :: Int }
   deriving Show
   deriving newtype (Eq, Ord, Enum, Integral, Real, Num, Hashable, FromJSONKey, ToJSONKey, FromJSON, ToJSON)
-
-data PartitionInstance =
-  forall a. Partition a => PartitionInstance a
 
 newtype ConsumerGroupName = ConsumerGroupName Text
   deriving Show
@@ -139,7 +136,7 @@ data TopicState = TopicState
 
 withTopic
   :: HasCallStack
-  => HashMap PartitionNumber PartitionInstance
+  => HashMap PartitionNumber (Some Partition)
   -> HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
   -> (Topic -> IO a)
   -> IO a
@@ -148,7 +145,7 @@ withTopic partitions groupOffsets =
 
 openTopic
   :: HasCallStack
-  => HashMap PartitionNumber PartitionInstance
+  => HashMap PartitionNumber (Some Partition)
   -> HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
   -> IO Topic
 openTopic partitions groupOffsets = STM.atomically $ do
@@ -231,7 +228,7 @@ withProducer topic (Partitioner p) encode act =
 
 write :: HasCallStack => Producer a -> a -> IO ()
 write Producer{..} msg = do
-  PartitionInstance partition <- maybe err return (HashMap.lookup pid partitions)
+  Some partition <- maybe err return (HashMap.lookup pid partitions)
   Partition.write partition (p_encode msg)
   where
   partitions = t_partitions p_topic
@@ -306,7 +303,7 @@ withConsumer topic@Topic{..} name act = do
     forConcurrently (HashMap.toList $ g_comitted group) $ \(pnumber, offsetVar) -> do
       let p = t_partitions HashMap.! pnumber
       case p of
-        PartitionInstance partition -> do
+        Some partition -> do
           start <- STM.readTVarIO offsetVar
           r <- R.new partition start
           return $ PartitionReader r pnumber offsetVar

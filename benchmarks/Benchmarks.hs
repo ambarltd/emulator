@@ -15,6 +15,7 @@ import Foreign.Marshal.Utils (withMany)
 import System.IO.Temp (withSystemTempDirectory)
 import System.IO.Unsafe (unsafePerformIO)
 
+import Data.Some (Some(..))
 import qualified Queue.Topic as T
 import Queue.Topic (ConsumerGroupName(..), Topic)
 import Queue.Partition (Record(..), Position(..))
@@ -189,5 +190,5 @@ withFileTopic (PartitionCount n) act =
     act
   where
   f path pnumber g = do
-    F.withFilePartition path (show pnumber) (g . T.PartitionInstance)
+    F.withFilePartition path (show pnumber) (g . Some)
 
