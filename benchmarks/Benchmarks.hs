@@ -15,13 +15,13 @@ import Foreign.Marshal.Utils (withMany)
 import System.IO.Temp (withSystemTempDirectory)
 import System.IO.Unsafe (unsafePerformIO)
 
-import Data.Some (Some(..))
 import qualified Queue.Topic as T
 import Queue.Topic (ConsumerGroupName(..), Topic)
 import Queue.Partition (Record(..), Position(..))
 import qualified Queue.Partition as P
 import Queue.Partition.File (FilePartition)
 import qualified Queue.Partition.File as F
+import Utils.Some (Some(..))
 
 main :: IO ()
 main =

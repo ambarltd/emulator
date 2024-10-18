@@ -27,7 +27,7 @@ import Data.Void (Void)
 import System.Directory (doesFileExist, removeFile, createDirectoryIfMissing)
 import System.FilePath ((</>))
 
-import Data.Some (Some(..))
+import Utils.Some (Some(..))
 import Queue.Topic
   ( Topic
   , TopicState(..)

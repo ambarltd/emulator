@@ -1,4 +1,4 @@
-module Data.Some where
+module Utils.Some where
 
 -- | An existential wrapper.
 -- Allows us to say that we hold a value of any type that

@@ -49,7 +49,7 @@ import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import System.Random (randomIO)
 
-import Data.Some (Some(..))
+import Utils.Some (Some(..))
 import Queue.Partition
   ( Partition
   , Offset

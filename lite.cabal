@@ -43,13 +43,14 @@ library lite-lib
     ghc-options: -Wall -Werror -fprof-auto
     hs-source-dirs: src
     exposed-modules:
-        Data.Some
+        Connector.SQL
         Queue
         Queue.Topic
         Queue.Partition
         Queue.Partition.File
         Queue.Partition.STMReader
         Utils.STM
+        Utils.Some
     build-depends:
         base ^>=4.17.2.1
         , aeson

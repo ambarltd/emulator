@@ -29,7 +29,7 @@ import Test.Hspec
   )
 import Foreign.Marshal.Utils (withMany)
 
-import Data.Some (Some(..))
+import Utils.Some (Some(..))
 import qualified Queue
 import Queue (TopicName(..), PartitionCount(..))
 import Queue.Topic
