@@ -3,7 +3,7 @@ module Connector.SQL
    , SQLConnector(..)
    , connect
    , BoundaryTracker
-   , enumTracker
+   , rangeTracker
    ) where
 
 {-| SQL polling connector -}
@@ -61,8 +61,9 @@ data Range a = Range
    , _r_high :: (POSIXTime, a)
    }
 
-enumTracker :: (Ord a, Enum a) => BoundaryTracker a
-enumTracker = BoundaryTracker mark boundary cleanup
+-- | Track id ranges.
+rangeTracker :: (Ord a, Enum a) => BoundaryTracker a
+rangeTracker = BoundaryTracker mark boundary cleanup
    where
    mark :: (Ord a, Enum a) => POSIXTime -> a -> EnumTracker a -> EnumTracker a
    mark time el (EnumTracker m) = EnumTracker $
