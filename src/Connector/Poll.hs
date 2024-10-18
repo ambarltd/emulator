@@ -1,12 +1,12 @@
-module Connector.SQL
+module Connector.Poll
    ( Boundaries(..)
-   , SQLConnector(..)
+   , PollingConnector(..)
    , connect
    , BoundaryTracker(..)
    , rangeTracker
    ) where
 
-{-| SQL polling connector -}
+{-| General polling connector -}
 
 import Control.Monad (forM_)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
@@ -21,7 +21,7 @@ import Utils.Delay (Duration, delay, fromDiffTime, toDiffTime)
 newtype Boundaries id = Boundaries [(id, id)]
    deriving (Show, Eq)
 
-data SQLConnector item id = SQLConnector
+data PollingConnector item id = PollingConnector
    { c_getId :: item -> id
    , c_poll :: Boundaries id -> IO [item]  -- ^ run query
    , c_pollingInterval :: Duration
@@ -37,10 +37,10 @@ data BoundaryTracker id = forall state. Monoid state => BoundaryTracker
    , t_cleanup :: POSIXTime -> state -> state
    }
 
-connect :: BoundaryTracker id -> SQLConnector item id -> IO Void
+connect :: BoundaryTracker id -> PollingConnector item id -> IO Void
 connect
    (BoundaryTracker mark boundaries cleanup)
-   (SQLConnector getId poll interval maxTransTime producer) = do
+   (PollingConnector getId poll interval maxTransTime producer) = do
    now <- getPOSIXTime
    go now mempty
    where

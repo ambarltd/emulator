@@ -44,7 +44,7 @@ library lite-lib
     ghc-options: -Wall -Werror -fprof-auto
     hs-source-dirs: src
     exposed-modules:
-        Connector.SQL
+        Connector.Poll
         Queue
         Queue.Topic
         Queue.Partition

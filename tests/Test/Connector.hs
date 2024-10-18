@@ -7,7 +7,7 @@ import Test.Hspec
   , shouldBe
   )
 
-import Connector.SQL
+import Connector.Poll
   ( BoundaryTracker(..)
   , Boundaries(..)
   , rangeTracker
@@ -16,10 +16,10 @@ import Connector.SQL
 testConnectors :: Spec
 testConnectors = do
   describe "connector" $ do
-    testSQLConnector
+    testPollingConnector
 
-testSQLConnector :: Spec
-testSQLConnector = describe "SQL" $
+testPollingConnector :: Spec
+testPollingConnector = describe "Poll" $
   describe "rangeTracker" $ do
     BoundaryTracker mark boundaries cleanup <- return (rangeTracker :: BoundaryTracker Int)
     let bs xs = foldr (uncurry mark) mempty $ reverse $ zip [0, 1..] xs
