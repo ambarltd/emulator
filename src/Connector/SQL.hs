@@ -3,33 +3,17 @@ module Connector.SQL where
 {-| SQL polling connector -}
 
 import Control.Monad (forM_)
-import Data.Aeson as Aeson
-import Data.Text (Text)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import Data.Void (Void)
 
 import qualified Queue.Topic as Topic
 import Utils.Delay (Duration, delay, fromDiffTime)
 
--- | An SQL expression
-newtype SQL = SQL Text
-
-newtype Table = Table Text
-
-newtype Column = Column Text
-
-type JSON = Aeson.Value
-
 data Boundaries id = Boundaries
   { b_greater :: [id]
   , b_lower   :: [id]
   , b_exclude :: [id]
   }
-
-data Item id = Item
-   { i_id :: id
-   , i_contents :: JSON
-   }
 
 -- | Tracks the id boundaries considering that IDs can only
 -- be committed a limited amount of time after a higher ID
