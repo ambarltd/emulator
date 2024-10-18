@@ -8,7 +8,7 @@ module Queue
   )
   where
 
-import Control.Concurrent (threadDelay, MVar, newMVar, modifyMVar, withMVar)
+import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar)
 import Control.Concurrent.Async (withAsync)
 import Control.Exception (bracket, throwIO, Exception(..))
 import Control.Monad (forM, forM_, forever, when)
@@ -27,7 +27,6 @@ import Data.Void (Void)
 import System.Directory (doesFileExist, removeFile, createDirectoryIfMissing)
 import System.FilePath ((</>))
 
-import Utils.Some (Some(..))
 import Queue.Topic
   ( Topic
   , TopicState(..)
@@ -36,6 +35,8 @@ import Queue.Topic
 import qualified Queue.Topic as T
 import qualified Queue.Partition.File as FilePartition
 import Queue.Partition.File (FilePartition)
+import Utils.Some (Some(..))
+import Utils.Thread (delay, Delay(..))
 
 data Queue = Queue
   { q_store :: Store
@@ -120,13 +121,10 @@ save (Queue store _ var) =
   inventory <- Inventory <$> forM topics (T.getState . d_topic)
   inventoryWrite store inventory
 
-newtype Seconds = Seconds Int
-
-every :: Seconds -> IO a -> IO b
-every (Seconds s) act = forever $ do
-  threadDelay nanoseconds
+every :: Delay -> IO a -> IO b
+every period act = forever $ do
+  delay period
   act
-  where nanoseconds = s * 1_000_000
 
 openTopics :: Store -> Inventory -> IO (HashMap TopicName TopicData)
 openTopics store (Inventory inventory) = do

@@ -2,7 +2,6 @@ module Test.Queue (testQueues) where
 
 import Prelude hiding (read)
 
-import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, wait, concurrently)
 import Control.Exception (fromException)
 import Control.Monad (replicateM, forM_, replicateM_)
@@ -30,6 +29,7 @@ import Test.Hspec
 import Foreign.Marshal.Utils (withMany)
 
 import Utils.Some (Some(..))
+import Utils.Thread (delay, Delay(..))
 import qualified Queue
 import Queue (TopicName(..), PartitionCount(..))
 import Queue.Topic
@@ -370,7 +370,7 @@ testPartition with = do
 
       r <- async read'
       _ <- async $ do
-        threadDelay 50
+        delay (Milliseconds 5)
         write'
       (one_, two_) <- wait r
       one_ `shouldBe` one

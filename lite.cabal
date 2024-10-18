@@ -51,6 +51,7 @@ library lite-lib
         Queue.Partition.STMReader
         Utils.STM
         Utils.Some
+        Utils.Thread
     build-depends:
         base ^>=4.17.2.1
         , aeson
