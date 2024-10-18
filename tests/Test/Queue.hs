@@ -29,7 +29,7 @@ import Test.Hspec
 import Foreign.Marshal.Utils (withMany)
 
 import Utils.Some (Some(..))
-import Utils.Thread (delay, Delay(..))
+import Utils.Delay (delay, Duration(..))
 import qualified Queue
 import Queue (TopicName(..), PartitionCount(..))
 import Queue.Topic

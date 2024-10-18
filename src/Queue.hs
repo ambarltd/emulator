@@ -11,7 +11,7 @@ module Queue
 import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar)
 import Control.Concurrent.Async (withAsync)
 import Control.Exception (bracket, throwIO, Exception(..))
-import Control.Monad (forM, forM_, forever, when)
+import Control.Monad (forM, forM_, when)
 import qualified Data.ByteString.Lazy as LB
 import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 import qualified Data.Aeson as Aeson
@@ -35,8 +35,8 @@ import Queue.Topic
 import qualified Queue.Topic as T
 import qualified Queue.Partition.File as FilePartition
 import Queue.Partition.File (FilePartition)
+import Utils.Delay (every, Duration(..))
 import Utils.Some (Some(..))
-import Utils.Thread (delay, Delay(..))
 
 data Queue = Queue
   { q_store :: Store
@@ -120,11 +120,6 @@ save (Queue store _ var) =
   -- any offset moved during a `getState` operation
   inventory <- Inventory <$> forM topics (T.getState . d_topic)
   inventoryWrite store inventory
-
-every :: Delay -> IO a -> IO b
-every period act = forever $ do
-  delay period
-  act
 
 openTopics :: Store -> Inventory -> IO (HashMap TopicName TopicData)
 openTopics store (Inventory inventory) = do
