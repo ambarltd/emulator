@@ -43,6 +43,7 @@ library lite-lib
     ghc-options: -Wall -Werror -fprof-auto
     hs-source-dirs: src
     exposed-modules:
+        Data.Some
         Queue
         Queue.Topic
         Queue.Partition
