@@ -59,6 +59,7 @@ library lite-lib
         , aeson
         , aeson-pretty
         , async
+        , base64
         , bytestring
         , binary
         , containers

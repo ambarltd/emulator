@@ -1,9 +1,11 @@
 module Connector.Postgres where
 
 import Control.Exception (Exception, bracket, throwIO, ErrorCall(..))
-import Control.Monad (unless)
+import Control.Monad (unless, void)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
+import Data.ByteString.Base64 (encodeBase64)
+import Data.Base64.Types (extractBase64)
 import Data.Int (Int64)
 import Data.List ((\\), intercalate)
 import Data.Map.Strict (Map)
@@ -19,6 +21,7 @@ import qualified Database.PostgreSQL.Simple.FromRow as P
 
 import qualified Connector.Poll as Poll
 import Connector.Poll (BoundaryTracker(..), Boundaries(..))
+import Queue.Topic (Producer)
 
 data ConnectorConfig = ConnectorConfig
   { c_host :: Text
@@ -84,54 +87,30 @@ data Value
    | Null
    deriving Show
 
+instance Aeson.ToJSON Value where
+   toJSON = \case
+     Boolean b -> Aeson.toJSON b
+     UInt b -> Aeson.toJSON b
+     Int b -> Aeson.toJSON b
+     Real b -> Aeson.toJSON b
+     String b -> Aeson.toJSON b
+     Bytes b -> Aeson.String $ extractBase64 $ encodeBase64 b
+     DateTime b -> Aeson.toJSON b
+     Json b -> b
+     Null -> Aeson.Null
+
 -- | A PostgreSQL connection string.
 -- https://www.postgresql.org/docs/9.5/libpq-connect.html#LIBPQ-CONNSTRING
 newtype ConnectionString = ConnectionString Text
 
-connect :: ConnectorConfig -> IO ()
-connect config@ConnectorConfig{..} =
+connect :: Producer Row -> ConnectorConfig -> IO ()
+connect producer config@ConnectorConfig{..} =
    bracket open P.close $ \conn -> do
    schema <- fetchSchema "test_user" conn
    print schema
    validate config schema
    let pcol = unTableSchema schema Map.! c_partitioningColumn
-   withTracker pcol $ \tracker getSerial -> do
-      let pc = Poll.PollingConnector
-             { Poll.c_getId = getSerial
-             , Poll.c_poll = run
-             , Poll.c_pollingInterval = undefined -- Duration
-             , Poll.c_maxTransactionTime = undefined -- Duration
-             , Poll.c_producer = undefined -- Topic.Producer item
-             }
-
-          cols = [c_serialColumn, c_partitioningColumn] <>
-             ((c_columns \\ [c_serialColumn]) \\ [c_partitioningColumn])
-
-          run (Boundaries bs) = P.queryWith parser conn query ()
-            where
-            query = fromString $ Text.unpack $ Text.unwords
-               [ "SELECT" , Text.intercalate ", " cols
-               , "FROM" , c_table
-               , "WHERE" , constraints
-               , "ORDER BY" , c_serialColumn
-               ]
-            constraints
-              = Text.pack
-              $ intercalate "AND"
-              $ flip fmap bs
-              $ \(low, high) -> unwords
-                  [ "("
-                  , Text.unpack c_serialColumn, "<", show low
-                  , "OR"
-                  , Text.unpack c_serialColumn, ">", show high
-                  , ")"]
-
-            parser :: P.RowParser Row
-            parser = mkParser cols schema
-
-      _ <- Poll.connect tracker pc
-      return ()
-
+   withTracker pcol $ consume conn schema
    where
    open = P.connect P.ConnectInfo
       { P.connectHost = Text.unpack c_host
@@ -140,6 +119,52 @@ connect config@ConnectorConfig{..} =
       , P.connectPassword = Text.unpack c_password
       , P.connectDatabase = Text.unpack c_database
       }
+
+   consume
+      :: forall id. Show id
+      => P.Connection
+      -> TableSchema
+      -> BoundaryTracker id
+      -> (Row -> id)
+      -> IO ()
+   consume conn schema tracker getSerial = void $ Poll.connect tracker pc
+     where
+     pc = Poll.PollingConnector
+        { Poll.c_getId = getSerial
+        , Poll.c_poll = run
+        , Poll.c_pollingInterval = undefined -- Duration
+        , Poll.c_maxTransactionTime = undefined -- Duration
+        , Poll.c_producer = producer
+        }
+
+     cols = [c_serialColumn, c_partitioningColumn] <>
+        ((c_columns \\ [c_serialColumn]) \\ [c_partitioningColumn])
+
+     run (Boundaries bs) = P.queryWith parser conn query ()
+       where
+       query = fromString $ Text.unpack $ Text.unwords
+          [ "SELECT" , Text.intercalate ", " cols
+          , "FROM" , c_table
+          , "WHERE" , constraints
+          , "ORDER BY" , c_serialColumn
+          ]
+       constraints
+         = Text.pack
+         $ intercalate "AND"
+         $ flip fmap bs
+         $ \(low, high) -> unwords
+             [ "("
+             , Text.unpack c_serialColumn, "<", show low
+             , "OR"
+             , Text.unpack c_serialColumn, ">", show high
+             , ")"]
+
+       parser :: P.RowParser Row
+       parser = mkParser cols schema
+
+
+asJson :: [Text] -> Row -> Aeson.Value
+asJson cols row = Aeson.toJSON $ Map.fromList $ zip cols (Aeson.toJSON <$> row)
 
 mkParser :: [Text] -> TableSchema -> P.RowParser Row
 mkParser cols (TableSchema schema) = traverse (parser . getType) cols
@@ -162,7 +187,7 @@ mkParser cols (TableSchema schema) = traverse (parser . getType) cols
 
 withTracker
    :: PgType
-   -> (forall a. Show a => BoundaryTracker a -> (Row -> a) -> IO b)
+   -> (forall id. Show id => BoundaryTracker id -> (Row -> id) -> IO b)
    -> IO b
 withTracker ty f =
    case ty of

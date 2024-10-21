@@ -33,6 +33,7 @@ import Control.Monad (forM_, forM, when, unless)
 import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 import Data.ByteString (ByteString)
 import Data.Foldable (sequenceA_)
+import Data.Functor.Contravariant (Contravariant(..))
 import Data.Hashable (Hashable(..))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
@@ -126,6 +127,9 @@ data Producer a = Producer
   , p_select :: a -> PartitionNumber
   , p_encode :: a -> Record
   }
+
+instance Contravariant Producer where
+  contramap f (Producer t s e) = Producer t (s . f) (e . f)
 
 data TopicState = TopicState
   { s_partitions :: Set PartitionNumber
