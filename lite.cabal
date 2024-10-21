@@ -67,6 +67,7 @@ library lite-lib
         , filepath
         , hashable
         , postgresql-simple
+        , prettyprinter
         , random
         , stm
         , text
