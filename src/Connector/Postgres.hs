@@ -1,11 +1,17 @@
-module Connector.Postgres where
+module Connector.Postgres
+  ( ConnectorConfig(..)
+  , connect
+  , partitioner
+  , encoder
+  ) where
 
 import Control.Exception (Exception, bracket, throwIO, ErrorCall(..))
-import Control.Monad (unless, void)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as LB
 import Data.ByteString.Base64 (encodeBase64)
 import Data.Base64.Types (extractBase64)
+import Data.Hashable (Hashable)
 import Data.Int (Int64)
 import Data.List ((\\), intercalate)
 import Data.Map.Strict (Map)
@@ -14,14 +20,23 @@ import qualified Data.Map.Strict as Map
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Void (Void)
 import Data.Word (Word64)
 import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.FromField as P
 import qualified Database.PostgreSQL.Simple.FromRow as P
+import GHC.Generics (Generic)
 
+import Utils.Delay (Duration, millis, seconds)
 import qualified Connector.Poll as Poll
 import Connector.Poll (BoundaryTracker(..), Boundaries(..))
-import Queue.Topic (Producer)
+import Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
+
+_POLLING_INTERVAL :: Duration
+_POLLING_INTERVAL = millis 50
+
+_MAX_TRANSACTION_TIME :: Duration
+_MAX_TRANSACTION_TIME = seconds 120
 
 data ConnectorConfig = ConnectorConfig
   { c_host :: Text
@@ -60,53 +75,49 @@ instance P.FromField PgType where
   fromField t d = do
     str <- P.fromField t d
     case str of
-      "int8"        -> return PgInt8
-      "int2"        -> return PgInt2
-      "int4"        -> return PgInt4
-      "float4"      -> return PgFloat4
-      "float8"      -> return PgFloat8
-      "bool"        -> return PgBool
-      "json"       -> return PgJson
-      "bytea"       -> return PgBytea
-      "timestamp"   -> return PgTimestamp
+      "int8" -> return PgInt8
+      "int2" -> return PgInt2
+      "int4" -> return PgInt4
+      "float4" -> return PgFloat4
+      "float8" -> return PgFloat8
+      "bool" -> return PgBool
+      "json" -> return PgJson
+      "bytea" -> return PgBytea
+      "timestamp" -> return PgTimestamp
       "timestamptz" -> return PgTimestamptz
-      "text"        -> return PgText
-      _             -> P.conversionError $ UnsupportedType str
+      "text" -> return PgText
+      _ -> P.conversionError $ UnsupportedType str
 
 type Row = [Value]
 
 data Value
-   = Boolean Bool
-   | UInt Word64
-   | Int Int64
-   | Real Double
-   | String Text
-   | Bytes ByteString
-   | DateTime Text
-   | Json Aeson.Value
-   | Null
-   deriving Show
+  = Boolean Bool
+  | UInt Word64
+  | Int Int64
+  | Real Double
+  | String Text
+  | Bytes ByteString
+  | DateTime Text
+  | Json Aeson.Value
+  | Null
+  deriving (Generic, Show, Eq, Hashable, Ord)
 
 instance Aeson.ToJSON Value where
-   toJSON = \case
-     Boolean b -> Aeson.toJSON b
-     UInt b -> Aeson.toJSON b
-     Int b -> Aeson.toJSON b
-     Real b -> Aeson.toJSON b
-     String b -> Aeson.toJSON b
-     Bytes b -> Aeson.String $ extractBase64 $ encodeBase64 b
-     DateTime b -> Aeson.toJSON b
-     Json b -> b
-     Null -> Aeson.Null
+  toJSON = \case
+    Boolean b -> Aeson.toJSON b
+    UInt b -> Aeson.toJSON b
+    Int b -> Aeson.toJSON b
+    Real b -> Aeson.toJSON b
+    String b -> Aeson.toJSON b
+    Bytes b -> Aeson.String $ extractBase64 $ encodeBase64 b
+    DateTime b -> Aeson.toJSON b
+    Json b -> b
+    Null -> Aeson.Null
 
--- | A PostgreSQL connection string.
--- https://www.postgresql.org/docs/9.5/libpq-connect.html#LIBPQ-CONNSTRING
-newtype ConnectionString = ConnectionString Text
-
-connect :: Producer Row -> ConnectorConfig -> IO ()
+connect :: Producer Row -> ConnectorConfig -> IO Void
 connect producer config@ConnectorConfig{..} =
    bracket open P.close $ \conn -> do
-   schema <- fetchSchema "test_user" conn
+   schema <- fetchSchema c_table conn
    print schema
    validate config schema
    let pcol = unTableSchema schema Map.! c_partitioningColumn
@@ -126,32 +137,28 @@ connect producer config@ConnectorConfig{..} =
       -> TableSchema
       -> BoundaryTracker id
       -> (Row -> id)
-      -> IO ()
-   consume conn schema tracker getSerial = void $ Poll.connect tracker pc
+      -> IO Void
+   consume conn schema tracker getSerial = Poll.connect tracker pc
      where
      pc = Poll.PollingConnector
         { Poll.c_getId = getSerial
         , Poll.c_poll = run
-        , Poll.c_pollingInterval = undefined -- Duration
-        , Poll.c_maxTransactionTime = undefined -- Duration
+        , Poll.c_pollingInterval = _POLLING_INTERVAL
+        , Poll.c_maxTransactionTime = _MAX_TRANSACTION_TIME
         , Poll.c_producer = producer
         }
 
-     cols = [c_serialColumn, c_partitioningColumn] <>
-        ((c_columns \\ [c_serialColumn]) \\ [c_partitioningColumn])
+     parser = mkParser (columns config) schema
 
      run (Boundaries bs) = P.queryWith parser conn query ()
        where
        query = fromString $ Text.unpack $ Text.unwords
-          [ "SELECT" , Text.intercalate ", " cols
+          [ "SELECT" , Text.intercalate ", " (columns config)
           , "FROM" , c_table
           , "WHERE" , constraints
           , "ORDER BY" , c_serialColumn
           ]
-       constraints
-         = Text.pack
-         $ intercalate "AND"
-         $ flip fmap bs
+       constraints = Text.pack $ intercalate "AND" $ flip fmap bs
          $ \(low, high) -> unwords
              [ "("
              , Text.unpack c_serialColumn, "<", show low
@@ -159,12 +166,19 @@ connect producer config@ConnectorConfig{..} =
              , Text.unpack c_serialColumn, ">", show high
              , ")"]
 
-       parser :: P.RowParser Row
-       parser = mkParser cols schema
+partitioner :: Partitioner Row
+partitioner = hashPartitioner (!! 1)
 
+encoder :: ConnectorConfig -> Encoder Row
+encoder config row =
+  LB.toStrict $ Aeson.encode $ Map.fromList $ zip (columns config) row
 
-asJson :: [Text] -> Row -> Aeson.Value
-asJson cols row = Aeson.toJSON $ Map.fromList $ zip cols (Aeson.toJSON <$> row)
+-- | Columns in the order they will be queried.
+-- This order is assumed in the partitioner and encoder.
+columns :: ConnectorConfig -> [Text]
+columns ConnectorConfig{..} =
+  [c_serialColumn, c_partitioningColumn] <>
+    ((c_columns \\ [c_serialColumn]) \\ [c_partitioningColumn])
 
 mkParser :: [Text] -> TableSchema -> P.RowParser Row
 mkParser cols (TableSchema schema) = traverse (parser . getType) cols
@@ -189,19 +203,18 @@ withTracker
    :: PgType
    -> (forall id. Show id => BoundaryTracker id -> (Row -> id) -> IO b)
    -> IO b
-withTracker ty f =
-   case ty of
-     PgInt8 -> intTracker
-     PgInt2 -> intTracker
-     PgInt4 -> intTracker
-     PgFloat4 -> realTracker
-     PgFloat8 -> realTracker
-     PgBool -> unsupported
-     PgJson -> unsupported
-     PgBytea -> unsupported
-     PgTimestamp -> unsupported
-     PgTimestamptz -> unsupported
-     PgText -> unsupported
+withTracker ty f = case ty of
+   PgInt8 -> intTracker
+   PgInt2 -> intTracker
+   PgInt4 -> intTracker
+   PgFloat4 -> realTracker
+   PgFloat8 -> realTracker
+   PgBool -> unsupported
+   PgJson -> unsupported
+   PgBytea -> unsupported
+   PgTimestamp -> unsupported
+   PgTimestamptz -> unsupported
+   PgText -> unsupported
    where
    unsupported = error $ "Unsupported serial column type: " <> show ty
 
@@ -220,18 +233,22 @@ withTracker ty f =
          val : _ -> error "Invalid serial column value:" (show val)
 
 validate :: ConnectorConfig -> TableSchema -> IO ()
-validate ConnectorConfig{..} (TableSchema schema) = do
-   case missing of
-     [] -> return ()
-     xs -> throwIO $ ErrorCall $ "Missing columns in target table: " <> Text.unpack (Text.unwords xs)
+validate config (TableSchema schema) = do
+  missingCol
+  invalidSerial
+  where
+  missing = filter (not . (`Map.member` schema)) (columns config)
+  missingCol =
+    case missing of
+      [] -> return ()
+      xs -> throwIO $ ErrorCall $ "Missing columns in target table: " <> Text.unpack (Text.unwords xs)
 
-   let serialTy = schema Map.! c_serialColumn
-   unless (serialTy `elem` allowedSerialTypes) $
-      throwIO $ ErrorCall $ "Invalid serial column type: " <> show serialTy
-   where
-   allowedSerialTypes = [PgInt8, PgInt2, PgInt4, PgFloat4, PgFloat8]
-   missing = filter (not . (`Map.member` schema)) cols
-   cols =  c_partitioningColumn : c_serialColumn : c_columns
+  invalidSerial =
+    if serialTy `elem` allowedSerialTypes
+    then return ()
+    else throwIO $ ErrorCall $ "Invalid serial column type: " <> show serialTy
+  serialTy = schema Map.! c_serialColumn config
+  allowedSerialTypes = [PgInt8, PgInt2, PgInt4, PgFloat4, PgFloat8]
 
 fetchSchema :: Text -> P.Connection -> IO TableSchema
 fetchSchema table conn = do

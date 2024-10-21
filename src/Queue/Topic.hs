@@ -17,6 +17,8 @@ module Queue.Topic
   , commit
 
   , Producer
+  , Encoder
+  , Partitioner
   , withProducer
   , hashPartitioner
   , modPartitioner
@@ -214,11 +216,13 @@ modPartitioner :: (a -> Int) -> Partitioner a
 modPartitioner f = Partitioner $ \partitionCount x ->
   PartitionNumber $ f x `mod` partitionCount
 
+type Encoder a = a -> ByteString
+
 withProducer
   :: HasCallStack
   => Topic
   -> Partitioner a
-  -> (a -> ByteString)     -- ^ encoder
+  -> Encoder a
   -> (Producer a -> IO c)
   -> IO c
 withProducer topic (Partitioner p) encode act =
