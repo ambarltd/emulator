@@ -45,6 +45,7 @@ library lite-lib
     hs-source-dirs: src
     exposed-modules:
         Connector.Poll
+        Connector.Postgres
         Queue
         Queue.Topic
         Queue.Partition
@@ -65,6 +66,7 @@ library lite-lib
         , extra
         , filepath
         , hashable
+        , postgresql-simple
         , random
         , stm
         , text
