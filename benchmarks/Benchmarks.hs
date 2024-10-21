@@ -21,6 +21,7 @@ import Queue.Partition (Record(..), Position(..))
 import qualified Queue.Partition as P
 import Queue.Partition.File (FilePartition)
 import qualified Queue.Partition.File as F
+import Utils.Some (Some(..))
 
 main :: IO ()
 main =
@@ -189,5 +190,5 @@ withFileTopic (PartitionCount n) act =
     act
   where
   f path pnumber g = do
-    F.withFilePartition path (show pnumber) (g . T.PartitionInstance)
+    F.withFilePartition path (show pnumber) (g . Some)
 

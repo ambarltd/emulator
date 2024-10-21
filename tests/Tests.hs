@@ -1,8 +1,9 @@
 module Main where
 
-import Test.Hspec (hspec, parallel, describe)
+import Test.Hspec (hspec, parallel)
 
 import Test.Queue (testQueues)
+import Test.Connector (testConnectors)
 
 
 {- | Note [How tests work]
@@ -18,5 +19,5 @@ main :: IO ()
 main =
   hspec $ parallel $ do
     -- unit tests use the projector library
-    describe "unit" $ do
-      testQueues
+    testQueues
+    testConnectors

@@ -8,10 +8,10 @@ module Queue
   )
   where
 
-import Control.Concurrent (threadDelay, MVar, newMVar, modifyMVar, withMVar)
+import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar)
 import Control.Concurrent.Async (withAsync)
 import Control.Exception (bracket, throwIO, Exception(..))
-import Control.Monad (forM, forM_, forever, when)
+import Control.Monad (forM, forM_, when)
 import qualified Data.ByteString.Lazy as LB
 import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 import qualified Data.Aeson as Aeson
@@ -31,11 +31,12 @@ import Queue.Topic
   ( Topic
   , TopicState(..)
   , PartitionNumber(..)
-  , PartitionInstance(..)
   )
 import qualified Queue.Topic as T
 import qualified Queue.Partition.File as FilePartition
 import Queue.Partition.File (FilePartition)
+import Utils.Delay (every, seconds)
+import Utils.Some (Some(..))
 
 data Queue = Queue
   { q_store :: Store
@@ -83,7 +84,7 @@ withQueue path count act =
       act queue
   where
   saver :: Queue -> IO Void
-  saver queue = every (Seconds 5) (save queue)
+  saver queue = every (seconds 5) (save queue)
 
 open :: Store -> PartitionCount -> IO Queue
 open store count = do
@@ -120,19 +121,11 @@ save (Queue store _ var) =
   inventory <- Inventory <$> forM topics (T.getState . d_topic)
   inventoryWrite store inventory
 
-newtype Seconds = Seconds Int
-
-every :: Seconds -> IO a -> IO b
-every (Seconds s) act = forever $ do
-  threadDelay nanoseconds
-  act
-  where nanoseconds = s * 1_000_000
-
 openTopics :: Store -> Inventory -> IO (HashMap TopicName TopicData)
 openTopics store (Inventory inventory) = do
   flip HashMap.traverseWithKey inventory $ \name (TopicState ps cs) -> do
     partitions <- openPartitions store name ps
-    topic <- T.openTopic (PartitionInstance <$> partitions) cs
+    topic <- T.openTopic (Some <$> partitions) cs
     return $ TopicData topic partitions
 
 openPartitions
@@ -186,7 +179,7 @@ openTopic (Queue store (PartitionCount count) var) name =
     Nothing -> do
       let pnumbers = Set.fromList $ fmap PartitionNumber [0..count - 1]
       partitions <- openPartitions store name pnumbers
-      topic <- T.openTopic (PartitionInstance <$> partitions) mempty
+      topic <- T.openTopic (Some <$> partitions) mempty
       let tdata = TopicData topic partitions
       return (HashMap.insert name tdata topics, topic)
 
