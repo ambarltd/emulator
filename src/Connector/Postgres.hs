@@ -88,6 +88,7 @@ instance P.FromField PgType where
       "text" -> return PgText
       _ -> P.conversionError $ UnsupportedType str
 
+-- | One row retrieved from a PostgreSQL database.
 type Row = [Value]
 
 data Value
@@ -167,18 +168,25 @@ connect producer config@ConnectorConfig{..} =
              , ")"]
 
 partitioner :: Partitioner Row
-partitioner = hashPartitioner (!! 1)
+partitioner = hashPartitioner partitioningValue
 
 encoder :: ConnectorConfig -> Encoder Row
 encoder config row =
   LB.toStrict $ Aeson.encode $ Map.fromList $ zip (columns config) row
 
 -- | Columns in the order they will be queried.
--- This order is assumed in the partitioner and encoder.
 columns :: ConnectorConfig -> [Text]
 columns ConnectorConfig{..} =
   [c_serialColumn, c_partitioningColumn] <>
     ((c_columns \\ [c_serialColumn]) \\ [c_partitioningColumn])
+
+serialValue :: Row -> Value
+serialValue = \case
+  [] -> error "serialValue: empty row"
+  x:_ -> x
+
+partitioningValue :: Row -> Value
+partitioningValue = (!! 1)
 
 mkParser :: [Text] -> TableSchema -> P.RowParser Row
 mkParser cols (TableSchema schema) = traverse (parser . getType) cols
@@ -220,17 +228,15 @@ withTracker ty f = case ty of
 
    intTracker = f Poll.rangeTracker get
       where
-      get row = case row of
-         [] -> error "empty row"
-         Int n : _ -> n
-         val : _ -> error "Invalid serial column value:" (show val)
+      get row = case serialValue row of
+         Int n -> n
+         val -> error "Invalid serial column value:" (show val)
 
    realTracker = f Poll.rangeTracker get
       where
-      get row = case row of
-         [] -> error "empty row"
-         Real n : _ -> n
-         val : _ -> error "Invalid serial column value:" (show val)
+      get row = case serialValue row of
+         Real n -> n
+         val -> error "Invalid serial column value:" (show val)
 
 validate :: ConnectorConfig -> TableSchema -> IO ()
 validate config (TableSchema schema) = do
