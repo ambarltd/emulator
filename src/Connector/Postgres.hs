@@ -1,41 +1,28 @@
 module Connector.Postgres where
 
-import Control.Exception (Exception, bracket)
+import Control.Exception (Exception, bracket, throwIO, ErrorCall(..))
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.String (fromString)
 import Data.Text (Text)
-import qualified Data.Text.Encoding as Text
+import qualified Data.Text as Text
 import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.FromField as P
-import GHC.Generics (Generic)
 
--- | A PostgreSQL connection string.
--- https://www.postgresql.org/docs/9.5/libpq-connect.html#LIBPQ-CONNSTRING
-newtype ConnectionString = ConnectionString Text
-
-connect :: ConnectionString -> IO ()
-connect (ConnectionString txt) =
-   bracket (P.connectPostgreSQL $ Text.encodeUtf8 txt) P.close $ \conn -> do
-   {-
-      let pc = Poll.PollingConnector
-             { Poll.c_getId = undefined -- item -> id
-             , Poll.c_poll = undefined -- Boundaries id -> IO [item]  -- ^ run query
-             , Poll.c_pollingInterval = undefined -- Duration
-             , Poll.c_maxTransactionTime = undefined -- Duration
-             , Poll.c_producer = undefined -- Topic.Producer item
-             }
-      Poll.connect @Int Poll.rangeTracker pc
-   -}
-   schema <- fetchSchema "test_user" conn
-   print schema
-
-newtype TableSchema = TableSchema [RowSchema]
-   deriving Show
-
-data RowSchema = RowSchema
-   { row_name :: Text
-   , row_type :: PgType
+data ConnectorConfig = ConnectorConfig
+   { c_host :: Text
+   , c_port :: Int
+   , c_username :: Text
+   , c_password :: Text
+   , c_database :: Text
+   , c_table :: Text
+   , c_columns :: [Text]
+   , c_partitioningColumn :: Text
+   , c_serialColumn :: Text
    }
-   deriving (Show, Generic, P.FromRow)
+
+newtype TableSchema = TableSchema (Map Text PgType)
+   deriving Show
 
 -- | Supported PostgreSQL types
 data PgType
@@ -72,9 +59,48 @@ instance P.FromField PgType where
       "text"        -> return PgText
       _             -> P.conversionError $ UnsupportedType str
 
+-- | A PostgreSQL connection string.
+-- https://www.postgresql.org/docs/9.5/libpq-connect.html#LIBPQ-CONNSTRING
+newtype ConnectionString = ConnectionString Text
+
+connect :: ConnectorConfig -> IO ()
+connect config =
+   bracket open P.close $ \conn -> do
+   {-
+      let pc = Poll.PollingConnector
+             { Poll.c_getId = undefined -- item -> id
+             , Poll.c_poll = undefined -- Boundaries id -> IO [item]  -- ^ run query
+             , Poll.c_pollingInterval = undefined -- Duration
+             , Poll.c_maxTransactionTime = undefined -- Duration
+             , Poll.c_producer = undefined -- Topic.Producer item
+             }
+      Poll.connect @Int Poll.rangeTracker pc
+   -}
+   schema <- fetchSchema "test_user" conn
+   print schema
+   validate config schema
+   where
+   open = P.connect P.ConnectInfo
+      { P.connectHost = Text.unpack $ c_host config
+      , P.connectPort = fromIntegral $ c_port config
+      , P.connectUser = Text.unpack $ c_username config
+      , P.connectPassword = Text.unpack $ c_password config
+      , P.connectDatabase = Text.unpack $ c_database config
+      }
+
+validate :: ConnectorConfig -> TableSchema -> IO ()
+validate ConnectorConfig{..} (TableSchema schema) =
+   case missing of
+     [] -> return ()
+     xs -> throwIO $ ErrorCall $ "Missing columns in target table: " <> Text.unpack (Text.unwords xs)
+   where
+   missing = filter (not . (`Map.member` schema)) cols
+   cols =  c_partitioningColumn : c_serialColumn : c_columns
 
 fetchSchema :: Text -> P.Connection -> IO TableSchema
-fetchSchema table conn = TableSchema <$> P.query conn query [table]
+fetchSchema table conn = do
+   cols <- P.query conn query [table]
+   return $ TableSchema $ Map.fromList cols
    where
    -- In PostgreSQL internals 'columns' are called 'attributes' for hysterical raisins.
    -- oid is the table identifier in the pg_class table.
@@ -85,6 +111,7 @@ fetchSchema table conn = TableSchema <$> P.query conn query [table]
       , "  JOIN pg_type t ON t.oid = a.atttypid"
       , "  ORDER BY a.attnum ASC;"
       ]
+
 
 
 
