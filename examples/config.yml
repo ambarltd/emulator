@@ -1,0 +1,32 @@
+data_sources:
+  - id: "postgres source"
+    type: "postgres"
+    host: "localhost"
+    username: "temp"
+    password: "some_pass"
+    database: "db_name"
+    table: "table_name"
+
+  - id: "file source"
+    type: "file"
+    path: "./source.txt"
+
+data_destinations:
+  - id: "file destination"
+    type: "file"
+    path: "./temp.file"
+
+    sources:
+      - id: "postgres source"
+      - id: "file source"
+
+  - id: "HTTP destination"
+    type: "http-push"
+    endpoint: http://some.url.com/one
+    password: password123
+    port: 22
+    username: name-of-user
+
+    sources:
+      - id: "postgres source"
+      - id: "file source"
