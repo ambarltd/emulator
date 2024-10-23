@@ -5,44 +5,37 @@ import Test.Hspec
   , it
   , describe
   , shouldBe
-  , sequential
   )
 import Test.Hspec.Expectations.Contrib (annotate)
 
 import Control.Concurrent
-import Control.Exception (bracket)
 import Control.Concurrent.STM (newTVarIO, atomically, readTVarIO, modifyTVar)
+import Control.Exception (bracket)
 import qualified Test.Utils.OnDemand as OnDemand
 import System.Mem (performMajorGC)
 
 testUtils :: Spec
 testUtils = do
-  describe "OnDemand" $ sequential $  do
-    it "doesn't instantiate if `with` is not called" $
-      withFun $ \create inits ends -> do
-      OnDemand.lazyW create $ \_ -> return ()
-      expectM "initialisations" inits  0
-      expectM "finalisations" ends 0
+  describe "OnDemand" $ do
+    describe "lazy" $ do
+      it "doesn't instantiate if `with` is not called" $
+        withFun $ \create inits ends -> do
+        _ <- OnDemand.lazy create
+        collectGarbage
+        expectM "initialisations" inits  0
+        expectM "finalisations" ends 0
 
-    it "instantiates if `with` is called" $
-      withFun $ \create inits ends -> do
-      OnDemand.lazyW create $ \d ->
+      it "instantiates if `with` is called" $
+        withFun $ \create inits ends -> do
+        d <- OnDemand.lazy create
         OnDemand.with d return
-      expectM "initialisations" inits 1
-      expectM "finalisations" ends 1
+        collectGarbage
+        expectM "initialisations" inits 1
+        expectM "finalisations" ends 1
 
-    it "instantiates and finalises only once" $
-      withFun $ \create inits ends -> do
-      OnDemand.lazyW create $ \d -> do
-        OnDemand.with d return
-        OnDemand.with d return
-        OnDemand.with d return
-      expectM "initialisations" inits 1
-      expectM "finalisations" ends 1
-
-    it "runs finalizers only at the end" $
-      withFun $ \create _ ends -> do
-      OnDemand.lazyW create $ \d -> do
+      it "runs finalizers once at the end" $
+        withFun $ \create _ ends -> do
+        d <- OnDemand.lazy create
         OnDemand.with d return
         collectGarbage
         expectM "finalisations" ends 0
@@ -50,22 +43,22 @@ testUtils = do
         collectGarbage
         expectM "finalisations" ends 0
         OnDemand.with d return
-      expectM "finalisations" ends 1
-
-    it "runs finalizers after ref stops being used" $
-      withFun $ \create _ ends ->
-      OnDemand.lazyW create $ \d -> do
-      OnDemand.with d return
-      OnDemand.with d return
-      collectGarbage
-      expectM "finalisations" ends 1
-
-    it "doesn't run finalizers if ref is out of scope but is inside `with`" $
-      withFun $ \create _ ends ->
-      OnDemand.lazyW create $ \d ->
-      OnDemand.with d $ \() -> do
         collectGarbage
-        expectM "finalisations" ends 0
+        expectM "finalisations" ends 1
+
+      it "doesn't run finalizers if ref is garbage but we are still inside `with`" $
+        withFun $ \create _ ends -> do
+        d <- OnDemand.lazy create
+        OnDemand.with d $ \() -> do
+          collectGarbage
+          expectM "finalisations" ends 0
+
+    describe "withLazy" $ do
+      it "ensures cleanup is run before returning" $
+        withFun $ \create _ ends -> do
+        () <- OnDemand.withLazy create $ \d ->
+          OnDemand.with d return
+        expectM "finalisations" ends 1
     where
     expectM msg m val = do
       r <- m

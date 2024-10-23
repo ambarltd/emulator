@@ -29,15 +29,15 @@ following pattern:
 module Test.Utils.OnDemand
   ( OnDemand
   , lazy
-  , lazyW
+  , withLazy
   , with
   ) where
 
 import Prelude hiding (init)
-import Control.Concurrent.Async (async, withAsync)
+import Control.Concurrent.Async
 import Control.Concurrent.STM
 import Control.Exception
-import Control.Monad (when)
+import Control.Monad
 
 data Initializable a = NotRequested | Initializing | Ready a
 
@@ -49,10 +49,10 @@ data OnDemand a = OnDemand
   (TVar Int)
 
 with :: OnDemand a -> (a -> IO b) -> IO b
-with (OnDemand var count) f = bracket acquire release f
+with (OnDemand var refs) f = bracket acquire release f
   where
     acquire = do
-      atomically $ modifyTVar count succ
+      atomically $ modifyTVar refs succ
       atomically $ do
         r <- readTVar var
         case r of
@@ -61,54 +61,43 @@ with (OnDemand var count) f = bracket acquire release f
           Ready v -> return v
 
     release _ =
-      atomically $ modifyTVar count pred
+      atomically $ modifyTVar refs pred
+
+lazy_ :: Initializer a -> IO (Async (), OnDemand a)
+lazy_ init = do
+  alive <- newTVarIO True
+  refs <- newTVarIO 0
+  var  <- newTVarIO NotRequested
+  t <- async (initialise var alive refs)
+  _ <- mkWeakTVar var $ join $ atomically $ do
+      count <- readTVar refs
+      if count == 0
+        then return $ cancel t
+        else do
+          modifyTVar alive (const False)
+          return (return ())
+  return (t, OnDemand var refs)
+  where
+  initialise var aliveVar refs = do
+    -- wait till first 'with'
+    atomically $ do
+      c <- readTVar refs
+      when (c == 0) retry
+
+    init $ \resource -> do
+      atomically $ writeTVar var (Ready resource)
+      -- wait till last 'with'
+      atomically $ do
+        alive <- readTVar aliveVar
+        c <- readTVar refs
+        unless (not alive && c == 0) retry
 
 lazy :: Initializer a -> IO (OnDemand a)
-lazy init = do
-  count <- newTVarIO 1
-  var  <- newTVarIO NotRequested
-  _    <- mkWeakTVar var (sub count)
-  _ <- async (initialise var count)
-  return (OnDemand var count)
-  where
-  sub count =
-    atomically $ modifyTVar count pred
+lazy init = snd <$> lazy_ init
 
-  initialise var count = do
-    -- wait till first 'with'
-    atomically $ do
-      c <- readTVar count
-      when (c < 2) retry
-      writeTVar var Initializing
-
-    init $ \resource -> do
-      atomically $ writeTVar var (Ready resource)
-      -- wait till last 'with'
-      atomically $ do
-        c <- readTVar count
-        when (c > 0) retry
-
-lazyW :: Initializer a -> (OnDemand a -> IO b) -> IO b
-lazyW init act = do
-  count <- newTVarIO 1
-  var  <- newTVarIO NotRequested
-  _    <- mkWeakTVar var (sub count)
-  withAsync (initialise var count) $ \_ ->
-   act (OnDemand var count)
-  where
-  sub count =
-    atomically $ modifyTVar count pred
-
-  initialise var count = do
-    -- wait till first 'with'
-    atomically $ do
-      c <- readTVar count
-      when (c < 2) retry
-      writeTVar var Initializing
-
-    init $ \resource -> do
-      atomically $ writeTVar var (Ready resource)
-      -- wait till last 'with'
-      atomically $ do
-        c <- readTVar count
-        when (c > 0) retry
+-- | A version of lazy where the resource thread is guaranteed to die
+-- before returning we return.
+withLazy :: Initializer a -> (OnDemand a -> IO b) -> IO b
+withLazy init act = do
+  (thread, od) <- lazy_ init
+  act od `finally` cancel thread
