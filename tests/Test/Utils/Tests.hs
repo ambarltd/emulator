@@ -8,9 +8,11 @@ import Test.Hspec
   )
 import Test.Hspec.Expectations.Contrib (annotate)
 
+import Control.Concurrent.Async (poll)
 import Control.Concurrent
 import Control.Concurrent.STM (newTVarIO, atomically, readTVarIO, modifyTVar)
 import Control.Exception (bracket)
+import Data.Maybe (isJust)
 import qualified Test.Utils.OnDemand as OnDemand
 import System.Mem (performMajorGC)
 
@@ -52,6 +54,21 @@ testUtils = do
         OnDemand.with d $ \() -> do
           collectGarbage
           expectM "finalisations" ends 0
+
+      it "no thread leak without initialisation" $
+        withFun $ \create _ _ -> do
+        (t, _) <- OnDemand.lazy_ create
+        collectGarbage
+        r <- poll t
+        annotate "thread stopped" $ isJust r `shouldBe` True
+
+      it "no thread leak with initialisation" $
+        withFun $ \create _ _ -> do
+        (t, d) <- OnDemand.lazy_ create
+        OnDemand.with d return
+        collectGarbage
+        r <- poll t
+        annotate "thread stopped" $ isJust r `shouldBe` True
 
     describe "withLazy" $ do
       it "ensures cleanup is run before returning" $

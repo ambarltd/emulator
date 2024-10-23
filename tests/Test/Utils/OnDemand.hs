@@ -31,6 +31,8 @@ module Test.Utils.OnDemand
   , lazy
   , withLazy
   , with
+  -- for testing
+  , lazy_
   ) where
 
 import Prelude hiding (init)
@@ -38,64 +40,56 @@ import Control.Concurrent.Async
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad
+import System.Mem.Weak
 
-data Initializable a = NotRequested | Initializing | Ready a
+data OnDemand a = OnDemand (TMVar a) (TVar Int)
+
+with :: OnDemand a -> (a -> IO b) -> IO b
+with (OnDemand var refs) = bracket acquire release
+  where
+  acquire = do
+    atomically $ modifyTVar refs succ
+    atomically $ readTMVar var
+
+  release _ = atomically $ modifyTVar refs pred
 
 -- | A function of the pattern `withResource`
 type Initializer a = (forall b. (a -> IO b) -> IO b)
 
-data OnDemand a = OnDemand
-  (TVar (Initializable a))
-  (TVar Int)
-
-with :: OnDemand a -> (a -> IO b) -> IO b
-with (OnDemand var refs) f = bracket acquire release f
-  where
-    acquire = do
-      atomically $ modifyTVar refs succ
-      atomically $ do
-        r <- readTVar var
-        case r of
-          NotRequested -> retry
-          Initializing -> retry
-          Ready v -> return v
-
-    release _ =
-      atomically $ modifyTVar refs pred
-
 lazy_ :: Initializer a -> IO (Async (), OnDemand a)
-lazy_ init = do
-  alive <- newTVarIO True
-  refs <- newTVarIO 0
-  var  <- newTVarIO NotRequested
-  t <- async (initialise var alive refs)
-  _ <- mkWeakTVar var $ join $ atomically $ do
-      count <- readTVar refs
-      if count == 0
-        then return $ cancel t
-        else do
-          modifyTVar alive (const False)
-          return (return ())
+lazy_ init = mdo
+  alive <- newTVarIO True -- live state of OnDemand
+  refs <- newTVarIO 0     -- resource references
+  var  <- newEmptyTMVarIO
+  wvar <- mkWeakTMVar var $ join $ atomically $ do
+    modifyTVar alive (const False)
+    count <- readTVar refs
+    return $ when (count == 0) (cancel t)
+  t <- async (initialise wvar alive refs)
   return (t, OnDemand var refs)
   where
-  initialise var aliveVar refs = do
+  initialise wvar aliveVar refsVar = do
     -- wait till first 'with'
     atomically $ do
-      c <- readTVar refs
-      when (c == 0) retry
+      refs <- readTVar refsVar
+      alive <- readTVar aliveVar
+      when (alive && refs == 0) retry
 
     init $ \resource -> do
-      atomically $ writeTVar var (Ready resource)
-      -- wait till last 'with'
-      atomically $ do
-        alive <- readTVar aliveVar
-        c <- readTVar refs
-        unless (not alive && c == 0) retry
+      mvar <- deRefWeak wvar
+      forM_ mvar $ \var -> do
+        atomically $ putTMVar var resource
+        -- wait till last 'with'
+        atomically $ do
+          alive <- readTVar aliveVar
+          refs <- readTVar refsVar
+          unless (not alive && refs == 0) retry
 
 lazy :: Initializer a -> IO (OnDemand a)
 lazy init = snd <$> lazy_ init
 
--- | A version of lazy where the resource thread is guaranteed to die
+-- | A version of lazy that doesn't wait for the garbage collector
+-- to finish the resource thread.
 -- before returning we return.
 withLazy :: Initializer a -> (OnDemand a -> IO b) -> IO b
 withLazy init act = do
