@@ -16,97 +16,99 @@ This module allows on-demand initialisation and instance sharing by using the
 following pattern:
 
   -- nothing happens
-  onDemand <- OnDemand.lazy withResource
+  OnDemand.lazy withResource $ \onDemand -> do
 
-  -- instance is initialised
-  resource <- OnDemand.get onDemand
+    -- instance is initialised
+    OnDemand.with onDemand $ \resource -> ...
 
-  -- instance is reused
-  resource <- OnDemand.get onDemand
-  resource <- OnDemand.get onDemand
+    -- instance is reused
+    OnDemand.with onDemand $ \resource -> ...
+    OnDemand.with onDemand $ \resource -> ...
 
 -}
 module Test.Utils.OnDemand
   ( OnDemand
   , lazy
-  , get
+  , lazyW
+  , with
   ) where
 
-import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (Async, async, cancel)
-import Control.Concurrent.STM (TVar, throwSTM, atomically, readTVar, writeTVar, newTVarIO, retry)
-import Control.Exception (ErrorCall(..), bracket, onException, bracketOnError)
-import Control.Monad (forever, forM_)
-import Data.Void (Void)
+import Prelude hiding (init)
+import Control.Concurrent.Async (async, withAsync)
+import Control.Concurrent.STM
+import Control.Exception
+import Control.Monad (when)
 
 data Initializable a = NotRequested | Initializing | Ready a
-
--- | A reference to a thread that runs forever
-type LongRunning = Async Void
 
 -- | A function of the pattern `withResource`
 type Initializer a = (forall b. (a -> IO b) -> IO b)
 
 data OnDemand a = OnDemand
-  (Initializer a)
-  (TVar (Initializable (LongRunning, a)))
+  (TVar (Initializable a))
+  (TVar Int)
 
-get :: OnDemand a -> IO a
-get (OnDemand with var) =
-  bracketOnError acquire release initialize
+with :: OnDemand a -> (a -> IO b) -> IO b
+with (OnDemand var count) f = bracket acquire release f
   where
-    initialize mval =
-      case mval of
-        Just val -> return val
-        Nothing -> mdo
-          t <- async
-              $ (`onException` release Nothing)
-              $ with $ \resource -> do
-                atomically $ writeTVar var (Ready (t, resource))
-                forever $ threadDelay 1000000
-          getResource
+    acquire = do
+      atomically $ modifyTVar count succ
+      atomically $ do
+        r <- readTVar var
+        case r of
+          NotRequested -> retry
+          Initializing -> retry
+          Ready v -> return v
 
-    -- wait till ready
-    getResource = atomically $ do
-      r <- readTVar var
-      case r of
-        Initializing -> retry
-        Ready (_, resource) -> return resource
-        NotRequested ->
-          throwSTM $ ErrorCall "resource initialization failure"
+    release _ =
+      atomically $ modifyTVar count pred
 
-    acquire = atomically $ do
-      r <- readTVar var
-      case r of
-        NotRequested -> do
-          writeTVar var Initializing
-          return Nothing
-        Initializing -> retry
-        Ready (_, x) -> return (Just x)
-
-    release mval = do
-      case mval of
-        -- unable to initialise. Reset var.
-        Nothing -> atomically $ writeTVar var NotRequested
-        -- was initialised but received some exception. Nothing to do.
-        Just _ -> return ()
-
-lazy :: Initializer a -> (OnDemand a -> IO b) -> IO b
-lazy with act =
-  bracket acquire release $ \var ->
-    act (OnDemand with var)
+lazy :: Initializer a -> IO (OnDemand a)
+lazy init = do
+  count <- newTVarIO 1
+  var  <- newTVarIO NotRequested
+  _    <- mkWeakTVar var (sub count)
+  _ <- async (initialise var count)
+  return (OnDemand var count)
   where
-  acquire = newTVarIO NotRequested
+  sub count =
+    atomically $ modifyTVar count pred
 
-  -- kill long-running thread
-  release var = do
-    putStrLn "releasing"
-    mt <- atomically $ do
-      state <- readTVar var
-      case state of
-        Ready (t, _) -> return (Just t)
-        _ -> return Nothing
-    forM_ mt cancel
+  initialise var count = do
+    -- wait till first 'with'
+    atomically $ do
+      c <- readTVar count
+      when (c < 2) retry
+      writeTVar var Initializing
 
+    init $ \resource -> do
+      atomically $ writeTVar var (Ready resource)
+      -- wait till last 'with'
+      atomically $ do
+        c <- readTVar count
+        when (c > 0) retry
 
+lazyW :: Initializer a -> (OnDemand a -> IO b) -> IO b
+lazyW init act = do
+  count <- newTVarIO 1
+  var  <- newTVarIO NotRequested
+  _    <- mkWeakTVar var (sub count)
+  withAsync (initialise var count) $ \_ ->
+   act (OnDemand var count)
+  where
+  sub count =
+    atomically $ modifyTVar count pred
 
+  initialise var count = do
+    -- wait till first 'with'
+    atomically $ do
+      c <- readTVar count
+      when (c < 2) retry
+      writeTVar var Initializing
+
+    init $ \resource -> do
+      atomically $ writeTVar var (Ready resource)
+      -- wait till last 'with'
+      atomically $ do
+        c <- readTVar count
+        when (c > 0) retry

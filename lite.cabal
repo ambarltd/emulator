@@ -83,6 +83,7 @@ test-suite lite-tests
     other-modules:
         Test.Queue
         Test.Connector
+        Test.Utils.Tests
         Test.Utils.OnDemand
     type:    exitcode-stdio-1.0
     build-depends:
@@ -93,6 +94,7 @@ test-suite lite-tests
         , directory
         , filepath
         , hspec
+        , hspec-expectations
         , HUnit
         , process
         , QuickCheck

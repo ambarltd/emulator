@@ -71,8 +71,8 @@ testPollingConnector = describe "Poll" $
 testPostgreSQL :: OnDemand PostgresCreds -> Spec
 testPostgreSQL lcreds = do
   describe "postgreSQL" $ do
-    it "works" $ do
-      creds <- OnDemand.get lcreds
+    it "works" $
+      OnDemand.with lcreds $ \creds ->
       p_username creds `shouldBe` "conn_test"
 
 data PostgresCreds = PostgresCreds

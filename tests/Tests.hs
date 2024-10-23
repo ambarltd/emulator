@@ -4,6 +4,7 @@ import Test.Hspec (hspec, parallel)
 
 import Test.Queue (testQueues)
 import Test.Connector (testConnectors, withPostgresSQL)
+import Test.Utils.Tests (testUtils)
 import qualified Test.Utils.OnDemand as OnDemand
 
 
@@ -17,9 +18,10 @@ Example: match on test description
 
  -}
 main :: IO ()
-main =
-  OnDemand.lazy withPostgresSQL $ \pcreds ->
+main = do
+  pcreds <- OnDemand.lazy withPostgresSQL
   hspec $ parallel $ do
     -- unit tests use the projector library
     testQueues
     testConnectors pcreds
+    testUtils
