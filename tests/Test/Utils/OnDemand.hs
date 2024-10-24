@@ -84,14 +84,17 @@ lazy_ init = mdo
         when (alive || demand > 0) retry
 
   initialise wvar alive refs = do
+    putStrLn "INIT WAIT"
     -- wait till first 'with'
     hasDemand <- waitForDemand alive refs
+    putStrLn "INIT START"
     when hasDemand $ do
       init $ \resource -> do
         mvar <- deRefWeak wvar
         forM_ mvar $ \var -> do
           atomically $ putTMVar var resource
           -- wait till last 'with'
+          putStrLn "INIT BLOCK"
           waitForCompletion alive refs
 
 lazy :: Initializer a -> IO (OnDemand a)
