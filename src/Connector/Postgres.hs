@@ -21,7 +21,7 @@ import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Void (Void)
-import Data.Word (Word64)
+import Data.Word (Word64, Word16)
 import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.FromField as P
 import qualified Database.PostgreSQL.Simple.FromRow as P
@@ -40,7 +40,7 @@ _MAX_TRANSACTION_TIME = seconds 120
 
 data ConnectorConfig = ConnectorConfig
   { c_host :: Text
-  , c_port :: Int
+  , c_port :: Word16
   , c_username :: Text
   , c_password :: Text
   , c_database :: Text
@@ -119,14 +119,13 @@ connect :: Producer Row -> ConnectorConfig -> IO Void
 connect producer config@ConnectorConfig{..} =
    bracket open P.close $ \conn -> do
    schema <- fetchSchema c_table conn
-   print schema
    validate config schema
    let pcol = unTableSchema schema Map.! c_partitioningColumn
    withTracker pcol $ consume conn schema
    where
    open = P.connect P.ConnectInfo
       { P.connectHost = Text.unpack c_host
-      , P.connectPort = fromIntegral c_port
+      , P.connectPort = c_port
       , P.connectUser = Text.unpack c_username
       , P.connectPassword = Text.unpack c_password
       , P.connectDatabase = Text.unpack c_database
@@ -156,7 +155,7 @@ connect producer config@ConnectorConfig{..} =
        query = fromString $ Text.unpack $ Text.unwords
           [ "SELECT" , Text.intercalate ", " (columns config)
           , "FROM" , c_table
-          , "WHERE" , constraints
+          , if null bs then "" else "WHERE" <> constraints
           , "ORDER BY" , c_serialColumn
           ]
        constraints = Text.pack $ intercalate "AND" $ flip fmap bs

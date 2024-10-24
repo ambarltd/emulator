@@ -3,13 +3,20 @@ module Test.Connector
   , withPostgresSQL
   ) where
 
-import Control.Concurrent
+import Control.Concurrent (MVar, newMVar, modifyMVar)
+import Control.Concurrent.Async (race, withAsync, wait)
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Lazy as LB
 import Data.List (isInfixOf)
 import Data.String (fromString)
+import qualified Data.Text as Text
+import Data.Void (Void)
+import Data.Word (Word16)
 import Control.Exception (bracket, throwIO, ErrorCall(..))
-import Control.Monad (void)
-import System.Process (readProcessWithExitCode)
+import Control.Monad (void, replicateM)
 import System.Exit (ExitCode(..))
+import System.Process (readProcessWithExitCode)
+import System.Timeout (timeout)
 import Test.Hspec
   ( Spec
   , it
@@ -25,7 +32,12 @@ import Connector.Poll
   , Boundaries(..)
   , rangeTracker
   )
--- import qualified Connector.Postgre as ConnectorPostgres
+import Connector.Postgres (ConnectorConfig(..), partitioner, encoder)
+import qualified Connector.Postgres as ConnectorPostgres
+import Queue (PartitionCount(..))
+import Queue.Topic (Topic)
+import qualified Queue.Topic as Topic
+import Test.Queue (withFileTopic)
 import Test.Utils.OnDemand (OnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
 
@@ -78,21 +90,82 @@ testPostgreSQL p = do
   describe "PostgreSQL" $ do
     -- checks that our tests can connect to postgres
     it "connects" $
-      OnDemand.with p $ \creds ->
-      withEventsTable creds $ \conn table -> do
+      with $ \conn table _ _ -> do
         insert conn table (take 10 $ head mocks)
         rs <- P.query_ @Event conn (fromString $ "SELECT * FROM " <> table)
         length rs `shouldBe` 10
 
-    it "retrieves all events already in the db" $ () `shouldBe` ()
+    it "retrieves all events already in the db" $
+      with $ \conn table topic connect -> do
+        let count = 10
+        insert conn table (take count $ head mocks)
+        withAsync_ connect $
+          timeout_ (seconds 2) $
+          Topic.withConsumer topic group $ \consumer -> do
+          es <- replicateM count $ readEvent consumer
+          length es `shouldBe` count
+
     it "can retrieve a large number of events" $ () `shouldBe` ()
     it "retrieves events added after initial snapshot" $ () `shouldBe` ()
     it "maintains ordering" $ () `shouldBe` ()
+  where
+  readEvent :: Topic.Consumer -> IO (Event, Topic.Meta)
+  readEvent consumer = do
+    result <- Topic.read consumer
+    (bs, meta) <- either (throwIO . ErrorCall . show) return result
+    case Aeson.eitherDecode $ LB.fromStrict bs of
+      Left err -> throwIO $ ErrorCall $ "Event decoding error: " <> show err
+      Right val -> return (val, meta)
+
+  with :: (P.Connection -> TableName -> Topic -> IO Void -> IO a) -> IO a
+  with f =
+    OnDemand.with p $ \creds ->                                           -- load db
+    withEventsTable creds $ \conn table ->                                -- create events table
+    withFileTopic (PartitionCount 1) $ \topic ->                          -- create topic
+    let config = mkConfig creds table in
+    Topic.withProducer topic partitioner (encoder config) $ \producer ->  -- create topic producer
+    let connect = ConnectorPostgres.connect producer config in            -- setup connector
+    f conn table topic connect
+
+  seconds n = n * 1_000_000 -- one second in microseconds
+
+-- version of timeout that throws on timeout
+timeout_ :: Int -> IO a -> IO a
+timeout_ time act = do
+  r <- timeout time act
+  case r of
+    Nothing -> error "timed out"
+    Just v -> return v
+
+-- version of withAsync which throws if left throws
+withAsync_ :: IO a -> IO b -> IO b
+withAsync_ left right =
+  withAsync right $ \r -> do
+    out <- race (do _ <- left; wait r) (wait r)
+    return $ either id id out
+
+mkConfig :: PostgresCreds -> TableName -> ConnectorPostgres.ConnectorConfig
+mkConfig PostgresCreds{..} table = ConnectorConfig
+  { c_host = Text.pack p_host
+  , c_port = p_port
+  , c_username = Text.pack p_username
+  , c_password = Text.pack p_password
+  , c_database = Text.pack p_database
+  , c_table = Text.pack table
+  , c_columns = ["id", "aggregate_id", "sequence_number"]
+  , c_partitioningColumn = "aggregate_id"
+  , c_serialColumn = "id"
+  }
+
+group :: Topic.ConsumerGroupName
+group = Topic.ConsumerGroupName "test_group"
 
 data PostgresCreds = PostgresCreds
   { p_database :: String
   , p_username :: String
   , p_password :: String
+  , p_host :: String
+  , p_port :: Word16
   }
 
 data Event = Event
@@ -101,6 +174,13 @@ data Event = Event
   , e_sequence_number :: Int
   }
   deriving (Generic, P.FromRow, Show)
+
+instance Aeson.FromJSON Event where
+  parseJSON = Aeson.withObject "Event" $ \o -> do
+    e_id <- o Aeson..: "id"
+    e_aggregate_id <- o Aeson..: "aggregate_id"
+    e_sequence_number <- o Aeson..: "sequence_number"
+    return Event{..}
 
 -- Mock events to be added to the database.
 -- Each sublist is an infinite list of events for the same aggregate.
@@ -151,10 +231,12 @@ withEventsTable creds f = bracket create destroy $ uncurry f
     number <- modifyMVar tableNumber $ \n -> return (n + 1, n)
     return $ "table_" <> show number
 
-  connect = P.connect P.defaultConnectInfo
+  connect = P.connect P.ConnectInfo
     { P.connectUser = p_username creds
     , P.connectPassword = p_password creds
     , P.connectDatabase = p_database creds
+    , P.connectHost = p_host creds
+    , P.connectPort = p_port creds
     }
 
 -- | Create a PostgreSQL database and delete it upon completion.
@@ -166,6 +248,8 @@ withPostgresSQL f = bracket setup teardown f
           { p_database = "db_test"
           , p_username = "conn_test"
           , p_password = ""
+          , p_host =  P.connectHost P.defaultConnectInfo
+          , p_port = P.connectPort P.defaultConnectInfo
           }
     createUser p_username
     createDatabase p_username p_database

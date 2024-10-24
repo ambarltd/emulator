@@ -1,4 +1,4 @@
-module Test.Queue (testQueues) where
+module Test.Queue (testQueues, withFileTopic) where
 
 import Prelude hiding (read)
 
@@ -57,17 +57,17 @@ testQueues = do
   withFilePartition path act =
     FilePartition.withFilePartition path "file-partition" act
 
-  withFileTopic :: PartitionCount -> (Topic -> IO a) -> IO a
-  withFileTopic (PartitionCount n) act =
-    withTempPath $ \path ->
-    withMany (f path) [0..n-1] $ \pinstances ->
-    withTopic
-      (HashMap.fromList $ zip [0..] pinstances)
-      mempty
-      act
-    where
-    f path pnumber g = do
-      FilePartition.withFilePartition path (show pnumber) (g . Some)
+withFileTopic :: PartitionCount -> (Topic -> IO a) -> IO a
+withFileTopic (PartitionCount n) act =
+  withTempPath $ \path ->
+  withMany (f path) [0..n-1] $ \pinstances ->
+  withTopic
+    (HashMap.fromList $ zip [0..] pinstances)
+    mempty
+    act
+  where
+  f path pnumber g = do
+    FilePartition.withFilePartition path (show pnumber) (g . Some)
 
 withTempPath :: (FilePath -> IO a) -> IO a
 withTempPath = withSystemTempDirectory "partition-XXXXX"
