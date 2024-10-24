@@ -3,10 +3,11 @@ module Test.Connector
   , withPostgresSQL
   ) where
 
+import Control.Concurrent
 import Data.List (isInfixOf)
-import Data.Text (Text)
-import qualified Data.Text as Text
+import Data.String (fromString)
 import Control.Exception (bracket, throwIO, ErrorCall(..))
+import Control.Monad (void)
 import System.Process (readProcessWithExitCode)
 import System.Exit (ExitCode(..))
 import Test.Hspec
@@ -15,12 +16,16 @@ import Test.Hspec
   , describe
   , shouldBe
   )
+import qualified Database.PostgreSQL.Simple as P
+import GHC.Generics
+import System.IO.Unsafe (unsafePerformIO)
 
 import Connector.Poll
   ( BoundaryTracker(..)
   , Boundaries(..)
   , rangeTracker
   )
+-- import qualified Connector.Postgre as ConnectorPostgres
 import Test.Utils.OnDemand (OnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
 
@@ -69,18 +74,90 @@ testPollingConnector = describe "Poll" $
       (boundaries . cleanup 1 . bs) [1 ,2, 5, 3] `shouldBe` Boundaries [(1,3), (5,5)]
 
 testPostgreSQL :: OnDemand PostgresCreds -> Spec
-testPostgreSQL lcreds = do
-  describe "postgreSQL" $ do
-    it "works" $
-      OnDemand.with lcreds $ \creds ->
-      p_username creds `shouldBe` "conn_test"
+testPostgreSQL p = do
+  describe "PostgreSQL" $ do
+    -- checks that our tests can connect to postgres
+    it "connects" $
+      OnDemand.with p $ \creds ->
+      withEventsTable creds $ \conn table -> do
+        insert conn table (take 10 $ head mocks)
+        rs <- P.query_ @Event conn (fromString $ "SELECT * FROM " <> table)
+        length rs `shouldBe` 10
+
+    it "retrieves all events already in the db" $ () `shouldBe` ()
+    it "can retrieve a large number of events" $ () `shouldBe` ()
+    it "retrieves events added after initial snapshot" $ () `shouldBe` ()
+    it "maintains ordering" $ () `shouldBe` ()
 
 data PostgresCreds = PostgresCreds
-  { p_database :: Text
-  , p_username :: Text
-  , p_password :: Text
+  { p_database :: String
+  , p_username :: String
+  , p_password :: String
   }
 
+data Event = Event
+  { e_id :: Int
+  , e_aggregate_id :: Int
+  , e_sequence_number :: Int
+  }
+  deriving (Generic, P.FromRow, Show)
+
+-- Mock events to be added to the database.
+-- Each sublist is an infinite list of events for the same aggregate.
+mocks :: [[Event]]
+mocks =
+  -- the aggregate_id is given when the records are inserted into the database
+  [ [ Event (-1) agg_id seq_id | seq_id <- [0..] ]
+    | agg_id <- [0..]
+  ]
+
+insert :: P.Connection -> TableName -> [Event] -> IO ()
+insert conn table events =
+  void $ P.executeMany conn query [(agg_id, seq_num) | Event _ agg_id seq_num <- events ]
+  where
+  query = fromString $ unwords
+    [ "INSERT INTO", table
+    ,"(aggregate_id, sequence_number)"
+    ,"VALUES ( ?, ? )"
+    ]
+
+{-# NOINLINE tableNumber #-}
+tableNumber :: MVar Int
+tableNumber = unsafePerformIO (newMVar 0)
+
+type TableName = String
+
+withEventsTable :: PostgresCreds -> (P.Connection -> TableName -> IO a) -> IO a
+withEventsTable creds f = bracket create destroy $ uncurry f
+  where
+  execute conn q = void $ P.execute_ conn (fromString q)
+  create = do
+    name <- takeName
+    conn <- connect
+    execute conn $ unwords
+      [ "CREATE TABLE IF NOT EXISTS " <> name <> " "
+      , "( id               SERIAL"
+      , ", aggregate_id     INTEGER NOT NULL"
+      , ", sequence_number  INTEGER NOT NULL"
+      , ", PRIMARY KEY (id)"
+      , ", UNIQUE (aggregate_id, sequence_number)"
+      , ")"
+      ]
+    return (conn, name)
+
+  destroy (conn, name) = execute conn $ "DROP TABLE " <> name
+
+  takeName = do
+    number <- modifyMVar tableNumber $ \n -> return (n + 1, n)
+    return $ "table_" <> show number
+
+  connect = P.connect P.defaultConnectInfo
+    { P.connectUser = p_username creds
+    , P.connectPassword = p_password creds
+    , P.connectDatabase = p_database creds
+    }
+
+-- | Create a PostgreSQL database and delete it upon completion.
 withPostgresSQL :: (PostgresCreds -> IO a) -> IO a
 withPostgresSQL f = bracket setup teardown f
   where
@@ -99,7 +176,7 @@ withPostgresSQL f = bracket setup teardown f
     dropUser p_username
 
   createUser name = do
-    (code, _, err) <- readProcessWithExitCode "createuser" ["--superuser", Text.unpack name] ""
+    (code, _, err) <- readProcessWithExitCode "createuser" ["--superuser", name] ""
     case code of
       ExitSuccess -> return ()
       ExitFailure 1 | "already exists" `isInfixOf` err -> return ()
@@ -107,9 +184,8 @@ withPostgresSQL f = bracket setup teardown f
 
   createDatabase user name = do
     (code, _, err) <- readProcessWithExitCode "createdb"
-      [ "--username", Text.unpack user
-      , "--no-password"
-      , Text.unpack name
+      [ "--username", user
+      , "--no-password", name
       ] ""
     case code of
       ExitSuccess -> return ()
@@ -117,13 +193,13 @@ withPostgresSQL f = bracket setup teardown f
       _ -> throwIO $ ErrorCall $ "Unable to create PostgreSQL database: " <> err
 
   dropUser name = do
-    (code, _, err) <- readProcessWithExitCode "dropuser" [Text.unpack name] ""
+    (code, _, err) <- readProcessWithExitCode "dropuser" [name] ""
     case code of
       ExitSuccess -> return ()
       _ -> throwIO $ ErrorCall $ "Unable to delete PostgreSQL user: " <> err
 
   deleteDatabase name = do
-    (code, _, err) <- readProcessWithExitCode "dropdb" [Text.unpack name] ""
+    (code, _, err) <- readProcessWithExitCode "dropdb" [name] ""
     case code of
       ExitSuccess -> return ()
       _ -> throwIO $ ErrorCall $ "Unable to delete PostgreSQL database: " <> err

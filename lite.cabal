@@ -96,6 +96,7 @@ test-suite lite-tests
         , hspec
         , hspec-expectations
         , HUnit
+        , postgresql-simple
         , process
         , QuickCheck
         , stm
