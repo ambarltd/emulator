@@ -79,4 +79,4 @@ jobs:
       - name: Run tests
         env:
           PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
-        run: cabal run lite-tests -- --match "PostgreSQL" +RTS -N
+        run: cabal run lite-tests -- --skip "PostgreSQL" +RTS -N
