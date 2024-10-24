@@ -305,7 +305,7 @@ withPostgresSQL f = bracket setup teardown f
 
   createDatabase user name = do
     (code, _, err) <- readProcessWithExitCode "createdb"
-      [ "--username", user
+      [ "--owner", user
       , "--no-password", name
       ] ""
     case code of
