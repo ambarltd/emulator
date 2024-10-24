@@ -283,7 +283,7 @@ withPostgresSQL f = bracket setup teardown f
   setup = do
     let creds@PostgresCreds{..} = PostgresCreds
           { p_database = "db_test"
-          , p_username = "user_test"
+          , p_username = "test_user"
           , p_password = ""
           , p_host =  P.connectHost P.defaultConnectInfo
           , p_port = P.connectPort P.defaultConnectInfo
@@ -309,7 +309,7 @@ withPostgresSQL f = bracket setup teardown f
   createDatabase user name = do
     (code, _, err) <- readProcessWithExitCode "createdb"
       [ "--owner", user
-      , "--no-password", name
+      , name
       ] ""
     case code of
       ExitSuccess -> return ()
