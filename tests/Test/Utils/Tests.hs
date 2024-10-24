@@ -5,12 +5,15 @@ import Test.Hspec
   , it
   , describe
   , shouldBe
+  , expectationFailure
   )
 import Test.Hspec.Expectations.Contrib (annotate)
 
-import Control.Concurrent.Async (poll)
+import Control.Concurrent.Async
+import Control.Monad
+import Control.Exception
+
 import Control.Concurrent.STM (newTVarIO, atomically, readTVarIO, modifyTVar)
-import Control.Exception (bracket)
 import Data.Maybe (isJust)
 import qualified Test.Utils.OnDemand as OnDemand
 import System.Mem (performMajorGC)
@@ -70,6 +73,29 @@ testUtils = do
         collectGarbage
         r <- poll t
         annotate "thread stopped" $ isJust r `shouldBe` True
+
+      it "throws init exception in all demanding threads" $ do
+        let err = "Fake Error"
+        r <- OnDemand.lazy $ \_ -> throwIO (ErrorCall err)
+
+        [t1, t2] <- replicateM 2 $ async $
+          OnDemand.with r return
+
+        delay (millis 10)
+        forM_ (zip @Int [0..] [t1, t2]) $ \(n, t) -> do
+          outcome <- poll t
+          annotate ("thread " <> show n) $
+            case outcome  of
+              Just (Left e)
+                | Just (ErrorCall msg) <- fromException e
+                , msg == err -> return ()
+                | otherwise ->
+                  expectationFailure (show e)
+              Just (Right _) ->
+                  expectationFailure "unexpected success"
+              Nothing -> do
+                  cancel t
+                  expectationFailure "thread not finished"
 
     describe "withLazy" $ do
       it "ensures cleanup is run before returning" $

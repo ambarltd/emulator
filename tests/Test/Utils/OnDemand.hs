@@ -33,7 +33,6 @@ module Test.Utils.OnDemand
   , with
   -- for testing
   , lazy_
-  , fake
   ) where
 
 import Prelude hiding (init)
@@ -43,10 +42,15 @@ import Control.Exception
 import Control.Monad
 import System.Mem.Weak
 
-data OnDemand a = OnDemand (TMVar a) (TVar Int)
+data OnDemand a = OnDemand (Async ()) (TMVar a) (TVar Int)
 
 with :: OnDemand a -> (a -> IO b) -> IO b
-with (OnDemand var refs) = bracket acquire release
+with (OnDemand t var refs) f =
+  withAsync (bracket acquire release f) $ \action -> do
+    r <- waitEither t action
+    case r of
+      Left () -> wait action
+      Right v -> return v
   where
   acquire = do
     atomically $ modifyTVar refs succ
@@ -65,8 +69,7 @@ lazy_ init = mdo
   var  <- newEmptyTMVarIO
   wvar <- mkWeakTMVar var $ atomically $ modifyTVar alive (const False)
   t <- async (initialise wvar alive refs)
-  link t -- make sure init exceptions are thrown in the main thread.
-  return (t, OnDemand var refs)
+  return (t, OnDemand t var refs)
   where
   waitForDemand aliveVar refsVar =
     handle (\BlockedIndefinitelyOnSTM -> return False) $ do
@@ -104,6 +107,3 @@ withLazy :: Initializer a -> (OnDemand a -> IO b) -> IO b
 withLazy init act = do
   (thread, od) <- lazy_ init
   act od `finally` cancel thread
-
-fake :: Initializer a -> IO (OnDemand a)
-fake _ = return (OnDemand undefined undefined)
