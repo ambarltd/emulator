@@ -30,6 +30,13 @@ jobs:
           username: 'postgres'
           password: ''
 
+      - name: Test PostgresQL setup
+        env:
+          PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
+        run: |
+          createuser --superuser user_test
+          createdb --owner user_test --no-password db_test
+
       - name: Set up GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
         id: setup
