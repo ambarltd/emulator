@@ -79,4 +79,7 @@ jobs:
       - name: Run tests
         env:
           PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
-        run: cabal run lite-tests -- --skip "PostgreSQL" +RTS -N
+        run: |
+          cabal run lite-tests -- --match "reads and writes concurrently"
+          cabal run lite-tests -- --match "partition" +RTS -N
+          cabal run lite-tests
