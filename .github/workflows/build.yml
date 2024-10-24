@@ -34,7 +34,7 @@ jobs:
         env:
           PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
         run: |
-          createuser --superuser user_test
+          createuser --superuser --no-password user_test
           createdb --owner user_test --no-password db_test
 
       - name: Set up GHC ${{ matrix.ghc-version }}
