@@ -2,7 +2,7 @@ module Test.Queue (testQueues, withFileTopic) where
 
 import Prelude hiding (read)
 
-import Control.Concurrent.Async (async, wait, concurrently)
+import Control.Concurrent.Async (async, wait, concurrently, withAsync)
 import Control.Exception (fromException)
 import Control.Monad (replicateM, forM_, replicateM_)
 import Data.ByteString (ByteString)
@@ -151,9 +151,6 @@ testQueue = do
   group = ConsumerGroupName "test-group"
 
   withProducer topic = T.withProducer topic (T.modPartitioner fst) (unRecord . snd)
-
-
-
 
 testTopic :: (forall b. PartitionCount -> (Topic -> IO b) -> IO b) -> Spec
 testTopic with = do
@@ -376,7 +373,7 @@ testPartition with = do
       one_ `shouldBe` one
       two_ `shouldBe` two
 
-  it "reads concurrently" $
+  it "reads and writes concurrently" $
     withTempPath $ \path ->
     with path $ \partition -> do
       let len = 10
@@ -387,9 +384,7 @@ testPartition with = do
           write' =
             traverse (P.write partition) selected
 
-      r <- async $ concurrently read' read'
-      _ <- async write'
-      (left, right) <- wait r
+      (left, right) <- withAsync write' $ \_ -> concurrently read' read'
       left `shouldBe` right
       left `shouldBe` selected
 
