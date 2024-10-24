@@ -27,11 +27,6 @@ jobs:
         with:
           postgresql-version: 16
 
-      - name: Spin-up PostgreSQL server
-        uses: harmon758/postgresql-action@v1
-        with:
-          postgresql version: '16'
-
       - name: Set up GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
         id: setup
@@ -75,4 +70,6 @@ jobs:
         run: cabal build all
 
       - name: Run tests
-        run: cabal run lite-tests +RTS -N
+        run: |
+          postgres -D $XDG_DATA_HOME &
+          cabal run lite-tests +RTS -N
