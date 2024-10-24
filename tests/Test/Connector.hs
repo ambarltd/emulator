@@ -119,28 +119,29 @@ testPostgreSQL p = do
     it "retrieves events added after initial snapshot" $
       with (PartitionCount 1) $ \conn table topic connect -> do
         let count = 10
+            write = insert conn table (take count $ head mocks)
         withAsync_ connect $ timeout_ (seconds 1) $
           Topic.withConsumer topic group $ \consumer ->
-          withAsync_ (insert conn table (take count $ head mocks)) $ do
+          withAsync_ write $ do
           es <- replicateM count $ readEvent consumer
           length es `shouldBe` count
 
-    it "maintains ordering" $
-      let partitions = 5 in
+    it "maintains ordering" $ do
+      let partitions = 5
       with (PartitionCount partitions) $ \conn table topic connect -> do
+        let count = 1_000
+            write = mapConcurrently id
+              [ insert conn table (take count $ mocks !! partition)
+              | partition <- [1..partitions] ]
         withAsync_ connect $ timeout_ (seconds 1) $
           Topic.withConsumer topic group $ \consumer -> do
-          let count = 1_000
-              write = mapConcurrently id
-                [ insert conn table (take count $ mocks !! partition)
-                | partition <- [1..partitions]
-                ]
+          -- write and consume concurrently
           withAsync_ write $ do
             es <- replicateM (count * partitions) $ readEvent consumer
             let byAggregateId = Map.toList $ Map.fromListWith (flip (++))
-                  [ (e_aggregate_id, [e_sequence_number])
-                  | (Event{..}, _) <- es
-                  ]
+                    [ (e_aggregate_id, [e_sequence_number])
+                    | (Event{..}, _) <- es
+                    ]
             forM_ byAggregateId $ \(a_id, seqs) ->
               annotate ("ordered (" <> show a_id <> ")") $
                 sort seqs `shouldBe` seqs
