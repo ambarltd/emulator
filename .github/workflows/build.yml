@@ -27,6 +27,8 @@ jobs:
         uses: ikalnytskyi/action-setup-postgres@v6
         with:
           postgres-version: "116"
+          username: 'postgres'
+          password: ''
 
       - name: Set up GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
