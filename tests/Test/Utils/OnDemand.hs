@@ -33,6 +33,7 @@ module Test.Utils.OnDemand
   , with
   -- for testing
   , lazy_
+  , fake
   ) where
 
 import Prelude hiding (init)
@@ -51,7 +52,8 @@ with (OnDemand var refs) = bracket acquire release
     atomically $ modifyTVar refs succ
     atomically $ readTMVar var
 
-  release _ = atomically $ modifyTVar refs pred
+  release _ = do
+    atomically $ modifyTVar refs pred
 
 -- | A function of the pattern `withResource`
 type Initializer a = (forall b. (a -> IO b) -> IO b)
@@ -61,30 +63,36 @@ lazy_ init = mdo
   alive <- newTVarIO True -- live state of OnDemand
   refs <- newTVarIO 0     -- resource references
   var  <- newEmptyTMVarIO
-  wvar <- mkWeakTMVar var $ join $ atomically $ do
-    modifyTVar alive (const False)
-    count <- readTVar refs
-    return $ when (count == 0) (cancel t)
+  wvar <- mkWeakTMVar var $ atomically $ modifyTVar alive (const False)
   t <- async (initialise wvar alive refs)
   link t -- make sure init exceptions are thrown in the main thread.
   return (t, OnDemand var refs)
   where
-  initialise wvar aliveVar refsVar = do
-    -- wait till first 'with'
-    atomically $ do
-      refs <- readTVar refsVar
-      alive <- readTVar aliveVar
-      when (alive && refs == 0) retry
+  waitForDemand aliveVar refsVar =
+    handle (\BlockedIndefinitelyOnSTM -> return False) $ do
+      atomically $ do
+        demand <- readTVar refsVar
+        alive <- readTVar aliveVar
+        when (alive && demand == 0) retry
+        return (demand > 0)
 
-    init $ \resource -> do
-      mvar <- deRefWeak wvar
-      forM_ mvar $ \var -> do
-        atomically $ putTMVar var resource
-        -- wait till last 'with'
-        atomically $ do
-          alive <- readTVar aliveVar
-          refs <- readTVar refsVar
-          unless (not alive && refs == 0) retry
+  waitForCompletion aliveVar refsVar =
+    handle (\BlockedIndefinitelyOnSTM -> return ()) $
+      atomically $ do
+        alive <- readTVar aliveVar
+        demand <- readTVar refsVar
+        when (alive || demand > 0) retry
+
+  initialise wvar alive refs = do
+    -- wait till first 'with'
+    hasDemand <- waitForDemand alive refs
+    when hasDemand $ do
+      init $ \resource -> do
+        mvar <- deRefWeak wvar
+        forM_ mvar $ \var -> do
+          atomically $ putTMVar var resource
+          -- wait till last 'with'
+          waitForCompletion alive refs
 
 lazy :: Initializer a -> IO (OnDemand a)
 lazy init = snd <$> lazy_ init
@@ -96,3 +104,6 @@ withLazy :: Initializer a -> (OnDemand a -> IO b) -> IO b
 withLazy init act = do
   (thread, od) <- lazy_ init
   act od `finally` cancel thread
+
+fake :: Initializer a -> IO (OnDemand a)
+fake _ = return (OnDemand undefined undefined)
