@@ -36,21 +36,19 @@ module Test.Utils.OnDemand
   ) where
 
 import Prelude hiding (init)
-import Control.Concurrent.Async
+import Control.Concurrent.Async (Async, wait, cancel, async)
 import Control.Concurrent.STM
-import Control.Exception
-import Control.Monad
-import System.Mem.Weak
+import Control.Exception (BlockedIndefinitelyOnSTM(..), bracket, handle, finally)
+import Control.Monad (when, forM_)
+import System.Mem.Weak (deRefWeak)
+
+import Utils.Async (withAsyncThrow)
 
 data OnDemand a = OnDemand (Async ()) (TMVar a) (TVar Int)
 
 with :: OnDemand a -> (a -> IO b) -> IO b
 with (OnDemand t var refs) f =
-  withAsync (bracket acquire release f) $ \action -> do
-    r <- waitEither t action
-    case r of
-      Left () -> wait action
-      Right v -> return v
+  withAsyncThrow (wait t) $ bracket acquire release f
   where
   acquire = do
     atomically $ modifyTVar refs succ

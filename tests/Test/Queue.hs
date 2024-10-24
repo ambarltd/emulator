@@ -2,7 +2,7 @@ module Test.Queue (testQueues, withFileTopic) where
 
 import Prelude hiding (read)
 
-import Control.Concurrent.Async (async, wait, concurrently, withAsync)
+import Control.Concurrent.Async (async, wait, concurrently)
 import Control.Exception (fromException)
 import Control.Monad (replicateM, forM_, replicateM_)
 import Data.ByteString (ByteString)
@@ -28,8 +28,6 @@ import Test.Hspec
   )
 import Foreign.Marshal.Utils (withMany)
 
-import Utils.Some (Some(..))
-import Utils.Delay (delay, millis)
 import qualified Queue
 import Queue (TopicName(..), PartitionCount(..))
 import Queue.Topic
@@ -44,6 +42,9 @@ import qualified Queue.Topic as T
 import Queue.Partition (Partition, Position(..), Record(..))
 import qualified Queue.Partition as P
 import qualified Queue.Partition.File as FilePartition
+import Utils.Async (withAsyncThrow)
+import Utils.Some (Some(..))
+import Utils.Delay (delay, millis)
 
 testQueues :: Spec
 testQueues = do
@@ -384,7 +385,7 @@ testPartition with = do
           write' =
             traverse (P.write partition) selected
 
-      (left, right) <- withAsync write' $ \_ -> concurrently read' read'
+      (left, right) <- withAsyncThrow write' (concurrently read' read')
       left `shouldBe` right
       left `shouldBe` selected
 

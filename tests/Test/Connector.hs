@@ -4,7 +4,7 @@ module Test.Connector
   ) where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
-import Control.Concurrent.Async (race, withAsync, wait, mapConcurrently)
+import Control.Concurrent.Async (mapConcurrently)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LB
 import Data.List (isInfixOf, sort)
@@ -42,6 +42,8 @@ import qualified Queue.Topic as Topic
 import Test.Queue (withFileTopic)
 import Test.Utils.OnDemand (OnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
+
+import Utils.Async (withAsyncThrow)
 
 testConnectors :: OnDemand PostgresCreds -> Spec
 testConnectors creds = do
@@ -101,7 +103,7 @@ testPostgreSQL p = do
       with (PartitionCount 1) $ \conn table topic connect -> do
         let count = 10
         insert conn table (take count $ head mocks)
-        withAsync_ connect $
+        withAsyncThrow connect $
           timeout_ (seconds 2) $
           Topic.withConsumer topic group $ \consumer -> do
           es <- replicateM count $ readEvent consumer
@@ -111,7 +113,7 @@ testPostgreSQL p = do
       with (PartitionCount 1) $ \conn table topic connect -> do
         let count = 10_000
         insert conn table (take count $ head mocks)
-        withAsync_ connect $ timeout_ (seconds 2) $
+        withAsyncThrow connect $ timeout_ (seconds 2) $
           Topic.withConsumer topic group $ \consumer -> do
           es <- replicateM count $ readEvent consumer
           length es `shouldBe` count
@@ -120,9 +122,9 @@ testPostgreSQL p = do
       with (PartitionCount 1) $ \conn table topic connect -> do
         let count = 10
             write = insert conn table (take count $ head mocks)
-        withAsync_ connect $ timeout_ (seconds 1) $
+        withAsyncThrow connect $ timeout_ (seconds 1) $
           Topic.withConsumer topic group $ \consumer ->
-          withAsync_ write $ do
+          withAsyncThrow write $ do
           es <- replicateM count $ readEvent consumer
           length es `shouldBe` count
 
@@ -133,10 +135,10 @@ testPostgreSQL p = do
             write = mapConcurrently id
               [ insert conn table (take count $ mocks !! partition)
               | partition <- [1..partitions] ]
-        withAsync_ connect $ timeout_ (seconds 1) $
+        withAsyncThrow connect $ timeout_ (seconds 1) $
           Topic.withConsumer topic group $ \consumer -> do
           -- write and consume concurrently
-          withAsync_ write $ do
+          withAsyncThrow write $ do
             es <- replicateM (count * partitions) $ readEvent consumer
             let byAggregateId = Map.toList $ Map.fromListWith (flip (++))
                     [ (e_aggregate_id, [e_sequence_number])
@@ -173,13 +175,6 @@ timeout_ time act = do
   case r of
     Nothing -> error "timed out"
     Just v -> return v
-
--- version of withAsync which throws if left throws
-withAsync_ :: IO a -> IO b -> IO b
-withAsync_ left right =
-  withAsync right $ \r -> do
-    out <- race (do _ <- left; wait r) (wait r)
-    return $ either id id out
 
 mkConfig :: PostgresCreds -> TableName -> ConnectorPostgres.ConnectorConfig
 mkConfig PostgresCreds{..} table = ConnectorConfig
