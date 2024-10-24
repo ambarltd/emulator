@@ -51,6 +51,7 @@ library lite-lib
         Queue.Partition
         Queue.Partition.File
         Queue.Partition.STMReader
+        Utils.Async
         Utils.Delay
         Utils.STM
         Utils.Some
