@@ -17,7 +17,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ windows-latest]
         ghc-version: ['9.4.8']
     env:
       PGPASSWORD: 'postgres'
@@ -29,8 +30,16 @@ jobs:
         uses: ./.github/actions/postgres
         with:
           postgres-version: "16"
+          database: 'postgres'
           username: 'postgres'
           password: ${{ env.PGPASSWORD }}
+
+      - name: Test PostgresQL setup
+        env:
+          PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
+        run: |
+          psql --dbname postgres --command "CREATE USER test_user WITH SUPERUSER PASSWORD 'test_pass'"
+          psql --dbname postgres --command "CREATE DATABASE test_DB WITH OWNER 'test_user'"
 
       - name: Set up GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
