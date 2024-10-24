@@ -9,12 +9,13 @@ import Test.Hspec
 import Test.Hspec.Expectations.Contrib (annotate)
 
 import Control.Concurrent.Async (poll)
-import Control.Concurrent
 import Control.Concurrent.STM (newTVarIO, atomically, readTVarIO, modifyTVar)
 import Control.Exception (bracket)
 import Data.Maybe (isJust)
 import qualified Test.Utils.OnDemand as OnDemand
 import System.Mem (performMajorGC)
+
+import Utils.Delay (delay, millis)
 
 testUtils :: Spec
 testUtils = do
@@ -86,7 +87,7 @@ collectGarbage = do
   -- once we move to ghc-9.10 we can use `performBlockingMajorGC`
   -- and do away with the threadDelay.
   performMajorGC
-  threadDelay 10_000
+  delay (millis 10)
 
 type F a =
   (forall b. (() -> IO b) -> IO b)
