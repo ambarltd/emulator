@@ -109,14 +109,6 @@ testPostgreSQL p = do
     it "retrieves events added after initial snapshot" $ () `shouldBe` ()
     it "maintains ordering" $ () `shouldBe` ()
   where
-  readEvent :: Topic.Consumer -> IO (Event, Topic.Meta)
-  readEvent consumer = do
-    result <- Topic.read consumer
-    (bs, meta) <- either (throwIO . ErrorCall . show) return result
-    case Aeson.eitherDecode $ LB.fromStrict bs of
-      Left err -> throwIO $ ErrorCall $ "Event decoding error: " <> show err
-      Right val -> return (val, meta)
-
   with :: (P.Connection -> TableName -> Topic -> IO Void -> IO a) -> IO a
   with f =
     OnDemand.with p $ \creds ->                                           -- load db
@@ -128,6 +120,14 @@ testPostgreSQL p = do
     f conn table topic connect
 
   seconds n = n * 1_000_000 -- one second in microseconds
+
+readEvent :: Topic.Consumer -> IO (Event, Topic.Meta)
+readEvent consumer = do
+  result <- Topic.read consumer
+  (bs, meta) <- either (throwIO . ErrorCall . show) return result
+  case Aeson.eitherDecode $ LB.fromStrict bs of
+    Left err -> throwIO $ ErrorCall $ "Event decoding error: " <> show err
+    Right val -> return (val, meta)
 
 -- version of timeout that throws on timeout
 timeout_ :: Int -> IO a -> IO a

@@ -169,6 +169,8 @@ connect producer config@ConnectorConfig{..} =
 partitioner :: Partitioner Row
 partitioner = hashPartitioner partitioningValue
 
+-- | A rows gets saved in the database as a JSON object with
+-- the columns specified in the config file as keys.
 encoder :: ConnectorConfig -> Encoder Row
 encoder config row =
   LB.toStrict $ Aeson.encode $ Map.fromList $ zip (columns config) row
