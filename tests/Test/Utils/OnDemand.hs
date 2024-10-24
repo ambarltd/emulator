@@ -66,6 +66,7 @@ lazy_ init = mdo
     count <- readTVar refs
     return $ when (count == 0) (cancel t)
   t <- async (initialise wvar alive refs)
+  link t -- make sure init exceptions are thrown in the main thread.
   return (t, OnDemand var refs)
   where
   initialise wvar aliveVar refsVar = do

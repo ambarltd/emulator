@@ -126,7 +126,7 @@ testPostgreSQL p = do
           es <- replicateM count $ readEvent consumer
           length es `shouldBe` count
 
-    it "maintains ordering" $ do
+    it "maintains ordering through parallel writes" $ do
       let partitions = 5
       with (PartitionCount partitions) $ \conn table topic connect -> do
         let count = 1_000
