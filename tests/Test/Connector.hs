@@ -288,8 +288,11 @@ withPostgresSQL f = bracket setup teardown f
           , p_host =  P.connectHost P.defaultConnectInfo
           , p_port = P.connectPort P.defaultConnectInfo
           }
+    putStrLn "creating user..."
     createUser p_username
+    putStrLn "creating database..."
     createDatabase p_username p_database
+    putStrLn "database ready."
     return creds
 
   teardown PostgresCreds{..} = do
