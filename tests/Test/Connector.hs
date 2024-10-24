@@ -284,12 +284,12 @@ withPostgresSQL f = bracket setup teardown f
     let creds@PostgresCreds{..} = PostgresCreds
           { p_database = "db_test"
           , p_username = "test_user"
-          , p_password = ""
+          , p_password = "test_pass"
           , p_host =  P.connectHost P.defaultConnectInfo
           , p_port = P.connectPort P.defaultConnectInfo
           }
     putStrLn "creating user..."
-    createUser p_username
+    createUser p_username p_password
     putStrLn "creating database..."
     createDatabase p_username p_database
     putStrLn "database ready."
@@ -299,22 +299,28 @@ withPostgresSQL f = bracket setup teardown f
     deleteDatabase p_database
     dropUser p_username
 
-  createUser name = do
-    (code, _, err) <- readProcessWithExitCode "createuser" ["--superuser", name] ""
-    case code of
-      ExitSuccess -> return ()
-      ExitFailure 1 | "already exists" `isInfixOf` err -> return ()
-      _ -> throwIO $ ErrorCall $ "Unable to create PostgreSQL user: " <> err
-
-  createDatabase user name = do
-    (code, _, err) <- readProcessWithExitCode "createdb"
-      [ "--owner", user
-      , name
+  psql cmd = do
+    (code, _, err) <- readProcessWithExitCode "psql"
+      [ "--dbname", "postgres"
+      , "--command", cmd
       ] ""
     case code of
-      ExitSuccess -> return ()
-      ExitFailure 1 | "already exists" `isInfixOf` err -> return ()
-      _ -> throwIO $ ErrorCall $ "Unable to create PostgreSQL database: " <> err
+      ExitSuccess -> return Nothing
+      ExitFailure _ -> return (Just err)
+
+  createUser name pass = do
+    r <- psql $ unwords [ "CREATE USER", name, "WITH SUPERUSER PASSWORD '" <> pass <> "'"]
+    forM_ r $ \err ->
+      if "already exists" `isInfixOf` err
+      then return ()
+      else throwIO $ ErrorCall $ "Unable to create PostgreSQL user: " <> err
+
+  createDatabase user name = do
+    r <- psql $ unwords ["CREATE DATABASE", name, "WITH OWNER '" <> user <> "'"]
+    forM_ r $ \err ->
+      if "already exists" `isInfixOf` err
+      then return ()
+      else throwIO $ ErrorCall $ "Unable to create PostgreSQL database: " <> err
 
   dropUser name = do
     (code, _, err) <- readProcessWithExitCode "dropuser" [name] ""
