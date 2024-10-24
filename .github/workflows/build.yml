@@ -18,6 +18,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         ghc-version: ['9.4.8']
+        pg-password: 'postgres'
 
     steps:
       - uses: actions/checkout@v4
@@ -28,14 +29,15 @@ jobs:
         with:
           postgres-version: "16"
           username: 'postgres'
-          password: ''
+          password: ${{ matrix.pg-password }}
 
       - name: Test PostgresQL setup
         env:
           PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
+          PGPASSWORD: ${{ matrix.pg-password }}
         run: |
-          createuser --superuser --no-password user_test
-          createdb --owner user_test --no-password db_test
+          createuser --superuser user_test
+          createdb --owner user_test db_test
 
       - name: Set up GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
