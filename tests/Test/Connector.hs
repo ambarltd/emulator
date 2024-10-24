@@ -4,16 +4,17 @@ module Test.Connector
   ) where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
-import Control.Concurrent.Async (race, withAsync, wait)
+import Control.Concurrent.Async (race, withAsync, wait, mapConcurrently)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LB
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, sort)
+import qualified Data.Map.Strict as Map
 import Data.String (fromString)
 import qualified Data.Text as Text
 import Data.Void (Void)
 import Data.Word (Word16)
 import Control.Exception (bracket, throwIO, ErrorCall(..))
-import Control.Monad (void, replicateM)
+import Control.Monad (void, replicateM, forM_)
 import System.Exit (ExitCode(..))
 import System.Process (readProcessWithExitCode)
 import System.Timeout (timeout)
@@ -23,6 +24,7 @@ import Test.Hspec
   , describe
   , shouldBe
   )
+import Test.Hspec.Expectations.Contrib (annotate)
 import qualified Database.PostgreSQL.Simple as P
 import GHC.Generics
 import System.IO.Unsafe (unsafePerformIO)
@@ -90,13 +92,13 @@ testPostgreSQL p = do
   describe "PostgreSQL" $ do
     -- checks that our tests can connect to postgres
     it "connects" $
-      with $ \conn table _ _ -> do
+      with (PartitionCount 1) $ \conn table _ _ -> do
         insert conn table (take 10 $ head mocks)
         rs <- P.query_ @Event conn (fromString $ "SELECT * FROM " <> table)
         length rs `shouldBe` 10
 
     it "retrieves all events already in the db" $
-      with $ \conn table topic connect -> do
+      with (PartitionCount 1) $ \conn table topic connect -> do
         let count = 10
         insert conn table (take count $ head mocks)
         withAsync_ connect $
@@ -105,15 +107,49 @@ testPostgreSQL p = do
           es <- replicateM count $ readEvent consumer
           length es `shouldBe` count
 
-    it "can retrieve a large number of events" $ () `shouldBe` ()
-    it "retrieves events added after initial snapshot" $ () `shouldBe` ()
-    it "maintains ordering" $ () `shouldBe` ()
+    it "can retrieve a large number of events" $
+      with (PartitionCount 1) $ \conn table topic connect -> do
+        let count = 10_000
+        insert conn table (take count $ head mocks)
+        withAsync_ connect $ timeout_ (seconds 2) $
+          Topic.withConsumer topic group $ \consumer -> do
+          es <- replicateM count $ readEvent consumer
+          length es `shouldBe` count
+
+    it "retrieves events added after initial snapshot" $
+      with (PartitionCount 1) $ \conn table topic connect -> do
+        let count = 10
+        withAsync_ connect $ timeout_ (seconds 1) $
+          Topic.withConsumer topic group $ \consumer ->
+          withAsync_ (insert conn table (take count $ head mocks)) $ do
+          es <- replicateM count $ readEvent consumer
+          length es `shouldBe` count
+
+    it "maintains ordering" $
+      let partitions = 5 in
+      with (PartitionCount partitions) $ \conn table topic connect -> do
+        withAsync_ connect $ timeout_ (seconds 1) $
+          Topic.withConsumer topic group $ \consumer -> do
+          let count = 1_000
+              write = mapConcurrently id
+                [ insert conn table (take count $ mocks !! partition)
+                | partition <- [1..partitions]
+                ]
+          withAsync_ write $ do
+            es <- replicateM (count * partitions) $ readEvent consumer
+            let byAggregateId = Map.toList $ Map.fromListWith (flip (++))
+                  [ (e_aggregate_id, [e_sequence_number])
+                  | (Event{..}, _) <- es
+                  ]
+            forM_ byAggregateId $ \(a_id, seqs) ->
+              annotate ("ordered (" <> show a_id <> ")") $
+                sort seqs `shouldBe` seqs
   where
-  with :: (P.Connection -> TableName -> Topic -> IO Void -> IO a) -> IO a
-  with f =
+  with :: PartitionCount -> (P.Connection -> TableName -> Topic -> IO Void -> IO a) -> IO a
+  with partitions f =
     OnDemand.with p $ \creds ->                                           -- load db
     withEventsTable creds $ \conn table ->                                -- create events table
-    withFileTopic (PartitionCount 1) $ \topic ->                          -- create topic
+    withFileTopic partitions $ \topic ->                                  -- create topic
     let config = mkConfig creds table in
     Topic.withProducer topic partitioner (encoder config) $ \producer ->  -- create topic producer
     let connect = ConnectorPostgres.connect producer config in            -- setup connector

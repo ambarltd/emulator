@@ -92,6 +92,7 @@ test-suite lite-tests
         , aeson
         , async
         , bytestring
+        , containers
         , directory
         , filepath
         , hspec
