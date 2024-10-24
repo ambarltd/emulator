@@ -9,6 +9,9 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PGPASSWORD: 'postgres'
+
 jobs:
   build:
     name: GHC ${{ matrix.ghc-version }} on ${{ matrix.os }}
@@ -18,8 +21,6 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         ghc-version: ['9.4.8']
-        pg-password: 'postgres'
-
     steps:
       - uses: actions/checkout@v4
 
@@ -29,12 +30,12 @@ jobs:
         with:
           postgres-version: "16"
           username: 'postgres'
-          password: ${{ matrix.pg-password }}
+          password: ${{ env.PGPASSWORD }}
 
       - name: Test PostgresQL setup
         env:
           PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
-          PGPASSWORD: ${{ matrix.pg-password }}
+          PGPASSWORD: ${{ env.PGPASSWORD }}
         run: |
           createuser --superuser user_test
           createdb --owner user_test db_test
