@@ -24,7 +24,7 @@ jobs:
 
       - name: Setup PostgreSQL
         id: postgres-setup
-        uses: ikalnytskyi/action-setup-postgres@v6
+        uses: ./.github/actions/postgres
         with:
           postgres-version: "116"
           username: 'postgres'
