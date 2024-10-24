@@ -12,18 +12,22 @@ across invocations one would have to wrap all invocations in a single
 `withResource`, but that would cause the resource to be initialised regardless
 of whether it is used or not.
 
-This module allows on-demand initialisation and instance sharing by using the
-following pattern:
+This module allows on-demand initialisation and instance sharing.
+The resource is released when it can't be accessed any longer.
+
+The pattern is:
 
   -- nothing happens
-  OnDemand.lazy withResource $ \onDemand -> do
+  onDemand <- OnDemand.lazy withResource
 
-    -- instance is initialised
-    OnDemand.with onDemand $ \resource -> ...
+  -- instance is initialised
+  OnDemand.with onDemand $ \resource -> ...
 
-    -- instance is reused
-    OnDemand.with onDemand $ \resource -> ...
-    OnDemand.with onDemand $ \resource -> ...
+  -- instance is reused
+  OnDemand.with onDemand $ \resource -> ...
+  OnDemand.with onDemand $ \resource -> ...
+
+  -- instance is cleared
 
 -}
 module Test.Utils.OnDemand
