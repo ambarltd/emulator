@@ -27,6 +27,11 @@ jobs:
         with:
           postgresql-version: 16
 
+      - name: Spin-up PostgreSQL server
+        uses: harmon758/postgresql-action@v1
+        with:
+          postgresql version: '16'
+
       - name: Set up GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
         id: setup
