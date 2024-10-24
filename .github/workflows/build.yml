@@ -70,4 +70,4 @@ jobs:
         run: cabal build all
 
       - name: Run tests
-        run: ./utils.sh test
+        run: cabal run lite-tests +RTS -N
