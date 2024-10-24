@@ -26,7 +26,7 @@ jobs:
         id: postgres-setup
         uses: ./.github/actions/postgres
         with:
-          postgres-version: "116"
+          postgres-version: "16"
           username: 'postgres'
           password: ''
 
