@@ -59,7 +59,7 @@ data FilePartition = FilePartition
   , p_records:: FilePath
   , p_index :: FilePath
   , p_lock :: FilePath
-  , p_handles :: MVar (Maybe (FD.FD, FD.FD))
+  , p_handles :: MVar (Maybe (FD, FD))
       -- ^ write handles (records, index)
       -- is Nothing when file partition is closed
   , p_info :: TVar (Count, Bytes) -- ^ record count and size
