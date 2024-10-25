@@ -1,6 +1,6 @@
 module Main where
 
-import Test.Hspec (hspec)
+import Test.Hspec (hspec, parallel)
 
 import Test.Queue (testQueues)
 import Test.Connector (testConnectors, withPostgresSQL)
@@ -20,7 +20,7 @@ Example: match on test description
 main :: IO ()
 main = do
   pcreds <- OnDemand.lazy withPostgresSQL
-  hspec $ do
+  hspec $ parallel $ do
     -- unit tests use the projector library
     testQueues
     testConnectors pcreds
