@@ -2,7 +2,7 @@ module Test.Queue (testQueues, withFileTopic) where
 
 import Prelude hiding (read)
 
-import Control.Concurrent.Async (async, wait, concurrently)
+import Control.Concurrent.Async (concurrently)
 import Control.Exception (fromException)
 import Control.Monad (replicateM, forM_, replicateM_)
 import Data.ByteString (ByteString)
@@ -366,11 +366,9 @@ testPartition with = do
             P.write partition one
             P.write partition two
 
-      r <- async read'
-      _ <- async $ do
-        delay (millis 5)
-        write'
-      (one_, two_) <- wait r
+      ((one_, two_), _) <- concurrently read' $ do
+          delay (millis 5)
+          write'
       one_ `shouldBe` one
       two_ `shouldBe` two
 
