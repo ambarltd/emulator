@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup PostgreSQL
+      - name: Setup - PostgreSQL
         id: postgres-setup
         uses: ikalnytskyi/action-setup-postgres@v7
         with:
@@ -33,7 +33,7 @@ jobs:
           username: 'postgres'
           password: ${{ env.PGPASSWORD }}
 
-      - name: Set up GHC ${{ matrix.ghc-version }}
+      - name: Setup - GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
         id: setup
         with:
@@ -42,13 +42,13 @@ jobs:
           cabal-version: 'latest'
           cabal-update: true
 
-      - name: Configure the build
+      - name: Build - Configure
         run: |
           cabal configure --enable-tests --enable-benchmarks --disable-documentation
           cabal build all --dry-run
         # The last step generates dist-newstyle/cache/plan.json for the cache key.
 
-      - name: Restore cached dependencies
+      - name: Build - Restore cached dependencies
         uses: actions/cache/restore@v4
         id: cache
         env:
@@ -58,13 +58,13 @@ jobs:
           key: ${{ env.key }}-plan-${{ hashFiles('**/plan.json') }}
           restore-keys: ${{ env.key }}-
 
-      - name: Install dependencies
+      - name: Build - Install dependencies
         # If we had an exact cache hit, the dependencies will be up to date.
         if: steps.cache.outputs.cache-hit != 'true'
         run: cabal build all --only-dependencies
 
       # Cache dependencies already here, so that we do not have to rebuild them should the subsequent steps fail.
-      - name: Save cached dependencies
+      - name: Build - Save dependencies to cache
         uses: actions/cache/save@v4
         # If we had an exact cache hit, trying to save the cache would error because of key clash.
         if: steps.cache.outputs.cache-hit != 'true'
