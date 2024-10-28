@@ -7,7 +7,7 @@ author:             Ambar Cloud LTD.
 maintainer:         enginnering@ambar.cloud
 
 common common
-    default-language: Haskell2010
+    default-language: GHC2021
     default-extensions:
         BangPatterns
         DeriveAnyClass
@@ -52,6 +52,8 @@ library lite-lib
         Ambar.Lite.Queue.Partition
         Ambar.Lite.Queue.Partition.File
         Ambar.Lite.Queue.Partition.STMReader
+        Ambar.Transport
+        Ambar.Transport.Http
         Utils.Async
         Utils.Delay
         Utils.STM
@@ -64,11 +66,15 @@ library lite-lib
         , base64
         , bytestring
         , binary
+        , casing
         , containers
         , directory
         , extra
         , filepath
         , hashable
+        , http-client
+        , http-client-tls
+        , http-types
         , postgresql-simple
         , prettyprinter
         , random
