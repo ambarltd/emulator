@@ -28,9 +28,9 @@ import Test.Hspec
   )
 import Foreign.Marshal.Utils (withMany)
 
-import qualified Lite.Queue as Queue
-import Lite.Queue (TopicName(..), PartitionCount(..))
-import Lite.Queue.Topic
+import qualified Ambar.Lite.Queue as Queue
+import Ambar.Lite.Queue (TopicName(..), PartitionCount(..))
+import Ambar.Lite.Queue.Topic
   ( Topic
   , Meta(..)
   , ConsumerGroupName(..)
@@ -38,10 +38,10 @@ import Lite.Queue.Topic
   , ReadError(..)
   , withTopic
   )
-import qualified Lite.Queue.Topic as T
-import Lite.Queue.Partition (Partition, Position(..), Record(..))
-import qualified Lite.Queue.Partition as P
-import qualified Lite.Queue.Partition.File as FilePartition
+import qualified Ambar.Lite.Queue.Topic as T
+import Ambar.Lite.Queue.Partition (Partition, Position(..), Record(..))
+import qualified Ambar.Lite.Queue.Partition as P
+import qualified Ambar.Lite.Queue.Partition.File as FilePartition
 import Utils.Async (withAsyncThrow)
 import Utils.Some (Some(..))
 import Utils.Delay (delay, millis)

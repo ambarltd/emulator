@@ -1,4 +1,4 @@
-module Lite.Queue.Partition.File
+module Ambar.Lite.Queue.Partition.File
   ( FilePartition
   , FileReader
   , withFilePartition
@@ -41,7 +41,7 @@ import System.IO
 import System.Directory (doesFileExist, getFileSize, removeFile)
 import System.FilePath ((</>))
 
-import Lite.Queue.Partition
+import Ambar.Lite.Queue.Partition
 import Utils.STM (atomicallyNamed)
 
 -- | A file-backed Partition for unformatted JSON entries.

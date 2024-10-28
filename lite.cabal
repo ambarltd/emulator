@@ -44,14 +44,14 @@ library lite-lib
     ghc-options: -Wall -Werror -fprof-auto
     hs-source-dirs: src
     exposed-modules:
-        Lite.Connector.Poll
-        Lite.Connector.Postgres
-        Lite.Projector
-        Lite.Queue
-        Lite.Queue.Topic
-        Lite.Queue.Partition
-        Lite.Queue.Partition.File
-        Lite.Queue.Partition.STMReader
+        Ambar.Lite.Connector.Poll
+        Ambar.Lite.Connector.Postgres
+        Ambar.Lite.Projector
+        Ambar.Lite.Queue
+        Ambar.Lite.Queue.Topic
+        Ambar.Lite.Queue.Partition
+        Ambar.Lite.Queue.Partition.File
+        Ambar.Lite.Queue.Partition.STMReader
         Utils.Async
         Utils.Delay
         Utils.STM

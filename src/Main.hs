@@ -14,7 +14,7 @@ cliOptions :: O.ParserInfo Options
 cliOptions = O.info (O.helper <*> parser) $ mconcat
   [ O.fullDesc
   , O.headerDoc $ Just $ OP.vcat
-    [ "Ambar Lite"
+    [ "Ambar Ambar.Lite"
     , ""
     , OP.indent 2 $ OP.vcat
       [ "A local version of Ambar <https://ambar.cloud>"

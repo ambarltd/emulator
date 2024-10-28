@@ -1,4 +1,4 @@
-module Lite.Connector.Poll
+module Ambar.Lite.Connector.Poll
    ( Boundaries(..)
    , PollingConnector(..)
    , connect
@@ -14,7 +14,7 @@ import Data.Void (Void)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 
-import qualified Lite.Queue.Topic as Topic
+import qualified Ambar.Lite.Queue.Topic as Topic
 import Utils.Delay (Duration, delay, fromDiffTime, toDiffTime)
 
 -- | List of ID ranges to exclude

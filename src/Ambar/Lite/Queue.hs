@@ -1,4 +1,4 @@
-module Lite.Queue
+module Ambar.Lite.Queue
   ( Queue
   , TopicName(..)
   , OpenQueueError(..)
@@ -27,14 +27,14 @@ import Data.Void (Void)
 import System.Directory (doesFileExist, removeFile, createDirectoryIfMissing)
 import System.FilePath ((</>))
 
-import Lite.Queue.Topic
+import Ambar.Lite.Queue.Topic
   ( Topic
   , TopicState(..)
   , PartitionNumber(..)
   )
-import qualified Lite.Queue.Topic as T
-import qualified Lite.Queue.Partition.File as FilePartition
-import Lite.Queue.Partition.File (FilePartition)
+import qualified Ambar.Lite.Queue.Topic as T
+import qualified Ambar.Lite.Queue.Partition.File as FilePartition
+import Ambar.Lite.Queue.Partition.File (FilePartition)
 import Utils.Delay (every, seconds)
 import Utils.Some (Some(..))
 

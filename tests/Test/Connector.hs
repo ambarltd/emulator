@@ -29,16 +29,16 @@ import qualified Database.PostgreSQL.Simple as P
 import GHC.Generics
 import System.IO.Unsafe (unsafePerformIO)
 
-import Lite.Connector.Poll
+import Ambar.Lite.Connector.Poll
   ( BoundaryTracker(..)
   , Boundaries(..)
   , rangeTracker
   )
-import Lite.Connector.Postgres (ConnectorConfig(..), partitioner, encoder)
-import qualified Lite.Connector.Postgres as ConnectorPostgres
-import Lite.Queue (PartitionCount(..))
-import Lite.Queue.Topic (Topic)
-import qualified Lite.Queue.Topic as Topic
+import Ambar.Lite.Connector.Postgres (ConnectorConfig(..), partitioner, encoder)
+import qualified Ambar.Lite.Connector.Postgres as ConnectorPostgres
+import Ambar.Lite.Queue (PartitionCount(..))
+import Ambar.Lite.Queue.Topic (Topic)
+import qualified Ambar.Lite.Queue.Topic as Topic
 import Test.Queue (withFileTopic)
 import Test.Utils.OnDemand (OnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
