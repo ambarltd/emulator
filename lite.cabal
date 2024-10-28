@@ -46,6 +46,7 @@ library lite-lib
     exposed-modules:
         Connector.Poll
         Connector.Postgres
+        Projector
         Queue
         Queue.Topic
         Queue.Partition
