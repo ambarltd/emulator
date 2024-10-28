@@ -9,6 +9,7 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+
 jobs:
   build:
     name: GHC ${{ matrix.ghc-version }} on ${{ matrix.os }}
@@ -18,11 +19,21 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         ghc-version: ['9.4.8']
-
+    env:
+      PGPASSWORD: 'postgres'
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up GHC ${{ matrix.ghc-version }}
+      - name: Setup - PostgreSQL
+        id: postgres-setup
+        uses: ikalnytskyi/action-setup-postgres@v7
+        with:
+          postgres-version: "16"
+          database: 'postgres'
+          username: 'postgres'
+          password: ${{ env.PGPASSWORD }}
+
+      - name: Setup - GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
         id: setup
         with:
@@ -31,13 +42,13 @@ jobs:
           cabal-version: 'latest'
           cabal-update: true
 
-      - name: Configure the build
+      - name: Build - Configure
         run: |
           cabal configure --enable-tests --enable-benchmarks --disable-documentation
           cabal build all --dry-run
         # The last step generates dist-newstyle/cache/plan.json for the cache key.
 
-      - name: Restore cached dependencies
+      - name: Build - Restore cached dependencies
         uses: actions/cache/restore@v4
         id: cache
         env:
@@ -47,13 +58,13 @@ jobs:
           key: ${{ env.key }}-plan-${{ hashFiles('**/plan.json') }}
           restore-keys: ${{ env.key }}-
 
-      - name: Install dependencies
+      - name: Build - Install dependencies
         # If we had an exact cache hit, the dependencies will be up to date.
         if: steps.cache.outputs.cache-hit != 'true'
         run: cabal build all --only-dependencies
 
       # Cache dependencies already here, so that we do not have to rebuild them should the subsequent steps fail.
-      - name: Save cached dependencies
+      - name: Build - Save dependencies to cache
         uses: actions/cache/save@v4
         # If we had an exact cache hit, trying to save the cache would error because of key clash.
         if: steps.cache.outputs.cache-hit != 'true'
@@ -64,5 +75,16 @@ jobs:
       - name: Build
         run: cabal build all
 
-      - name: Run tests
-        run: ./utils.sh test
+      - name: Test
+        env:
+          PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
+        run: cabal run lite-tests -- +RTS -N
+
+      # We run this only when a PR is merged so we can see how things are performing
+      # on the GH actions machines.
+      - name: Benchmark
+        if: github.event.pull_request.merged == true
+        env:
+          PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
+        run: cabal run lite-tests -- +RTS -N
+

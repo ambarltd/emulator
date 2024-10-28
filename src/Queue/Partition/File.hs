@@ -25,7 +25,6 @@ import qualified Data.ByteString.Char8 as Char8
 import qualified Data.ByteString.Lazy as LB
 import Data.Coerce (coerce)
 import Data.Word (Word64)
-import GHC.IO.Handle (hLock, LockMode(..))
 import GHC.IO.FD (FD)
 import GHC.Stack (HasCallStack)
 import qualified GHC.IO.FD as FD
@@ -59,7 +58,7 @@ data FilePartition = FilePartition
   , p_records:: FilePath
   , p_index :: FilePath
   , p_lock :: FilePath
-  , p_handles :: MVar (Maybe (FD.FD, FD.FD))
+  , p_handles :: MVar (Maybe (FD, FD))
       -- ^ write handles (records, index)
       -- is Nothing when file partition is closed
   , p_info :: TVar (Count, Bytes) -- ^ record count and size
@@ -213,7 +212,6 @@ instance Partition FilePartition where
   openReader p@(FilePartition{..}) = do
     (len, _) <- STM.readTVarIO p_info
     handle <- openFile p_records ReadMode
-    hLock handle SharedLock
     next <- STM.newTVarIO 0
     var <- STM.newTMVarIO $ ReaderInfo
       { r_next = next
@@ -314,19 +312,18 @@ instance Partition FilePartition where
           newSize = entrySize + partitionSize
           newCount = count + 1
 
-      writeNonBlocking fd_records entry
-      writeNonBlocking fd_index entryByteOffset
+      writeFD fd_records entry
+      writeFD fd_index entryByteOffset
       atomicallyNamed "file.write" $ STM.writeTVar p_info (Count newCount, Bytes newSize)
 
-writeNonBlocking :: HasCallStack => FD -> ByteString -> IO ()
-writeNonBlocking fd bs =
+writeFD :: HasCallStack => FD -> ByteString -> IO ()
+writeFD fd bs =
   void $ B.unsafeUseAsCStringLen bs $ \(ptr, len) ->
-  FD.writeNonBlocking fd (coerce ptr) 0 (fromIntegral len)
+  FD.write fd (coerce ptr) 0 (fromIntegral len)
 
 readIndexEntry :: HasCallStack => FilePath -> Offset -> IO Bytes
 readIndexEntry indexPath (Offset offset)  = do
   withFile indexPath ReadMode $ \handle -> do
-    hLock handle SharedLock
     hSeek handle AbsoluteSeek $ fromIntegral $ offset * _WORD64_SIZE
     bytes <- B.hGet handle _WORD64_SIZE
     byteOffset <- case Binary.decodeOrFail $ LB.fromStrict bytes of

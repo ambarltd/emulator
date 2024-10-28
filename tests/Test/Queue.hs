@@ -1,8 +1,8 @@
-module Test.Queue (testQueues) where
+module Test.Queue (testQueues, withFileTopic) where
 
 import Prelude hiding (read)
 
-import Control.Concurrent.Async (async, wait, concurrently)
+import Control.Concurrent.Async (concurrently)
 import Control.Exception (fromException)
 import Control.Monad (replicateM, forM_, replicateM_)
 import Data.ByteString (ByteString)
@@ -28,8 +28,6 @@ import Test.Hspec
   )
 import Foreign.Marshal.Utils (withMany)
 
-import Utils.Some (Some(..))
-import Utils.Delay (delay, millis)
 import qualified Queue
 import Queue (TopicName(..), PartitionCount(..))
 import Queue.Topic
@@ -44,6 +42,9 @@ import qualified Queue.Topic as T
 import Queue.Partition (Partition, Position(..), Record(..))
 import qualified Queue.Partition as P
 import qualified Queue.Partition.File as FilePartition
+import Utils.Async (withAsyncThrow)
+import Utils.Some (Some(..))
+import Utils.Delay (delay, millis)
 
 testQueues :: Spec
 testQueues = do
@@ -57,17 +58,17 @@ testQueues = do
   withFilePartition path act =
     FilePartition.withFilePartition path "file-partition" act
 
-  withFileTopic :: PartitionCount -> (Topic -> IO a) -> IO a
-  withFileTopic (PartitionCount n) act =
-    withTempPath $ \path ->
-    withMany (f path) [0..n-1] $ \pinstances ->
-    withTopic
-      (HashMap.fromList $ zip [0..] pinstances)
-      mempty
-      act
-    where
-    f path pnumber g = do
-      FilePartition.withFilePartition path (show pnumber) (g . Some)
+withFileTopic :: PartitionCount -> (Topic -> IO a) -> IO a
+withFileTopic (PartitionCount n) act =
+  withTempPath $ \path ->
+  withMany (f path) [0..n-1] $ \pinstances ->
+  withTopic
+    (HashMap.fromList $ zip [0..] pinstances)
+    mempty
+    act
+  where
+  f path pnumber g = do
+    FilePartition.withFilePartition path (show pnumber) (g . Some)
 
 withTempPath :: (FilePath -> IO a) -> IO a
 withTempPath = withSystemTempDirectory "partition-XXXXX"
@@ -151,9 +152,6 @@ testQueue = do
   group = ConsumerGroupName "test-group"
 
   withProducer topic = T.withProducer topic (T.modPartitioner fst) (unRecord . snd)
-
-
-
 
 testTopic :: (forall b. PartitionCount -> (Topic -> IO b) -> IO b) -> Spec
 testTopic with = do
@@ -368,15 +366,13 @@ testPartition with = do
             P.write partition one
             P.write partition two
 
-      r <- async read'
-      _ <- async $ do
-        delay (millis 5)
-        write'
-      (one_, two_) <- wait r
+      ((one_, two_), _) <- concurrently read' $ do
+          delay (millis 5)
+          write'
       one_ `shouldBe` one
       two_ `shouldBe` two
 
-  it "reads concurrently" $
+  it "reads and writes concurrently" $
     withTempPath $ \path ->
     with path $ \partition -> do
       let len = 10
@@ -387,9 +383,7 @@ testPartition with = do
           write' =
             traverse (P.write partition) selected
 
-      r <- async $ concurrently read' read'
-      _ <- async write'
-      (left, right) <- wait r
+      (left, right) <- withAsyncThrow write' (concurrently read' read')
       left `shouldBe` right
       left `shouldBe` selected
 
