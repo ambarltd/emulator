@@ -15,12 +15,12 @@ import Foreign.Marshal.Utils (withMany)
 import System.IO.Temp (withSystemTempDirectory)
 import System.IO.Unsafe (unsafePerformIO)
 
-import qualified Ambar.Lite.Queue.Topic as T
-import Ambar.Lite.Queue.Topic (ConsumerGroupName(..), Topic)
-import Ambar.Lite.Queue.Partition (Record(..), Position(..))
-import qualified Ambar.Lite.Queue.Partition as P
-import Ambar.Lite.Queue.Partition.File (FilePartition)
-import qualified Ambar.Lite.Queue.Partition.File as F
+import qualified Ambar.Emulator.Queue.Topic as T
+import Ambar.Emulator.Queue.Topic (ConsumerGroupName(..), Topic)
+import Ambar.Emulator.Queue.Partition (Record(..), Position(..))
+import qualified Ambar.Emulator.Queue.Partition as P
+import Ambar.Emulator.Queue.Partition.File (FilePartition)
+import qualified Ambar.Emulator.Queue.Partition.File as F
 import Utils.Some (Some(..))
 
 main :: IO ()

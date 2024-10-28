@@ -1,5 +1,5 @@
 cabal-version:      2.4
-name:               lite
+name:               emulator
 version:            0.1.0.0
 synopsis:           Ambar in a box.
 description:        Connect your databases to multiple consumers with minimal configuration and no libraries needed.
@@ -17,31 +17,31 @@ common common
         TypeFamilyDependencies
         DeriveAnyClass
 
-executable lite
+executable emulator
     import: common
     ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
     main-is:          src/Main.hs
     other-modules:
     build-depends:
         base ^>=4.17.2.1
-        , lite-lib
+        , emulator-lib
         , prettyprinter
         , prettyprinter-ansi-terminal
         , optparse-applicative
 
-library lite-lib
+library emulator-lib
     import: common
     ghc-options: -Wall -Werror -fprof-auto
     hs-source-dirs: src
     exposed-modules:
-        Ambar.Lite.Connector.Poll
-        Ambar.Lite.Connector.Postgres
-        Ambar.Lite.Projector
-        Ambar.Lite.Queue
-        Ambar.Lite.Queue.Topic
-        Ambar.Lite.Queue.Partition
-        Ambar.Lite.Queue.Partition.File
-        Ambar.Lite.Queue.Partition.STMReader
+        Ambar.Emulator.Connector.Poll
+        Ambar.Emulator.Connector.Postgres
+        Ambar.Emulator.Projector
+        Ambar.Emulator.Queue
+        Ambar.Emulator.Queue.Topic
+        Ambar.Emulator.Queue.Partition
+        Ambar.Emulator.Queue.Partition.File
+        Ambar.Emulator.Queue.Partition.STMReader
         Ambar.Transport
         Ambar.Transport.Http
         Utils.Async
@@ -74,7 +74,7 @@ library lite-lib
         , time
         , unordered-containers
 
-test-suite lite-tests
+test-suite emulator-tests
     import: common
     ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
     hs-source-dirs: tests
@@ -87,7 +87,7 @@ test-suite lite-tests
     type:    exitcode-stdio-1.0
     build-depends:
         base ^>=4.17.2.1
-        , lite-lib
+        , emulator-lib
         , aeson
         , async
         , bytestring
@@ -105,14 +105,14 @@ test-suite lite-tests
         , text
         , unordered-containers
 
-benchmark lite-bench
+benchmark emulator-bench
   import: common
   ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
   type:    exitcode-stdio-1.0
   main-is: benchmarks/Benchmarks.hs
   build-depends:
         base ^>=4.17.2.1
-        , lite-lib
+        , emulator-lib
         , async
         , bytestring
         , criterion

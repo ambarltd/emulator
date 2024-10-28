@@ -1,49 +1,49 @@
 #! /bin/bash
 
 function build {
-  cabal build lite-lib -j "${@}"
+  cabal build emulator-lib -j "${@}"
 }
 
 function run {
-  cabal run lite -- "${@}"
+  cabal run emulator -- "${@}"
 }
 
 function test {
-  cabal run lite-tests -- "${@}"
+  cabal run emulator-tests -- "${@}"
 }
 
 function bench {
-  cabal run lite-bench -- "${@}"
+  cabal run emulator-bench -- "${@}"
 }
 
 # Save results of benchmarking
 function bench-save {
-  cabal build lite-bench
-  cabal run lite-bench -- "${@}" | tee ./benchmarks/benchmarks.log
+  cabal build emulator-bench
+  cabal run emulator-bench -- "${@}" | tee ./benchmarks/benchmarks.log
 }
 
 function typecheck {
   # Start fast type-checking of the library. (Everything but Main.hs)
   # Watches your files and type-checks on save
-  ghcid -c 'cabal v2-repl' lite-lib "${@}"
+  ghcid -c 'cabal v2-repl' emulator-lib "${@}"
 }
 
 function typecheck-executable {
   # Start fast type-checking of the executable. (Just Main.hs)
   # Watches your files and type-checks on save
-  ghcid -c 'cabal v2-repl' lite "${@}"
+  ghcid -c 'cabal v2-repl' emulator "${@}"
 }
 
 function typecheck-tests {
   # Start fast type-checking of the executable. (Just Main.hs)
   # Watches your files and type-checks on save
-  ghcid -c 'cabal v2-repl' lite-tests "${@}"
+  ghcid -c 'cabal v2-repl' emulator-tests "${@}"
 }
 
 function typecheck-bench {
   # Start fast type-checking of the executable. (Just Main.hs)
   # Watches your files and type-checks on save
-  ghcid -c 'cabal v2-repl' lite-bench "${@}"
+  ghcid -c 'cabal v2-repl' emulator-bench "${@}"
 }
 
 # If the first argument is a function run it.

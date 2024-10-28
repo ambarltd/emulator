@@ -1,6 +1,6 @@
 {- | An STM abstraction on top of the Partition Reader -}
 
-module Ambar.Lite.Queue.Partition.STMReader
+module Ambar.Emulator.Queue.Partition.STMReader
   ( STMReader
   , new
   , seek
@@ -23,7 +23,7 @@ import Control.Monad (forM_, when)
 import Data.Maybe (isJust)
 import Data.Void (Void)
 
-import Ambar.Lite.Queue.Partition
+import Ambar.Emulator.Queue.Partition
   ( Partition
   , Offset
   , Record(..)
@@ -31,7 +31,7 @@ import Ambar.Lite.Queue.Partition
   )
 import Utils.STM (atomicallyNamed)
 
-import qualified Ambar.Lite.Queue.Partition as Partition
+import qualified Ambar.Emulator.Queue.Partition as Partition
 
 -- | A single (totally ordered) stream of data from a partition.
 data STMReader = STMReader

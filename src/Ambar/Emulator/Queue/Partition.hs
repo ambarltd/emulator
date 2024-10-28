@@ -1,4 +1,4 @@
-module Ambar.Lite.Queue.Partition
+module Ambar.Emulator.Queue.Partition
   ( Partition(..)
   , Position(..)
   , Offset(..)

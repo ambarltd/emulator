@@ -1,4 +1,4 @@
-module Ambar.Lite.Projector where
+module Ambar.Emulator.Projector where
 
 {-| A projector reads messages from multiple queues, applies a filter to the
 stream and submits passing messages to a single data destination.
@@ -15,8 +15,8 @@ import Control.Concurrent.Async (replicateConcurrently_, forConcurrently_)
 import Control.Monad.Extra (whileM)
 import GHC.Generics (Generic)
 
-import Ambar.Lite.Queue.Topic (Topic, ReadError(..))
-import qualified Ambar.Lite.Queue.Topic as Topic
+import Ambar.Emulator.Queue.Topic (Topic, ReadError(..))
+import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Transport (Transport)
 import qualified Ambar.Transport as Transport
 import Utils.Some (Some)

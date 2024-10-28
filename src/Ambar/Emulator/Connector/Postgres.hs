@@ -1,4 +1,4 @@
-module Ambar.Lite.Connector.Postgres
+module Ambar.Emulator.Connector.Postgres
   ( ConnectorConfig(..)
   , connect
   , partitioner
@@ -28,9 +28,9 @@ import qualified Database.PostgreSQL.Simple.FromRow as P
 import GHC.Generics (Generic)
 
 import Utils.Delay (Duration, millis, seconds)
-import qualified Ambar.Lite.Connector.Poll as Poll
-import Ambar.Lite.Connector.Poll (BoundaryTracker(..), Boundaries(..))
-import Ambar.Lite.Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
+import qualified Ambar.Emulator.Connector.Poll as Poll
+import Ambar.Emulator.Connector.Poll (BoundaryTracker(..), Boundaries(..))
+import Ambar.Emulator.Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
 
 _POLLING_INTERVAL :: Duration
 _POLLING_INTERVAL = millis 50
