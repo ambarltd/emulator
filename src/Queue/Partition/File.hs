@@ -314,14 +314,14 @@ instance Partition FilePartition where
           newSize = entrySize + partitionSize
           newCount = count + 1
 
-      writeNonBlocking fd_records entry
-      writeNonBlocking fd_index entryByteOffset
+      writeFD fd_records entry
+      writeFD fd_index entryByteOffset
       atomicallyNamed "file.write" $ STM.writeTVar p_info (Count newCount, Bytes newSize)
 
-writeNonBlocking :: HasCallStack => FD -> ByteString -> IO ()
-writeNonBlocking fd bs =
+writeFD :: HasCallStack => FD -> ByteString -> IO ()
+writeFD fd bs =
   void $ B.unsafeUseAsCStringLen bs $ \(ptr, len) ->
-  FD.writeNonBlocking fd (coerce ptr) 0 (fromIntegral len)
+  FD.write fd (coerce ptr) 0 (fromIntegral len)
 
 readIndexEntry :: HasCallStack => FilePath -> Offset -> IO Bytes
 readIndexEntry indexPath (Offset offset)  = do
