@@ -15,12 +15,12 @@ import Foreign.Marshal.Utils (withMany)
 import System.IO.Temp (withSystemTempDirectory)
 import System.IO.Unsafe (unsafePerformIO)
 
-import qualified Queue.Topic as T
-import Queue.Topic (ConsumerGroupName(..), Topic)
-import Queue.Partition (Record(..), Position(..))
-import qualified Queue.Partition as P
-import Queue.Partition.File (FilePartition)
-import qualified Queue.Partition.File as F
+import qualified Lite.Queue.Topic as T
+import Lite.Queue.Topic (ConsumerGroupName(..), Topic)
+import Lite.Queue.Partition (Record(..), Position(..))
+import qualified Lite.Queue.Partition as P
+import Lite.Queue.Partition.File (FilePartition)
+import qualified Lite.Queue.Partition.File as F
 import Utils.Some (Some(..))
 
 main :: IO ()

@@ -1,4 +1,4 @@
-module Connector.Postgres
+module Lite.Connector.Postgres
   ( ConnectorConfig(..)
   , connect
   , partitioner
@@ -28,9 +28,9 @@ import qualified Database.PostgreSQL.Simple.FromRow as P
 import GHC.Generics (Generic)
 
 import Utils.Delay (Duration, millis, seconds)
-import qualified Connector.Poll as Poll
-import Connector.Poll (BoundaryTracker(..), Boundaries(..))
-import Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
+import qualified Lite.Connector.Poll as Poll
+import Lite.Connector.Poll (BoundaryTracker(..), Boundaries(..))
+import Lite.Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
 
 _POLLING_INTERVAL :: Duration
 _POLLING_INTERVAL = millis 50

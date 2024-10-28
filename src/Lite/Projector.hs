@@ -1,4 +1,4 @@
-module Projector where
+module Lite.Projector where
 
 {-| A projector reads messages from multiple queues, applies a filter to the
 stream and submits passing messages to a single data destination.

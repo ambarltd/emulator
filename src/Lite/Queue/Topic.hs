@@ -1,4 +1,4 @@
-module Queue.Topic
+module Lite.Queue.Topic
   ( Topic
   , t_partitions
   , TopicState(..)
@@ -53,13 +53,13 @@ import GHC.Stack (HasCallStack)
 import System.Random (randomIO)
 
 import Utils.Some (Some(..))
-import Queue.Partition
+import Lite.Queue.Partition
   ( Partition
   , Offset
   , Record(..)
   )
-import qualified Queue.Partition as Partition
-import qualified Queue.Partition.STMReader as R
+import qualified Lite.Queue.Partition as Partition
+import qualified Lite.Queue.Partition.STMReader as R
 
 -- | Abstraction for a group of independent streams (partitions)
 --

@@ -1,4 +1,4 @@
-module Queue.Partition
+module Lite.Queue.Partition
   ( Partition(..)
   , Position(..)
   , Offset(..)
