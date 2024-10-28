@@ -46,6 +46,7 @@ library lite-lib
         Ambar.Transport.Http
         Utils.Async
         Utils.Delay
+        Utils.Logger
         Utils.STM
         Utils.Some
     build-depends:
