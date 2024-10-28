@@ -9,23 +9,13 @@ maintainer:         enginnering@ambar.cloud
 common common
     default-language: GHC2021
     default-extensions:
-        BangPatterns
-        DeriveAnyClass
-        DeriveGeneric
         DerivingStrategies
-        ExistentialQuantification
-        GeneralizedNewtypeDeriving
-        InstanceSigs
         LambdaCase
-        NumericUnderscores
         OverloadedStrings
-        RankNTypes
         RecordWildCards
-        TupleSections
-        TypeApplications
         TypeFamilies
         TypeFamilyDependencies
-        MultiParamTypeClasses
+        DeriveAnyClass
 
 executable lite
     import: common
