@@ -25,7 +25,6 @@ import qualified Data.ByteString.Char8 as Char8
 import qualified Data.ByteString.Lazy as LB
 import Data.Coerce (coerce)
 import Data.Word (Word64)
-import GHC.IO.Handle.Lock (hUnlock)
 import GHC.IO.FD (FD)
 import GHC.Stack (HasCallStack)
 import qualified GHC.IO.FD as FD
@@ -213,7 +212,6 @@ instance Partition FilePartition where
   openReader p@(FilePartition{..}) = do
     (len, _) <- STM.readTVarIO p_info
     handle <- openFile p_records ReadMode
-    hUnlock handle
     next <- STM.newTVarIO 0
     var <- STM.newTMVarIO $ ReaderInfo
       { r_next = next
@@ -326,7 +324,6 @@ writeFD fd bs =
 readIndexEntry :: HasCallStack => FilePath -> Offset -> IO Bytes
 readIndexEntry indexPath (Offset offset)  = do
   withFile indexPath ReadMode $ \handle -> do
-    hUnlock handle
     hSeek handle AbsoluteSeek $ fromIntegral $ offset * _WORD64_SIZE
     bytes <- B.hGet handle _WORD64_SIZE
     byteOffset <- case Binary.decodeOrFail $ LB.fromStrict bytes of
