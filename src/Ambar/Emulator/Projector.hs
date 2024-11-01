@@ -19,7 +19,7 @@ import Control.Monad.Extra (whileM)
 import GHC.Generics (Generic)
 
 import Ambar.Emulator.Config (Id(..), DataDestination, DataSource)
-import Ambar.Emulator.Queue.Topic (Topic, ReadError(..))
+import Ambar.Emulator.Queue.Topic (Topic, ReadError(..), PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Transport (Transport)
 import qualified Ambar.Transport as Transport
@@ -31,7 +31,6 @@ data Projection = Projection
   { p_id :: Id Projection
   , p_destination :: Id DataDestination
   , p_sources :: [(Id DataSource, Topic)]
-  , p_parallelism :: Maybe Int -- ^ maximum amount of concurrent submissions
   , p_transport :: Some Transport
   }
 
@@ -50,17 +49,18 @@ newtype Record = Record Json.Value
 
 project :: SimpleLogger -> Projection -> IO ()
 project logger_ Projection{..} =
-  forConcurrently_ p_sources $ \(sid, topic) ->
-  replicateConcurrently_ parallelism $
-  Topic.withConsumer topic group $ \consumer -> do
-  let logger =
+  forConcurrently_ p_sources projectSource
+  where
+  projectSource (sid, topic) =
+    replicateConcurrently_ pcount $ -- one consumer per partition
+    Topic.withConsumer topic group $ \consumer ->
+    whileM $ consume logger consumer sid
+    where
+      PartitionCount pcount = Topic.partitionCount topic
+      logger =
         annotate ("source:" <> unId sid) $
         annotate ("destination:" <> unId  p_destination)
         logger_
-  whileM $ consume logger consumer sid
-  where
-  -- TODO: The max should be the amount of partitions in the topic.
-  parallelism = fromMaybe 10 p_parallelism
 
   consume logger consumer source = do
     r <- Topic.read consumer

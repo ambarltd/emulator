@@ -70,7 +70,6 @@ emulate logger config env = do
         { p_id = projectionId (d_id dest)
         , p_destination = d_id dest
         , p_sources = sources
-        , p_parallelism = c_maxParallelism config
         , p_transport = transport
         }
 
