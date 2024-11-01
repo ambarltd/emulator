@@ -34,6 +34,7 @@ newtype Id a = Id { unId :: Text }
 data EmulatorConfig = EmulatorConfig
   { c_partitionsPerTopic :: Int
   , c_httpPushParallelism :: Maybe Int
+  , c_queuePath :: FilePath
   }
 
 -- | An environment's configuration.

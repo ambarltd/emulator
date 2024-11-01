@@ -13,7 +13,6 @@ Records are treated as plain text.
 import Control.Monad (forM_)
 import qualified Data.ByteString.Lazy.Char8 as Char8
 import qualified Data.ByteString.Lazy as LB
-import Data.ByteString (ByteString)
 
 import Ambar.Emulator.Queue.Topic (Producer, Encoder, Partitioner, modPartitioner)
 import qualified Ambar.Emulator.Queue.Topic as Topic
@@ -23,7 +22,7 @@ newtype FileRecord = FileRecord Char8.ByteString
 encoder :: Encoder FileRecord
 encoder (FileRecord bs) = LB.toStrict bs
 
-partitioner :: Partitioner ByteString
+partitioner :: Partitioner FileRecord
 partitioner = modPartitioner (const 1)
 
 connect :: Producer FileRecord -> FilePath -> IO ()

@@ -5,10 +5,11 @@ module Ambar.Emulator.Queue
   , PartitionCount(..)
   , withQueue
   , openTopic
+  , getInfo
   )
   where
 
-import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar)
+import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar, readMVar)
 import Control.Concurrent.Async (withAsync)
 import Control.Exception (bracket, throwIO, Exception(..))
 import Control.Monad (forM, forM_, when)
@@ -195,7 +196,8 @@ inventoryRelease (Store path) = do
   let lock = path </> "inventory.lock"
   removeFile lock
 
-
-
-
-
+getInfo :: Queue -> IO (HashMap TopicName PartitionCount)
+getInfo queue = do
+  topics <- readMVar (q_topics queue)
+  return $ flip fmap topics $ \tdata ->
+    PartitionCount $ HashMap.size (d_partitions tdata)
