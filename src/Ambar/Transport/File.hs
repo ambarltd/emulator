@@ -1,6 +1,6 @@
 module Ambar.Transport.File
   ( File
-  , withFileDestination
+  , withFileTransport
   )
   where
 
@@ -16,8 +16,8 @@ import Ambar.Transport (Transport(..))
 -- | Project data into a file
 newtype File = File (MVar Handle)
 
-withFileDestination :: FilePath -> (File -> IO a) -> IO a
-withFileDestination path act =
+withFileTransport :: FilePath -> (File -> IO a) -> IO a
+withFileTransport path act =
   withFile path WriteMode $ \handle -> do
     hSetBuffering handle LineBuffering
     var <- newMVar handle

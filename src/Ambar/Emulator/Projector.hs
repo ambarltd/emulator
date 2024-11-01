@@ -1,7 +1,5 @@
 module Ambar.Emulator.Projector
-  ( DataSource(..)
-  , DataDestination(..)
-  , Projection(..)
+  ( Projection(..)
   , project
   ) where
 
@@ -20,7 +18,7 @@ import Control.Concurrent.Async (replicateConcurrently_, forConcurrently_)
 import Control.Monad.Extra (whileM)
 import GHC.Generics (Generic)
 
-import Ambar.Emulator.Config (Id(..))
+import Ambar.Emulator.Config (Id(..), DataDestination, DataSource)
 import Ambar.Emulator.Queue.Topic (Topic, ReadError(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Transport (Transport)
@@ -29,30 +27,18 @@ import Utils.Some (Some)
 import Utils.Logger (SimpleLogger, logFatal, logWarn, fatal, annotate)
 import Utils.Delay (Duration, delay, millis, seconds)
 
-data DataSource = DataSource
-  { s_id :: Id DataSource
-  , s_description :: Text
-  }
-
-data DataDestination = DataDestination
-  { d_id :: Id DataDestination
-  , d_description :: Text
-  }
-
 data Projection = Projection
   { p_id :: Id Projection
-  , p_destination :: DataDestination
-  , p_sources :: [(DataSource, Topic)]
-  , p_parallelism :: Int -- ^ maximum amount of concurrent submissions
+  , p_destination :: Id DataDestination
+  , p_sources :: [(Id DataSource, Topic)]
+  , p_parallelism :: Maybe Int -- ^ maximum amount of concurrent submissions
   , p_transport :: Some Transport
   }
 
 -- | A record enriched with more information to send to the client.
 data Message = Message
   { data_source_id :: Text
-  , data_source_description :: Text
   , data_destination_id :: Text
-  , data_destination_description :: Text
   , payload :: Record
   }
   deriving (Generic, Show)
@@ -64,15 +50,18 @@ newtype Record = Record Json.Value
 
 project :: SimpleLogger -> Projection -> IO ()
 project logger_ Projection{..} =
-  forConcurrently_ p_sources $ \(source, topic) ->
-  replicateConcurrently_ p_parallelism $
+  forConcurrently_ p_sources $ \(sid, topic) ->
+  replicateConcurrently_ parallelism $
   Topic.withConsumer topic group $ \consumer -> do
   let logger =
-        annotate ("source:" <> unId (s_id source)) $
-        annotate ("destination:" <> unId ( d_id p_destination))
+        annotate ("source:" <> unId sid) $
+        annotate ("destination:" <> unId  p_destination)
         logger_
-  whileM $ consume logger consumer source
+  whileM $ consume logger consumer sid
   where
+  -- TODO: The max should be the amount of partitions in the topic.
+  parallelism = fromMaybe 10 p_parallelism
+
   consume logger consumer source = do
     r <- Topic.read consumer
     case r of
@@ -86,11 +75,9 @@ project logger_ Projection{..} =
 
   group = Topic.ConsumerGroupName $ unId p_id
 
-  toMsg source record = LB.toStrict $ Json.encode $ Message
-    { data_source_id = unId $ s_id source
-    , data_source_description = s_description source
-    , data_destination_id = unId $ d_id p_destination
-    , data_destination_description = d_description p_destination
+  toMsg sid record = LB.toStrict $ Json.encode $ Message
+    { data_source_id = unId sid
+    , data_destination_id = unId p_destination
     , payload = record
     }
 

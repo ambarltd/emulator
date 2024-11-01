@@ -33,7 +33,7 @@ newtype Id a = Id { unId :: Text }
 -- | Configures the internals of the emulator
 data EmulatorConfig = EmulatorConfig
   { c_partitionsPerTopic :: Int
-  , c_httpPushParallelism :: Maybe Int
+  , c_maxParallelism :: Maybe Int
   , c_queuePath :: FilePath
   }
 
