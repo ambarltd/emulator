@@ -57,7 +57,7 @@ emulate logger config env = do
 
       SourceFile path ->
         Topic.withProducer topic FileConnector.partitioner FileConnector.encoder $ \producer ->
-        FileConnector.connect producer path
+        FileConnector.connect logger producer path
 
   projectAll queue = forConcurrently_ (c_destinations env) (project queue)
 

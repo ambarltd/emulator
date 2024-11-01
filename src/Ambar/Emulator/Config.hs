@@ -85,6 +85,10 @@ instance FromJSON EnvironmentConfig where
         when (length xs > 1) $
         fail $ Text.unpack $ "Multiple data destinations with ID '" <> unId (d_id $ head xs) <> "'"
       return $ fmap head multimap
+    forM_ c_destinations $ \dest ->
+      forM_ (d_sources dest) $ \sid ->
+      when (sid `Map.notMember` c_sources) $
+        fail $ Text.unpack $ "Unknown data source: '" <> unId sid <> "'"
     return EnvironmentConfig{..}
 
 instance FromJSON DataSource where

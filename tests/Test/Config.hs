@@ -1,6 +1,8 @@
 {-# LANGUAGE QuasiQuotes #-}
 module Test.Config (testConfig) where
 
+import Control.Exception (ErrorCall(..), fromException)
+import Data.List (isInfixOf)
 import qualified Data.Map.Strict as Map
 import Data.String.Interpolate (i)
 import System.IO.Temp (withSystemTempFile)
@@ -11,7 +13,6 @@ import Test.Hspec
   , describe
   , shouldBe
   , shouldThrow
-  , anyErrorCall
   )
 import Test.Hspec.Expectations.Contrib (annotate)
 
@@ -63,8 +64,8 @@ testConfig = do
             password: password123
 
             sources:
-              - postgres source
-              - file source
+              - postgres_source
+              - file_source
         |]
       annotate "source count" $ Map.size (c_sources  config) `shouldBe` 2
       annotate "source count" $ Map.size (c_destinations  config) `shouldBe` 2
@@ -90,7 +91,7 @@ testConfig = do
             sources:
               - postgres_source
               - file_source
-        |] `shouldThrow` anyErrorCall
+        |] `shouldThrow` errorWith "Multiple data sources with ID"
 
     it "detects duplicate destinations" $ do
       parseConfig [i|
@@ -116,9 +117,26 @@ testConfig = do
             sources:
               - postgres_source
               - file_source
-        |] `shouldThrow` anyErrorCall
+        |] `shouldThrow` errorWith "Multiple data destinations with ID"
+
+    it "detects invalid sources" $ do
+      parseConfig [i|
+        data_sources: []
+        data_destinations:
+          - id: dest_1
+            description: my projection 1
+            type: file
+            path: ./temp.file
+            sources:
+              - postgres_source
+              - file_source
+        |] `shouldThrow` errorWith "Unknown data source"
 
   where
+  errorWith str err
+    | Just (ErrorCall msg) <- fromException err = str `isInfixOf` msg
+    | otherwise = False
+
   parseConfig str =
     withSystemTempFile "config-xxxx" $ \path handle -> do
     hClose handle
