@@ -34,7 +34,9 @@ library emulator-lib
     ghc-options: -Wall -Werror -fprof-auto
     hs-source-dirs: src
     exposed-modules:
+        Ambar.Emulator
         Ambar.Emulator.Config
+        Ambar.Emulator.Connector.File
         Ambar.Emulator.Connector.Poll
         Ambar.Emulator.Connector.Postgres
         Ambar.Emulator.Projector

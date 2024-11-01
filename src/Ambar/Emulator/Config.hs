@@ -1,6 +1,7 @@
 module Ambar.Emulator.Config
   ( parseEnvConfigFile
   , Id(..)
+  , EmulatorConfig(..)
   , EnvironmentConfig(..)
   , DataSource(..)
   , Source(..)
@@ -29,6 +30,14 @@ import Ambar.Transport.Http (Endpoint, User, Password)
 newtype Id a = Id { unId :: Text }
   deriving newtype (ToJSON, FromJSON, Ord, Eq)
 
+-- | Configures the internals of the emulator
+data EmulatorConfig = EmulatorConfig
+  { c_partitionsPerTopic :: Int
+  , c_httpPushParallelism :: Maybe Int
+  }
+
+-- | An environment's configuration.
+-- Describes the sources, destinations and their links.
 data EnvironmentConfig = EnvironmentConfig
   { c_sources :: Map (Id DataSource) DataSource
   , c_destinations :: Map (Id DataDestination) DataDestination
