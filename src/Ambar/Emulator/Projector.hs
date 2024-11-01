@@ -24,22 +24,25 @@ import Utils.Logger (SimpleLogger, logFatal, logWarn, fatal, annotate)
 import Utils.Delay (Duration, delay, millis, seconds)
 
 data DataSource = DataSource
-  { s_id :: Text
+  { s_id :: Id DataSource
   , s_description :: Text
   }
 
 data DataDestination = DataDestination
-  { d_id :: Text
+  { d_id :: Id DataDestination
   , d_description :: Text
   }
 
 data Projection = Projection
-  { p_id :: Text
+  { p_id :: Id Projection
   , p_destination :: DataDestination
   , p_sources :: [(DataSource, Topic)]
   , p_parallelism :: Int
   , p_transport :: Some Transport
   }
+
+newtype Id a = Id { unId :: Text }
+  deriving newtype (ToJSON, FromJSON)
 
 -- | A record enriched with more information to send to the client.
 data Message = Message
@@ -62,8 +65,8 @@ project logger_ Projection{..} =
   replicateConcurrently_ p_parallelism $
   Topic.withConsumer topic group $ \consumer -> do
   let logger =
-        annotate ("source:" <> s_id source) $
-        annotate ("destination:" <> d_id p_destination)
+        annotate ("source:" <> unId (s_id source)) $
+        annotate ("destination:" <> unId ( d_id p_destination))
         logger_
   whileM $ consume logger consumer source
   where
@@ -78,12 +81,12 @@ project logger_ Projection{..} =
         Topic.commit consumer meta
         return True
 
-  group = Topic.ConsumerGroupName p_id
+  group = Topic.ConsumerGroupName $ unId p_id
 
   toMsg source record = LB.toStrict $ Json.encode $ Message
-    { data_source_id = s_id source
+    { data_source_id = unId $ s_id source
     , data_source_description = s_description source
-    , data_destination_id = d_id p_destination
+    , data_destination_id = unId $ d_id p_destination
     , data_destination_description = d_description p_destination
     , payload = record
     }
