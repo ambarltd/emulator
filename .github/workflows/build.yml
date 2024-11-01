@@ -78,7 +78,7 @@ jobs:
       - name: Test
         env:
           PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
-        run: cabal run lite-tests -- +RTS -N
+        run: cabal run emulator-tests -- +RTS -N
 
       # We run this only when a PR is merged so we can see how things are performing
       # on the GH actions machines.
@@ -86,5 +86,5 @@ jobs:
         if: github.event.pull_request.merged == true
         env:
           PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
-        run: cabal run lite-tests -- +RTS -N
+        run: cabal run emulator-tests -- +RTS -N
 

@@ -1,4 +1,4 @@
-module Queue
+module Ambar.Emulator.Queue
   ( Queue
   , TopicName(..)
   , OpenQueueError(..)
@@ -27,14 +27,14 @@ import Data.Void (Void)
 import System.Directory (doesFileExist, removeFile, createDirectoryIfMissing)
 import System.FilePath ((</>))
 
-import Queue.Topic
+import Ambar.Emulator.Queue.Topic
   ( Topic
   , TopicState(..)
   , PartitionNumber(..)
   )
-import qualified Queue.Topic as T
-import qualified Queue.Partition.File as FilePartition
-import Queue.Partition.File (FilePartition)
+import qualified Ambar.Emulator.Queue.Topic as T
+import qualified Ambar.Emulator.Queue.Partition.File as FilePartition
+import Ambar.Emulator.Queue.Partition.File (FilePartition)
 import Utils.Delay (every, seconds)
 import Utils.Some (Some(..))
 

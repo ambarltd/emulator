@@ -1,4 +1,4 @@
-# Ambar Lite
+# Ambar Emulator
 
 A local version of Ambar for testing and initial integration.
 
