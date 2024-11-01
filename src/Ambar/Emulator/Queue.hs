@@ -86,7 +86,8 @@ withQueue path count act =
   saver queue = every (seconds 5) (save queue)
 
 open :: Store -> PartitionCount -> IO Queue
-open store count = do
+open store@(Store path) count = do
+  createDirectoryIfMissing True path
   inventoryLock store
   e <- inventoryLoad store
   inventory <- case e of

@@ -6,7 +6,6 @@ import Data.Maybe (fromMaybe)
 import qualified Options.Applicative as O
 import qualified Options.Applicative.Help.Pretty as OP
 import System.Directory (createDirectoryIfMissing, getXdgDirectory, XdgDirectory(..))
-import System.FilePath ((</>))
 
 import Ambar.Emulator (emulate)
 import Ambar.Emulator.Config (parseEnvConfigFile, EmulatorConfig(..))
@@ -34,9 +33,9 @@ defaultQueuePath :: IO FilePath
 defaultQueuePath = do
   -- here's some discussion why history files belong in XDG_DATA_HOME:
   --   https://github.com/fish-shell/fish-shell/issues/744
-  dir <- getXdgDirectory XdgData "haskell-docs-cli"
+  dir <- getXdgDirectory XdgData "ambar-emulator"
   createDirectoryIfMissing True dir
-  return (dir </> "haskell-docs-cli.history")
+  return dir
 
 data Command
   = CmdRun
