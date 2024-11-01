@@ -24,7 +24,9 @@ executable emulator
     other-modules:
     build-depends:
         base ^>=4.17.2.1
+        , directory
         , emulator-lib
+        , filepath
         , prettyprinter
         , prettyprinter-ansi-terminal
         , optparse-applicative
