@@ -74,6 +74,7 @@ library emulator-lib
         , text
         , time
         , unordered-containers
+        , yaml
 
 test-suite emulator-tests
     import: common
@@ -81,6 +82,7 @@ test-suite emulator-tests
     hs-source-dirs: tests
     main-is: Tests.hs
     other-modules:
+        Test.Config
         Test.Queue
         Test.Connector
         Test.Utils.Tests
@@ -102,6 +104,7 @@ test-suite emulator-tests
         , process
         , QuickCheck
         , stm
+        , string-interpolate
         , temporary
         , text
         , unordered-containers

@@ -1,7 +1,7 @@
 data_sources:
   - id: postgres_source
     description: Main events store
-    type: PostgreSQL
+    type: postgres
     host: localhost
     port: 5432
     username: my_user
@@ -17,24 +17,27 @@ data_sources:
     partitioningColumn: aggregate_id
 
   - id: file_source
+    description: The file source
     type: file
     path: ./source.txt
 
 data_destinations:
   - id: file_destination
+    description: my projection 1
     type: file
     path: ./temp.file
 
     sources:
-      - id: postgres_source
-      - id: file_source
+      - postgres_source
+      - file_source
 
   - id: HTTP_destination
+    description: my projection 2
     type: http-push
     endpoint: http://some.url.com:8080/my_projection
     username: name-of-user
     password: password123
 
     sources:
-      - id: postgres source
-      - id: file source
+      - postgres source
+      - file source

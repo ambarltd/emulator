@@ -2,6 +2,7 @@ module Main where
 
 import Test.Hspec (hspec, parallel)
 
+import Test.Config (testConfig)
 import Test.Queue (testQueues)
 import Test.Connector (testConnectors, withPostgresSQL)
 import Test.Utils.Tests (testUtils)
@@ -25,3 +26,4 @@ main = do
     testQueues
     testConnectors pcreds
     testUtils
+    testConfig

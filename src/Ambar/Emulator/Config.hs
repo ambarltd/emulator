@@ -1,7 +1,7 @@
 module Ambar.Emulator.Config
-  ( parse
+  ( parseEnvConfigFile
   , Id(..)
-  , Config(..)
+  , EnvironmentConfig(..)
   , DataSource(..)
   , Source(..)
   , DataDestination(..)
@@ -16,10 +16,12 @@ import Control.Monad (forM_, when)
 import Control.Exception (throwIO, ErrorCall(..))
 import Data.Aeson (ToJSON, FromJSON, (.:))
 import qualified Data.Aeson as Json
+import qualified Data.ByteString as BS
 import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Yaml as Yaml
 
 import qualified Ambar.Emulator.Connector.Postgres as Pg
 import Ambar.Transport.Http (Endpoint, User, Password)
@@ -27,7 +29,7 @@ import Ambar.Transport.Http (Endpoint, User, Password)
 newtype Id a = Id { unId :: Text }
   deriving newtype (ToJSON, FromJSON, Ord, Eq)
 
-data Config = Config
+data EnvironmentConfig = EnvironmentConfig
   { c_sources :: Map (Id DataSource) DataSource
   , c_destinations :: Map (Id DataDestination) DataDestination
   }
@@ -57,8 +59,8 @@ data Destination
       , d_password :: Password
       }
 
-instance FromJSON Config where
-  parseJSON = Json.withObject "Config" $ \o -> do
+instance FromJSON EnvironmentConfig where
+  parseJSON = Json.withObject "EnvironmentConfig" $ \o -> do
     c_sources <- do
       sources <- o .: "data_sources"
       let multimap = Map.fromListWith (++) [ (s_id s, [s]) | s <- sources ]
@@ -73,7 +75,7 @@ instance FromJSON Config where
         when (length xs > 1) $
         fail $ Text.unpack $ "Multiple data destinations with ID '" <> unId (d_id $ head xs) <> "'"
       return $ fmap head multimap
-    return Config{..}
+    return EnvironmentConfig{..}
 
 instance FromJSON DataSource where
   parseJSON = Json.withObject "DataSource" $ \o -> do
@@ -126,10 +128,10 @@ instance FromJSON DataDestination where
 
     parseFile o = DestinationFile <$> (o .: "path")
 
-parse :: FilePath -> IO Config
-parse path = do
-  econfig <- Json.eitherDecodeFileStrict path
-  case econfig of
-    Left err -> throwIO $ ErrorCall $ "Unable to parse config file: " <> err
+parseEnvConfigFile :: FilePath -> IO EnvironmentConfig
+parseEnvConfigFile path = do
+  bs <- BS.readFile path
+  case Yaml.decodeEither' bs of
+    Left err -> throwIO $ ErrorCall $ "Unable to parse config file: " <> show err
     Right v -> return v
 
