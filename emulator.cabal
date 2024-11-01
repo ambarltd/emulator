@@ -47,6 +47,7 @@ library emulator-lib
         Ambar.Emulator.Queue.Partition.STMReader
         Ambar.Transport
         Ambar.Transport.Http
+        Ambar.Transport.File
         Utils.Async
         Utils.Delay
         Utils.Logger
