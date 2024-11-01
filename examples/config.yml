@@ -1,32 +1,40 @@
 data_sources:
-  - id: "postgres source"
-    type: "postgres"
-    host: "localhost"
-    username: "temp"
-    password: "some_pass"
-    database: "db_name"
-    table: "table_name"
+  - id: postgres_source
+    description: Main events store
+    type: PostgreSQL
+    host: localhost
+    port: 5432
+    username: my_user
+    password: my_pass
+    database: my_db
+    table: events_table
+    columns:
+      - id
+      - aggregate_id
+      - sequence_number
+      - payload
+    serialColumn: id
+    partitioningColumn: aggregate_id
 
-  - id: "file source"
-    type: "file"
-    path: "./source.txt"
+  - id: file_source
+    type: file
+    path: ./source.txt
 
 data_destinations:
-  - id: "file destination"
-    type: "file"
-    path: "./temp.file"
+  - id: file_destination
+    type: file
+    path: ./temp.file
 
     sources:
-      - id: "postgres source"
-      - id: "file source"
+      - id: postgres_source
+      - id: file_source
 
-  - id: "HTTP destination"
-    type: "http-push"
-    endpoint: http://some.url.com/one
-    password: password123
-    port: 22
+  - id: HTTP_destination
+    type: http-push
+    endpoint: http://some.url.com:8080/my_projection
     username: name-of-user
+    password: password123
 
     sources:
-      - id: "postgres source"
-      - id: "file source"
+      - id: postgres source
+      - id: file source

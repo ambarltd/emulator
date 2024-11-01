@@ -1,7 +1,6 @@
 module Ambar.Emulator.Projector
   ( DataSource(..)
   , DataDestination(..)
-  , Id(..)
   , Projection(..)
   , project
   ) where
@@ -21,6 +20,7 @@ import Control.Concurrent.Async (replicateConcurrently_, forConcurrently_)
 import Control.Monad.Extra (whileM)
 import GHC.Generics (Generic)
 
+import Ambar.Emulator.Config (Id(..))
 import Ambar.Emulator.Queue.Topic (Topic, ReadError(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Transport (Transport)
@@ -46,9 +46,6 @@ data Projection = Projection
   , p_parallelism :: Int -- ^ maximum amount of concurrent submissions
   , p_transport :: Some Transport
   }
-
-newtype Id a = Id { unId :: Text }
-  deriving newtype (ToJSON, FromJSON)
 
 -- | A record enriched with more information to send to the client.
 data Message = Message
