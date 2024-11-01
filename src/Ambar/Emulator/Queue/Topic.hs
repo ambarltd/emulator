@@ -1,12 +1,13 @@
 module Ambar.Emulator.Queue.Topic
   ( Topic
-  , t_partitions
   , TopicState(..)
   , PartitionNumber(..)
+  , PartitionCount(..)
   , withTopic
   , openTopic
   , closeTopic
   , getState
+  , partitionCount
 
   , Consumer
   , ConsumerGroupName(..)
@@ -204,17 +205,17 @@ getState Topic{..} = STM.atomically $ do
     , s_consumers = consumers
     }
 
-newtype Partitioner a = Partitioner (Int -> a -> PartitionNumber)
+newtype Partitioner a = Partitioner (PartitionCount -> a -> PartitionNumber)
 
 -- | Choose a partition based on the hash of a partitioning key.
 hashPartitioner :: Hashable key => (a -> key) -> Partitioner a
-hashPartitioner f = Partitioner $ \partitionCount x ->
-  PartitionNumber $ hash (f x) `mod` partitionCount
+hashPartitioner f = Partitioner $ \(PartitionCount pcount) x ->
+  PartitionNumber $ hash (f x) `mod` pcount
 
 -- | Control exactly which partition to use for a message.
 modPartitioner :: (a -> Int) -> Partitioner a
-modPartitioner f = Partitioner $ \partitionCount x ->
-  PartitionNumber $ f x `mod` partitionCount
+modPartitioner f = Partitioner $ \(PartitionCount pcount) x ->
+  PartitionNumber $ f x `mod` pcount
 
 type Encoder a = a -> ByteString
 
@@ -228,11 +229,9 @@ withProducer
 withProducer topic (Partitioner p) encode act =
   act $ Producer
     { p_topic = topic
-    , p_select = p partitionCount
+    , p_select = p (partitionCount topic)
     , p_encode = Record . encode
     }
-  where
-  partitionCount = HashMap.size (t_partitions topic)
 
 write :: HasCallStack => Producer a -> a -> IO ()
 write Producer{..} msg = do
@@ -446,3 +445,7 @@ commit (Consumer _ var) (Meta pnumber offset) = atomically $ do
     -- not the actual ofset value saved.
     STM.modifyTVar (r_committed r) $ \previous -> max previous (offset + 1)
 
+newtype PartitionCount = PartitionCount Int
+
+partitionCount :: Topic -> PartitionCount
+partitionCount topic = PartitionCount $ HashMap.size (t_partitions topic)

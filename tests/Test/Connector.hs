@@ -36,8 +36,7 @@ import Ambar.Emulator.Connector.Poll
   )
 import Ambar.Emulator.Connector.Postgres (ConnectorConfig(..), partitioner, encoder)
 import qualified Ambar.Emulator.Connector.Postgres as ConnectorPostgres
-import Ambar.Emulator.Queue (PartitionCount(..))
-import Ambar.Emulator.Queue.Topic (Topic)
+import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Test.Queue (withFileTopic)
 import Test.Utils.OnDemand (OnDemand)

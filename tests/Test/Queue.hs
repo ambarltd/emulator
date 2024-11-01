@@ -29,12 +29,13 @@ import Test.Hspec
 import Foreign.Marshal.Utils (withMany)
 
 import qualified Ambar.Emulator.Queue as Queue
-import Ambar.Emulator.Queue (TopicName(..), PartitionCount(..))
+import Ambar.Emulator.Queue (TopicName(..))
 import Ambar.Emulator.Queue.Topic
   ( Topic
   , Meta(..)
   , ConsumerGroupName(..)
   , PartitionNumber(..)
+  , PartitionCount(..)
   , ReadError(..)
   , withTopic
   )

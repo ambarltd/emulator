@@ -13,7 +13,7 @@ import Ambar.Emulator.Projector (Projection(..))
 import qualified Ambar.Transport.File as FileTransport
 import qualified Ambar.Transport.Http as HttpTransport
 import qualified Ambar.Emulator.Queue.Topic as Topic
-import Ambar.Emulator.Queue (TopicName(..), PartitionCount(..))
+import Ambar.Emulator.Queue (TopicName(..))
 import qualified Ambar.Emulator.Queue as Queue
 import Ambar.Emulator.Config
   ( EmulatorConfig(..)
@@ -34,7 +34,7 @@ emulate logger config env = do
     concurrently_ (connectAll queue) (projectAll queue)
   where
   qpath = c_queuePath config
-  pcount = PartitionCount $ c_partitionsPerTopic config
+  pcount = Topic.PartitionCount $ c_partitionsPerTopic config
 
   createTopics queue = do
     info <- Queue.getInfo queue

@@ -2,7 +2,6 @@ module Ambar.Emulator.Queue
   ( Queue
   , TopicName(..)
   , OpenQueueError(..)
-  , PartitionCount(..)
   , withQueue
   , openTopic
   , getInfo
@@ -32,6 +31,7 @@ import Ambar.Emulator.Queue.Topic
   ( Topic
   , TopicState(..)
   , PartitionNumber(..)
+  , PartitionCount(..)
   )
 import qualified Ambar.Emulator.Queue.Topic as T
 import qualified Ambar.Emulator.Queue.Partition.File as FilePartition
@@ -72,8 +72,6 @@ instance Exception OpenQueueError where
   displayException = \case
     CorruptedInventory err -> "Inventory file is corrupetd: " <> err
     QueueLocked path -> "Queue locked. The queue is already open. Lock found at: " <> path
-
-newtype PartitionCount = PartitionCount Int
 
 withQueue
   :: FilePath
