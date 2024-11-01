@@ -2,7 +2,6 @@ module Ambar.Transport.Http
   ( HttpTransport
   , new
   , Endpoint(..)
-  , Port(..)
   , User(..)
   , Password(..)
   , ClientResponse(..)
@@ -36,15 +35,13 @@ data HttpTransport = HttpTransport
 
 newtype Endpoint = Endpoint Text
   deriving newtype (ToJSON, FromJSON, Eq, Ord)
-newtype Port = Port Int
-  deriving newtype (ToJSON, FromJSON, Eq, Ord)
 newtype User = User Text
   deriving newtype (ToJSON, FromJSON, Eq, Ord)
 newtype Password = Password Text
   deriving newtype (ToJSON, FromJSON, Eq, Ord)
 
-new :: Endpoint -> Port -> User -> Password -> IO HttpTransport
-new (Endpoint url) (Port port) (User user) (Password pass) = do
+new :: Endpoint -> User -> Password -> IO HttpTransport
+new (Endpoint url) (User user) (Password pass) = do
   case Http.parseUrlThrow (Text.unpack url) of
     Left ex -> error $ show $
       case fromException ex of
@@ -52,8 +49,7 @@ new (Endpoint url) (Port port) (User user) (Password pass) = do
         Nothing -> Text.pack $ show ex
     Right req -> do
       manager <- Http.newTlsManager
-      let base = Http.applyBasicAuth (Text.encodeUtf8 user) (Text.encodeUtf8 pass)
-            $ req { Http.port = port }
+      let base = Http.applyBasicAuth (Text.encodeUtf8 user) (Text.encodeUtf8 pass) req
       return $ HttpTransport base manager
 
 instance Transport HttpTransport where

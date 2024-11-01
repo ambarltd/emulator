@@ -1,15 +1,28 @@
-module Ambar.Emulator.Config where
+module Ambar.Emulator.Config
+  ( parse
+  , Id(..)
+  , Config(..)
+  , DataSource(..)
+  , Source(..)
+  , DataDestination(..)
+  , Destination(..)
+  )
+  where
 
 {-| Parsing of the configuration file
 -}
 
+import Control.Monad (forM_, when)
+import Control.Exception (throwIO, ErrorCall(..))
 import Data.Aeson (ToJSON, FromJSON, (.:))
 import qualified Data.Aeson as Json
+import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 
 import qualified Ambar.Emulator.Connector.Postgres as Pg
-import Ambar.Transport.Http (Endpoint, Port, User, Password)
+import Ambar.Transport.Http (Endpoint, User, Password)
 
 newtype Id a = Id { unId :: Text }
   deriving newtype (ToJSON, FromJSON, Ord, Eq)
@@ -29,15 +42,51 @@ data Source
   = SourcePostgreSQL Pg.ConnectorConfig
   | SourceFile FilePath
 
+data DataDestination = DataDestination
+  { d_id :: Id DataDestination
+  , d_sources :: [Id DataSource]
+  , d_description :: Text
+  , d_destination :: Destination
+  }
+
+data Destination
+  = DestinationFile FilePath
+  | DestinationHttp
+      { d_endpoint :: Endpoint
+      , d_username :: User
+      , d_password :: Password
+      }
+
+instance FromJSON Config where
+  parseJSON = Json.withObject "Config" $ \o -> do
+    c_sources <- do
+      sources <- o .: "data_sources"
+      let multimap = Map.fromListWith (++) [ (s_id s, [s]) | s <- sources ]
+      forM_ multimap $ \xs ->
+        when (length xs > 1) $
+        fail $ Text.unpack $ "Multiple data sources with ID '" <> unId (s_id $ head xs) <> "'"
+      return $ fmap head multimap
+    c_destinations <- do
+      dsts <- o .: "data_destinations"
+      let multimap = Map.fromListWith (++) [ (d_id s, [s]) | s <- dsts ]
+      forM_ multimap $ \xs ->
+        when (length xs > 1) $
+        fail $ Text.unpack $ "Multiple data destinations with ID '" <> unId (d_id $ head xs) <> "'"
+      return $ fmap head multimap
+    return Config{..}
+
 instance FromJSON DataSource where
   parseJSON = Json.withObject "DataSource" $ \o -> do
     s_id <- o .: "id"
     s_description <- o .: "description"
     s_source <- (o .: "type") >>= \t ->
       case t of
-        "PostgreSQL" -> parsePostgreSQL o
+        "postgres" -> parsePostgreSQL o
         "file" -> parseFile o
-        _ -> fail ("Invalid data source type: " <> t)
+        _ -> fail $ unwords
+          [ "Invalid data source type: '" <> t <> "'."
+          , "Expected one of: postgres, file."
+          ]
     return DataSource{..}
     where
     parsePostgreSQL o = do
@@ -54,23 +103,33 @@ instance FromJSON DataSource where
 
     parseFile o = SourceFile <$> (o .: "path")
 
+instance FromJSON DataDestination where
+  parseJSON = Json.withObject "DataSource" $ \o -> do
+    d_id <- o .: "id"
+    d_sources <- o .: "sources"
+    d_description <- o .: "description"
+    d_destination <- (o .: "type") >>= \t ->
+      case t of
+        "http-push" -> parseHTTPPush o
+        "file" -> parseFile o
+        _ -> fail $ unwords
+          [ "Invalid data destination type: '" <> t <> "'."
+          , "Expected one of: http-push, file."
+          ]
+    return DataDestination{..}
+    where
+    parseHTTPPush o = do
+      d_endpoint <- o .: "endpoint"
+      d_username <- o .: "username"
+      d_password <- o .: "password"
+      return $ DestinationHttp {..}
 
-data DataDestination = DataDestination
-  { d_id :: Id DataDestination
-  , d_sources :: [Id DataSource]
-  , d_description :: Text
-  , d_destination :: Destination
-  }
-
-data Destination
-  = DestinationFile FilePath
-  | DestinationHttp
-      { d_endpoint :: Endpoint
-      , d_port :: Port
-      , d_user :: User
-      , d_password :: Password
-      }
-
+    parseFile o = DestinationFile <$> (o .: "path")
 
 parse :: FilePath -> IO Config
-parse path = error "TODO"
+parse path = do
+  econfig <- Json.eitherDecodeFileStrict path
+  case econfig of
+    Left err -> throwIO $ ErrorCall $ "Unable to parse config file: " <> err
+    Right v -> return v
+
