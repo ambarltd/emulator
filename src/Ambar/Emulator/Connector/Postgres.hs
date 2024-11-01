@@ -3,6 +3,8 @@ module Ambar.Emulator.Connector.Postgres
   , connect
   , partitioner
   , encoder
+  , Value(..)
+  , Row
   ) where
 
 import Control.Exception (Exception, bracket, throwIO, ErrorCall(..))
@@ -89,7 +91,7 @@ instance P.FromField PgType where
       _ -> P.conversionError $ UnsupportedType str
 
 -- | One row retrieved from a PostgreSQL database.
-type Row = [Value]
+newtype Row = Row [Value]
 
 data Value
   = Boolean Bool
@@ -172,7 +174,7 @@ partitioner = hashPartitioner partitioningValue
 -- | A rows gets saved in the database as a JSON object with
 -- the columns specified in the config file as keys.
 encoder :: ConnectorConfig -> Encoder Row
-encoder config row =
+encoder config (Row row) =
   LB.toStrict $ Aeson.encode $ Map.fromList $ zip (columns config) row
 
 -- | Columns in the order they will be queried.
@@ -182,15 +184,16 @@ columns ConnectorConfig{..} =
     ((c_columns \\ [c_serialColumn]) \\ [c_partitioningColumn])
 
 serialValue :: Row -> Value
-serialValue = \case
-  [] -> error "serialValue: empty row"
-  x:_ -> x
+serialValue (Row row) =
+  case row of
+    [] -> error "serialValue: empty row"
+    x:_ -> x
 
 partitioningValue :: Row -> Value
-partitioningValue = (!! 1)
+partitioningValue (Row row) = row !! 1
 
 mkParser :: [Text] -> TableSchema -> P.RowParser Row
-mkParser cols (TableSchema schema) = traverse (parser . getType) cols
+mkParser cols (TableSchema schema) = Row <$> traverse (parser . getType) cols
   where
   getType col = schema Map.! col
 
