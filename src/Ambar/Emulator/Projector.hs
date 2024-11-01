@@ -1,4 +1,10 @@
-module Ambar.Emulator.Projector where
+module Ambar.Emulator.Projector
+  ( DataSource(..)
+  , DataDestination(..)
+  , Id(..)
+  , Projection(..)
+  , project
+  ) where
 
 {-| A projector reads messages from multiple queues, applies a filter to the
 stream and submits passing messages to a single data destination.
@@ -37,7 +43,7 @@ data Projection = Projection
   { p_id :: Id Projection
   , p_destination :: DataDestination
   , p_sources :: [(DataSource, Topic)]
-  , p_parallelism :: Int
+  , p_parallelism :: Int -- ^ maximum amount of concurrent submissions
   , p_transport :: Some Transport
   }
 
