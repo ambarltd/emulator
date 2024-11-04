@@ -15,7 +15,7 @@ import Control.Concurrent.STM
   , TMVar
   , atomically
   )
-import Control.Exception (Exception(..), bracket, bracketOnError, throwIO)
+import Control.Exception (Exception(..), bracket, bracketOnError, throwIO, uninterruptibleMask_)
 import Control.Monad (void, unless, when)
 import qualified Data.Binary as Binary
 import Data.ByteString (ByteString)
@@ -162,6 +162,7 @@ open location name = do
 
 close :: HasCallStack => FilePartition -> IO ()
 close FilePartition{..} =
+  uninterruptibleMask_ $
   modifyMVar_ p_handles $ \case
     Nothing -> return Nothing -- already closed
     Just (fd_records, fd_index) -> do

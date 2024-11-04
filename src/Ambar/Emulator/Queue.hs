@@ -10,7 +10,7 @@ module Ambar.Emulator.Queue
 
 import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar, readMVar)
 import Control.Concurrent.Async (withAsync)
-import Control.Exception (bracket, throwIO, Exception(..))
+import Control.Exception (bracket, throwIO, Exception(..), uninterruptibleMask_)
 import Control.Monad (forM, forM_, when)
 import qualified Data.ByteString.Lazy as LB
 import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
@@ -104,7 +104,8 @@ open store@(Store path) count = do
     }
 
 close :: Queue -> IO ()
-close queue@(Queue store _ var) = do
+close queue@(Queue store _ var) =
+  uninterruptibleMask_ $ do
   save queue
   modifyMVar var $ \topics -> do
     forM_ topics $ \tdata -> do
