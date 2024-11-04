@@ -149,15 +149,19 @@ open location name = do
       return exists_records
 
     createIndex index = do
-      -- The index file starts with an entry for the position of the zeroeth element.
-      -- Therefore the index always contains one more entry than the records file.
-      LB.writeFile index $ Binary.encode @Word64 0
+      -- creates an empty index file.
+      LB.writeFile index ""
       return (Count 0, Bytes 0)
 
     loadIndex index = do
       indexSize <- fromIntegral <$> getFileSize index
-      let count = (indexSize `div` _WORD64_SIZE) - 1
-      byteOffsetOfNextEntry <- readIndexEntry index (Offset count)
+      let count = indexSize `div` _WORD64_SIZE
+      lastIndexEntry <- readIndexEntry index (Offset $ max 0 $ count - 1)
+      -- This should be the same as the size of the records file.
+      -- However we use the last index entry in case the program
+      -- was interrupted between writing to the records file and
+      -- to the index file.
+      let byteOffsetOfNextEntry = lastIndexEntry
       return (Count count, byteOffsetOfNextEntry)
 
 close :: HasCallStack => FilePartition -> IO ()
@@ -245,7 +249,7 @@ instance Partition FilePartition where
     acquire = atomicallyNamed "file.seek.acquire" $ do
       info <- STM.takeTMVar var
       (Count count, _) <- STM.readTVar $ p_info $ r_partition info
-      let offset = case pos of
+      let offset = max 0 $ case pos of
             At o -> o
             Beginning -> 0
             End -> Offset count - 1
@@ -308,7 +312,7 @@ instance Partition FilePartition where
       (Count count, Bytes partitionSize) <- STM.readTVarIO p_info
 
       let entry = bs <> "\n"
-          entrySize = fromIntegral (B.length bs)
+          entrySize = fromIntegral (B.length entry)
           entryByteOffset = B.toStrict $ Binary.encode partitionSize
           newSize = entrySize + partitionSize
           newCount = count + 1
@@ -323,7 +327,7 @@ writeFD fd bs =
   FD.write fd (coerce ptr) 0 (fromIntegral len)
 
 readIndexEntry :: HasCallStack => FilePath -> Offset -> IO Bytes
-readIndexEntry indexPath (Offset offset)  = do
+readIndexEntry indexPath (Offset offset) =
   withFile indexPath ReadMode $ \handle -> do
     hSeek handle AbsoluteSeek $ fromIntegral $ offset * _WORD64_SIZE
     bytes <- B.hGet handle _WORD64_SIZE

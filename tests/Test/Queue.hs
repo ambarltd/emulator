@@ -341,6 +341,17 @@ testPartition with = do
           one_ `shouldBe` one
           two_ `shouldBe` two
 
+  it "reopens at offset" $
+    withTempPath $ \path -> do
+      one : two : _ <- return messages
+      with path $ \partition -> do
+        P.write partition one
+        P.write partition two
+      with path $ \partition ->
+        P.withReader partition (At 1) $ \reader -> do
+          (_, two_) <- P.read reader
+          two_ `shouldBe` two
+
   it "no concurrent opens" $
     withTempPath $ \path ->
       let openError e
