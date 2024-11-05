@@ -53,6 +53,7 @@ library emulator-lib
         Utils.Async
         Utils.Delay
         Utils.Logger
+        Utils.Prettyprinter
         Utils.STM
         Utils.Some
     build-depends:

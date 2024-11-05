@@ -11,11 +11,15 @@ module Ambar.Emulator.Connector.Poll
 
 {-| General polling connector -}
 
+import Control.Concurrent.STM (TVar, atomically, writeTVar, readTVarIO)
 import Control.Monad (forM_)
+import Data.Aeson (ToJSON, FromJSON, FromJSONKey, ToJSONKey)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import Data.Void (Void)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import GHC.Generics (Generic)
+import Prettyprinter (Pretty, pretty)
 
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Utils.Delay (Duration, delay, fromDiffTime, toDiffTime)
@@ -26,7 +30,10 @@ newtype Boundaries = Boundaries [(EntryId, EntryId)]
 
 newtype EntryId = EntryId Integer
    deriving (Show)
-   deriving newtype (Eq, Enum, Ord, Num)
+   deriving newtype (Eq, Enum, Ord, Num, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
+
+instance Pretty EntryId where
+   pretty (EntryId n) = pretty n
 
 data PollingConnector entry = PollingConnector
    { c_getId :: entry -> EntryId
@@ -36,38 +43,34 @@ data PollingConnector entry = PollingConnector
    , c_producer :: Topic.Producer entry
    }
 
--- -- | Tracks seen ID boundaries
--- data BoundaryTracker id = forall state. Monoid state => BoundaryTracker
---    { t_mark :: POSIXTime -> id -> state -> state
---    , t_boundaries :: state -> Boundaries
---    -- remove all relevant entries before given time.
---    , t_cleanup :: POSIXTime -> state -> state
---    }
-
-connect :: BoundaryTracker -> PollingConnector entry -> IO Void
-connect tracker__ (PollingConnector getId poll interval maxTransTime producer) = do
-   now <- getPOSIXTime
-   go now tracker__
+connect :: TVar BoundaryTracker -> PollingConnector entry -> IO Void
+connect trackerVar (PollingConnector getId poll interval maxTransTime producer) = do
+   loop
    where
    diff = toDiffTime maxTransTime
-   go before tracker_ = do
-      now <- getPOSIXTime
-      delay $ max 0 $ interval - fromDiffTime (now - before)
-      let tracker = cleanup (now - diff) tracker_
+   loop = do
+      before <- getPOSIXTime
+      tracker <- cleanup (before - diff) <$> readTVarIO trackerVar
       items <- poll (boundaries tracker)
       forM_ items (Topic.write producer)
-      go now $ foldr (mark now . getId) tracker items
+      atomically $ writeTVar trackerVar $ foldr (mark before . getId) tracker items
+      after <- getPOSIXTime
+      delay $ max 0 $ interval - fromDiffTime (after - before)
+      loop
 
 -- | Boundary tracker for enumerable ids. Takes advantage of ranges.
 -- Map by range's low Id
 newtype BoundaryTracker = BoundaryTracker (Map EntryId Range)
+   deriving (Generic)
    deriving newtype (Semigroup, Monoid)
+   deriving anyclass (FromJSON, ToJSON)
 
 data Range = Range
    { _r_low :: (POSIXTime, EntryId)
    , _r_high :: (POSIXTime, EntryId)
    }
-   deriving Show
+   deriving (Generic, Show)
+   deriving anyclass (FromJSON, ToJSON)
 
 mark :: POSIXTime -> EntryId -> BoundaryTracker -> BoundaryTracker
 mark time el (BoundaryTracker m) = BoundaryTracker $

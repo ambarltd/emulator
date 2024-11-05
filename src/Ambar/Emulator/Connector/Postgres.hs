@@ -7,6 +7,7 @@ module Ambar.Emulator.Connector.Postgres
   , Row
   ) where
 
+import Control.Concurrent.STM (TVar, newTVarIO)
 import Control.Exception (Exception, bracket, throwIO, ErrorCall(..))
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
@@ -15,7 +16,7 @@ import Data.ByteString.Base64 (encodeBase64)
 import Data.Base64.Types (extractBase64)
 import Data.Hashable (Hashable)
 import Data.Int (Int64)
-import Data.List ((\\), intercalate)
+import Data.List ((\\))
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
@@ -28,6 +29,9 @@ import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.FromField as P
 import qualified Database.PostgreSQL.Simple.FromRow as P
 import GHC.Generics (Generic)
+import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated)
+import Prettyprinter (pretty)
+import qualified Prettyprinter as Pretty
 
 import Utils.Delay (Duration, millis, seconds)
 import qualified Ambar.Emulator.Connector.Poll as Poll
@@ -122,8 +126,8 @@ connect producer config@ConnectorConfig{..} =
    bracket open P.close $ \conn -> do
    schema <- fetchSchema c_table conn
    validate config schema
-   let pcol = unTableSchema schema Map.! c_partitioningColumn
-   withTracker pcol $ consume conn schema
+   tracker <- newTVarIO mempty
+   consume conn schema tracker
    where
    open = P.connect P.ConnectInfo
       { P.connectHost = Text.unpack c_host
@@ -136,13 +140,12 @@ connect producer config@ConnectorConfig{..} =
    consume
       :: P.Connection
       -> TableSchema
-      -> BoundaryTracker
-      -> (Row -> EntryId)
+      -> TVar BoundaryTracker
       -> IO Void
-   consume conn schema tracker getSerial = Poll.connect tracker pc
+   consume conn schema tracker = Poll.connect tracker pc
      where
      pc = Poll.PollingConnector
-        { Poll.c_getId = getSerial
+        { Poll.c_getId = entryId
         , Poll.c_poll = run
         , Poll.c_pollingInterval = _POLLING_INTERVAL
         , Poll.c_maxTransactionTime = _MAX_TRANSACTION_TIME
@@ -153,19 +156,22 @@ connect producer config@ConnectorConfig{..} =
 
      run (Boundaries bs) = P.queryWith parser conn query ()
        where
-       query = fromString $ Text.unpack $ Text.unwords
-          [ "SELECT" , Text.intercalate ", " (columns config)
-          , "FROM" , c_table
+       query = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
+          [ "SELECT" , commaSeparated $ map pretty $ columns config
+          , "FROM" , pretty c_table
           , if null bs then "" else "WHERE" <> constraints
-          , "ORDER BY" , c_serialColumn
+          , "ORDER BY" , pretty c_serialColumn
           ]
-       constraints = Text.pack $ intercalate "AND" $ flip fmap bs
-         $ \(low, high) -> unwords
+
+       constraints = sepBy "AND"
+          [ Pretty.fillSep
              [ "("
-             , Text.unpack c_serialColumn, "<", show low
+             , pretty c_serialColumn, "<", pretty low
              , "OR"
-             , Text.unpack c_serialColumn, ">", show high
+             , pretty c_serialColumn, ">", pretty high
              , ")"]
+          | (EntryId low, EntryId high) <- bs
+          ]
 
 partitioner :: Partitioner Row
 partitioner = hashPartitioner partitioningValue
@@ -210,30 +216,10 @@ mkParser cols (TableSchema schema) = Row <$> traverse (parser . getType) cols
     PgTimestamptz -> fmap DateTime <$> P.field
     PgText -> fmap String <$> P.field
 
-withTracker
-   :: PgType
-   -> (BoundaryTracker -> (Row -> EntryId) -> IO b)
-   -> IO b
-withTracker ty f = case ty of
-   PgInt8 -> intTracker
-   PgInt2 -> intTracker
-   PgInt4 -> intTracker
-   PgFloat4 -> unsupported
-   PgFloat8 -> unsupported
-   PgBool -> unsupported
-   PgJson -> unsupported
-   PgBytea -> unsupported
-   PgTimestamp -> unsupported
-   PgTimestamptz -> unsupported
-   PgText -> unsupported
-   where
-   unsupported = error $ "Unsupported serial column type: " <> show ty
-
-   intTracker = f mempty get
-      where
-      get row = case serialValue row of
-         Int n -> EntryId $ fromIntegral n
-         val -> error "Invalid serial column value:" (show val)
+entryId :: Row -> EntryId
+entryId row = case serialValue row of
+   Int n -> EntryId $ fromIntegral n
+   val -> error "Invalid serial column value:" (show val)
 
 validate :: ConnectorConfig -> TableSchema -> IO ()
 validate config (TableSchema schema) = do
@@ -251,7 +237,7 @@ validate config (TableSchema schema) = do
     then return ()
     else throwIO $ ErrorCall $ "Invalid serial column type: " <> show serialTy
   serialTy = schema Map.! c_serialColumn config
-  allowedSerialTypes = [PgInt8, PgInt2, PgInt4, PgFloat4, PgFloat8]
+  allowedSerialTypes = [PgInt8, PgInt2, PgInt4]
 
 fetchSchema :: Text -> P.Connection -> IO TableSchema
 fetchSchema table conn = do
