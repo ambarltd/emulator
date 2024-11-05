@@ -149,14 +149,15 @@ open location name = do
       return exists_records
 
     createIndex index = do
-      -- creates an empty index file.
-      LB.writeFile index ""
+      -- The index file starts with an entry for the position of the zeroeth element.
+      -- Therefore the index always contains one more entry than the records file.
+      LB.writeFile index $ Binary.encode @Word64 0
       return (Count 0, Bytes 0)
 
     loadIndex index = do
       indexSize <- fromIntegral <$> getFileSize index
-      let count = indexSize `div` _WORD64_SIZE
-      lastIndexEntry <- readIndexEntry index (Offset $ max 0 $ count - 1)
+      let count = (indexSize `div` _WORD64_SIZE) - 1
+      lastIndexEntry <- readIndexEntry index (Offset count)
       -- This should be the same as the size of the records file.
       -- However we use the last index entry in case the program
       -- was interrupted between writing to the records file and
@@ -313,12 +314,12 @@ instance Partition FilePartition where
 
       let entry = bs <> "\n"
           entrySize = fromIntegral (B.length entry)
-          entryByteOffset = B.toStrict $ Binary.encode partitionSize
           newSize = entrySize + partitionSize
           newCount = count + 1
+          nextEntryByteOffset = B.toStrict $ Binary.encode newSize
 
       writeFD fd_records entry
-      writeFD fd_index entryByteOffset
+      writeFD fd_index nextEntryByteOffset
       atomicallyNamed "file.write" $ STM.writeTVar p_info (Count newCount, Bytes newSize)
 
 writeFD :: HasCallStack => FD -> ByteString -> IO ()
@@ -328,7 +329,6 @@ writeFD fd bs =
 
 readIndexEntry :: HasCallStack => FilePath -> Offset -> IO Bytes
 readIndexEntry indexPath (Offset offset) =
-  if offset == 0 then return (Bytes 0) else
   withFile indexPath ReadMode $ \handle -> do
     hSeek handle AbsoluteSeek $ fromIntegral $ offset * _WORD64_SIZE
     bytes <- B.hGet handle _WORD64_SIZE
