@@ -1,14 +1,21 @@
 module Test.Connector
   ( testConnectors
+  , PostgresCreds
   , withPostgresSQL
+  , withEventsTable
+  , insert
+  , mocks
+  , mkConfig
+  , Event(..)
   ) where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
 import Control.Concurrent.Async (mapConcurrently)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LB
-import Data.List (isInfixOf, sort)
+import Data.List (isInfixOf, sort, stripPrefix)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import qualified Data.Text as Text
 import Data.Word (Word16)
@@ -16,7 +23,6 @@ import Control.Exception (bracket, throwIO, ErrorCall(..))
 import Control.Monad (void, replicateM, forM_)
 import System.Exit (ExitCode(..))
 import System.Process (readProcessWithExitCode)
-import System.Timeout (timeout)
 import Test.Hspec
   ( Spec
   , it
@@ -38,6 +44,8 @@ import Test.Utils.OnDemand (OnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
 
 import Utils.Async (withAsyncThrow)
+import Utils.Delay (timeout, seconds)
+import Utils.Logger (plainLogger, Severity(..))
 
 testConnectors :: OnDemand PostgresCreds -> Spec
 testConnectors creds = do
@@ -97,7 +105,7 @@ testPostgreSQL p = do
         let count = 10
         insert conn table (take count $ head mocks)
         connected $
-          timeout_ (seconds 2) $
+          timeout (seconds 2) $
           Topic.withConsumer topic group $ \consumer -> do
           es <- replicateM count $ readEvent consumer
           length es `shouldBe` count
@@ -106,7 +114,7 @@ testPostgreSQL p = do
       with (PartitionCount 1) $ \conn table topic connected -> do
         let count = 10_000
         insert conn table (take count $ head mocks)
-        connected $ timeout_ (seconds 2) $
+        connected $ timeout (seconds 2) $
           Topic.withConsumer topic group $ \consumer -> do
           es <- replicateM count $ readEvent consumer
           length es `shouldBe` count
@@ -115,7 +123,7 @@ testPostgreSQL p = do
       with (PartitionCount 1) $ \conn table topic connected -> do
         let count = 10
             write = insert conn table (take count $ head mocks)
-        connected $ timeout_ (seconds 1) $
+        connected $ timeout (seconds 1) $
           Topic.withConsumer topic group $ \consumer ->
           withAsyncThrow write $ do
           es <- replicateM count $ readEvent consumer
@@ -128,7 +136,7 @@ testPostgreSQL p = do
             write = mapConcurrently id
               [ insert conn table (take count $ mocks !! partition)
               | partition <- [1..partitions] ]
-        connected $ timeout_ (seconds 1) $
+        connected $ timeout (seconds 1) $
           Topic.withConsumer topic group $ \consumer -> do
           -- write and consume concurrently
           withAsyncThrow write $ do
@@ -151,11 +159,10 @@ testPostgreSQL p = do
     withFileTopic partitions $ \topic ->                                    -- create topic
     let config = mkConfig creds table in
     Topic.withProducer topic partitioner (encoder config) $ \producer -> do -- create topic producer
-    let connected act =
-          ConnectorPostgres.withConnector producer config (const act)       -- setup connector
+    let logger = plainLogger Warn
+        connected act =
+          ConnectorPostgres.withConnector logger producer config (const act)-- setup connector
     f conn table topic connected
-
-  seconds n = n * 1_000_000 -- one second in microseconds
 
 readEvent :: Topic.Consumer -> IO (Event, Topic.Meta)
 readEvent consumer = do
@@ -164,14 +171,6 @@ readEvent consumer = do
   case Aeson.eitherDecode $ LB.fromStrict bs of
     Left err -> throwIO $ ErrorCall $ "Event decoding error: " <> show err
     Right val -> return (val, meta)
-
--- version of timeout that throws on timeout
-timeout_ :: Int -> IO a -> IO a
-timeout_ time act = do
-  r <- timeout time act
-  case r of
-    Nothing -> error "timed out"
-    Just v -> return v
 
 mkConfig :: PostgresCreds -> TableName -> ConnectorPostgres.ConnectorConfig
 mkConfig PostgresCreds{..} table = ConnectorConfig
@@ -202,23 +201,29 @@ data Event = Event
   , e_aggregate_id :: Int
   , e_sequence_number :: Int
   }
-  deriving (Generic, P.FromRow, Show)
+  deriving (Eq, Show, Generic, P.FromRow)
+
+eventAesonOptions :: Aeson.Options
+eventAesonOptions = Aeson.defaultOptions
+  { Aeson.fieldLabelModifier = \label ->
+    fromMaybe label (stripPrefix "e_" label)
+  }
 
 instance Aeson.FromJSON Event where
-  parseJSON = Aeson.withObject "Event" $ \o -> do
-    e_id <- o Aeson..: "id"
-    e_aggregate_id <- o Aeson..: "aggregate_id"
-    e_sequence_number <- o Aeson..: "sequence_number"
-    return Event{..}
+  parseJSON = Aeson.genericParseJSON eventAesonOptions
+
+instance Aeson.ToJSON Event where
+  toJSON = Aeson.genericToJSON eventAesonOptions
 
 -- Mock events to be added to the database.
 -- Each sublist is an infinite list of events for the same aggregate.
 mocks :: [[Event]]
 mocks =
   -- the aggregate_id is given when the records are inserted into the database
-  [ [ Event (-1) agg_id seq_id | seq_id <- [0..] ]
+  [ [ Event err agg_id seq_id | seq_id <- [0..] ]
     | agg_id <- [0..]
   ]
+  where err = error "aggregate id is determined by postgres"
 
 insert :: P.Connection -> TableName -> [Event] -> IO ()
 insert conn table events =
@@ -236,6 +241,7 @@ tableNumber = unsafePerformIO (newMVar 0)
 
 type TableName = String
 
+-- | Creates a new events table on every invocation.
 withEventsTable :: PostgresCreds -> (P.Connection -> TableName -> IO a) -> IO a
 withEventsTable creds f = bracket create destroy $ uncurry f
   where
@@ -254,7 +260,8 @@ withEventsTable creds f = bracket create destroy $ uncurry f
       ]
     return (conn, name)
 
-  destroy (conn, name) = execute conn $ "DROP TABLE " <> name
+  destroy (conn, name) =
+    execute conn $ "DROP TABLE " <> name
 
   takeName = do
     number <- modifyMVar tableNumber $ \n -> return (n + 1, n)
