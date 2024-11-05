@@ -316,11 +316,17 @@ withConsumer topic@Topic{..} name act = do
           return $ PartitionReader r pnumber offsetVar
 
   remove :: ConsumerId -> Consumer -> IO ()
-  remove cid consumer = do
+  remove cid consumer@(Consumer _ var) = do
     toClose <- atomically $ do
-      closeConsumer consumer
       groups <- STM.readTVar t_cgroups
+      assigned <- fromMaybe [] <$> STM.readTVar var
+      closeConsumer consumer
+
       let group_before = groups HashMap.! name
+          isGroupClosed = case g_state group_before of
+            Ready _ -> False
+            Initialising -> False
+            Closed -> True
           remaining = HashMap.delete cid (g_consumers group_before)
           group = group_before
             { g_consumers = remaining
@@ -329,7 +335,10 @@ withConsumer topic@Topic{..} name act = do
                 then Closed
                 else g_state group_before
             }
-      unless (HashMap.null remaining) $ rebalance group
+
+      unless (HashMap.null remaining || null assigned || isGroupClosed) $
+        rebalance group
+
       STM.writeTVar t_cgroups $ HashMap.insert name group groups
       return $ case g_state group of
         Initialising -> error "unexpected initialising state"
