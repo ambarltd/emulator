@@ -23,7 +23,6 @@ main = do
       queue <- maybe defaultStatePath return o_statePath
       let config = EmulatorConfig
             { c_partitionsPerTopic = fromMaybe _DEFAULT_PARTITIONS_PER_TOPIC o_partitionsPerTopic
-            , c_maxParallelism = Nothing -- can't be set for now
             , c_dataPath = queue
             }
           severity = if o_verbose then Debug else Info

@@ -113,6 +113,8 @@ emulate logger config env = do
       DestinationHttp{..} -> do
         transport <-  HttpTransport.new d_endpoint d_username d_password
         act (Some transport)
+      DestinationFun f -> do
+        act (Some f)
 
 topicName :: Id DataSource -> TopicName
 topicName sid = TopicName $ "t-" <> unId sid

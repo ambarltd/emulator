@@ -17,6 +17,7 @@ import Control.Monad (forM_, when)
 import Control.Exception (throwIO, ErrorCall(..))
 import Data.Aeson (ToJSON, FromJSON, (.:), FromJSONKey, ToJSONKey)
 import qualified Data.Aeson as Json
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.Text as Text
 import Data.Text (Text)
@@ -25,6 +26,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Yaml as Yaml
 
 import qualified Ambar.Emulator.Connector.Postgres as Pg
+import Ambar.Transport (SubmissionError)
 import Ambar.Transport.Http (Endpoint, User, Password)
 
 newtype Id a = Id { unId :: Text }
@@ -33,7 +35,6 @@ newtype Id a = Id { unId :: Text }
 -- | Configures the internals of the emulator
 data EmulatorConfig = EmulatorConfig
   { c_partitionsPerTopic :: Int
-  , c_maxParallelism :: Maybe Int
   , c_dataPath :: FilePath
   }
 
@@ -62,7 +63,8 @@ data DataDestination = DataDestination
   }
 
 data Destination
-  = DestinationFile FilePath
+  = DestinationFun (ByteString -> IO (Maybe SubmissionError))
+  | DestinationFile FilePath
   | DestinationHttp
       { d_endpoint :: Endpoint
       , d_username :: User
