@@ -15,4 +15,4 @@ sepBy :: Doc ann -> [Doc ann] -> Doc ann
 sepBy s = concatWith (\x y -> x <+> s <+> y)
 
 commaSeparated :: [Doc ann] -> Doc ann
-commaSeparated = sepBy " ,"
+commaSeparated = sepBy ","
