@@ -328,11 +328,13 @@ writeFD fd bs =
 
 readIndexEntry :: HasCallStack => FilePath -> Offset -> IO Bytes
 readIndexEntry indexPath (Offset offset) =
+  if offset == 0 then return (Bytes 0) else
   withFile indexPath ReadMode $ \handle -> do
     hSeek handle AbsoluteSeek $ fromIntegral $ offset * _WORD64_SIZE
     bytes <- B.hGet handle _WORD64_SIZE
     byteOffset <- case Binary.decodeOrFail $ LB.fromStrict bytes of
-      Left (_,_,err) -> error $ "FilePartition: Error reading index: " <> err
+      Left (_,_,err) ->
+        error $ "FilePartition: Error reading index at offset "<> show offset <> ": " <> err
       Right  (_,_,n) -> return n
     return $ Bytes byteOffset
 
