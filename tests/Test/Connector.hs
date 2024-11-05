@@ -32,6 +32,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import Ambar.Emulator.Connector.Poll
   ( BoundaryTracker(..)
   , Boundaries(..)
+  , EntryId(..)
   , rangeTracker
   )
 import Ambar.Emulator.Connector.Postgres (ConnectorConfig(..), partitioner, encoder)
@@ -53,7 +54,7 @@ testConnectors creds = do
 testPollingConnector :: Spec
 testPollingConnector = describe "Poll" $
   describe "rangeTracker" $ do
-    BoundaryTracker mark boundaries cleanup <- return (rangeTracker :: BoundaryTracker Int)
+    BoundaryTracker mark boundaries cleanup <- return (rangeTracker :: BoundaryTracker EntryId)
     let bs xs = foldr (uncurry mark) mempty $ reverse $ zip [0, 1..] xs
     it "one id" $ do
       boundaries (mark 1 1 mempty) `shouldBe` Boundaries [(1,1)]

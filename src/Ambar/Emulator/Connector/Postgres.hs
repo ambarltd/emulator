@@ -31,7 +31,7 @@ import GHC.Generics (Generic)
 
 import Utils.Delay (Duration, millis, seconds)
 import qualified Ambar.Emulator.Connector.Poll as Poll
-import Ambar.Emulator.Connector.Poll (BoundaryTracker(..), Boundaries(..))
+import Ambar.Emulator.Connector.Poll (BoundaryTracker(..), Boundaries(..), EntryId(..))
 import Ambar.Emulator.Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
 
 _POLLING_INTERVAL :: Duration
@@ -134,11 +134,10 @@ connect producer config@ConnectorConfig{..} =
       }
 
    consume
-      :: forall id. Show id
-      => P.Connection
+      :: P.Connection
       -> TableSchema
-      -> BoundaryTracker id
-      -> (Row -> id)
+      -> BoundaryTracker EntryId
+      -> (Row -> EntryId)
       -> IO Void
    consume conn schema tracker getSerial = Poll.connect tracker pc
      where
@@ -213,14 +212,14 @@ mkParser cols (TableSchema schema) = Row <$> traverse (parser . getType) cols
 
 withTracker
    :: PgType
-   -> (forall id. Show id => BoundaryTracker id -> (Row -> id) -> IO b)
+   -> (BoundaryTracker EntryId -> (Row -> EntryId) -> IO b)
    -> IO b
 withTracker ty f = case ty of
    PgInt8 -> intTracker
    PgInt2 -> intTracker
    PgInt4 -> intTracker
-   PgFloat4 -> realTracker
-   PgFloat8 -> realTracker
+   PgFloat4 -> unsupported
+   PgFloat8 -> unsupported
    PgBool -> unsupported
    PgJson -> unsupported
    PgBytea -> unsupported
@@ -233,13 +232,7 @@ withTracker ty f = case ty of
    intTracker = f Poll.rangeTracker get
       where
       get row = case serialValue row of
-         Int n -> n
-         val -> error "Invalid serial column value:" (show val)
-
-   realTracker = f Poll.rangeTracker get
-      where
-      get row = case serialValue row of
-         Real n -> n
+         Int n -> EntryId $ fromIntegral n
          val -> error "Invalid serial column value:" (show val)
 
 validate :: ConnectorConfig -> TableSchema -> IO ()

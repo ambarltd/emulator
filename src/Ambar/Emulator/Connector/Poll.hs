@@ -1,6 +1,7 @@
 module Ambar.Emulator.Connector.Poll
    ( Boundaries(..)
    , PollingConnector(..)
+   , EntryId(..)
    , connect
    , BoundaryTracker(..)
    , rangeTracker
@@ -18,26 +19,30 @@ import qualified Ambar.Emulator.Queue.Topic as Topic
 import Utils.Delay (Duration, delay, fromDiffTime, toDiffTime)
 
 -- | List of ID ranges to exclude
-newtype Boundaries id = Boundaries [(id, id)]
+newtype Boundaries = Boundaries [(EntryId, EntryId)]
    deriving (Show, Eq)
 
-data PollingConnector item id = PollingConnector
-   { c_getId :: item -> id
-   , c_poll :: Boundaries id -> IO [item]  -- ^ run query
+newtype EntryId = EntryId Integer
+   deriving (Show)
+   deriving newtype (Eq, Enum, Ord, Num)
+
+data PollingConnector entry = PollingConnector
+   { c_getId :: entry -> EntryId
+   , c_poll :: Boundaries -> IO [entry]  -- ^ run query
    , c_pollingInterval :: Duration
    , c_maxTransactionTime :: Duration
-   , c_producer :: Topic.Producer item
+   , c_producer :: Topic.Producer entry
    }
 
 -- | Tracks seen ID boundaries
 data BoundaryTracker id = forall state. Monoid state => BoundaryTracker
    { t_mark :: POSIXTime -> id -> state -> state
-   , t_boundaries :: state -> Boundaries id
+   , t_boundaries :: state -> Boundaries
    -- remove all relevant entries before given time.
    , t_cleanup :: POSIXTime -> state -> state
    }
 
-connect :: BoundaryTracker id -> PollingConnector item id -> IO Void
+connect :: BoundaryTracker EntryId -> PollingConnector entry -> IO Void
 connect
    (BoundaryTracker mark boundaries cleanup)
    (PollingConnector getId poll interval maxTransTime producer) = do
@@ -54,6 +59,11 @@ connect
       go now $ foldr (mark now . getId) tracker items
 
 -- | Boundary tracker for enumerable ids. Takes advantage of ranges.
+-- Map by range's low Id
+newtype BoundaryTracker_ = BoundaryTracker_ (Map Integer (Range Integer))
+   deriving newtype (Semigroup, Monoid)
+
+-- | Boundary tracker for enumerable ids. Takes advantage of ranges.
 newtype EnumTracker a = EnumTracker (Map a (Range a)) -- map by range low Id
    deriving newtype (Semigroup, Monoid)
 
@@ -64,7 +74,7 @@ data Range a = Range
    deriving Show
 
 -- | Track id ranges.
-rangeTracker :: (Show a, Ord a, Enum a) => BoundaryTracker a
+rangeTracker :: BoundaryTracker EntryId
 rangeTracker = BoundaryTracker mark boundaries cleanup
    where
    mark :: (Ord a, Enum a) => POSIXTime -> a -> EnumTracker a -> EnumTracker a
@@ -99,7 +109,7 @@ rangeTracker = BoundaryTracker mark boundaries cleanup
                | otherwise ->
                   Map.insert el (Range (time, el) (time, el)) m
 
-   boundaries :: Ord a => EnumTracker a -> Boundaries a
+   boundaries :: EnumTracker EntryId -> Boundaries
    boundaries (EnumTracker m) =
       Boundaries
       [ (low, high)
