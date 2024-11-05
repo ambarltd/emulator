@@ -101,6 +101,8 @@ new partition start = do
         atomicallyNamed "STMReader" $ STM.writeTMVar nextVar $ error $ unwords
           [ "reading from destroyed reader" ]
 
+  -- TODO: Errors from this worker are swalloed.
+  -- We MUST implement something to make the whole queue seize-up.
   worker <- Async.async (work 0 `finally` cleanup)
   return STMReader
     { r_worker = worker
