@@ -1,14 +1,17 @@
 module Ambar.Emulator.Connector.Postgres
   ( ConnectorConfig(..)
-  , connect
+  , withConnector
+  , ConnectorState
   , partitioner
   , encoder
   , Value(..)
   , Row
   ) where
 
-import Control.Concurrent.STM (TVar, newTVarIO)
+import Control.Concurrent.Async (withAsync)
+import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
 import Control.Exception (Exception, bracket, throwIO, ErrorCall(..))
+import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LB
@@ -121,13 +124,19 @@ instance Aeson.ToJSON Value where
     Json b -> b
     Null -> Aeson.Null
 
-connect :: Producer Row -> ConnectorConfig -> IO Void
-connect producer config@ConnectorConfig{..} =
+-- | Opaque serializable connector state
+newtype ConnectorState = ConnectorState BoundaryTracker
+  deriving (Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+withConnector :: Producer Row -> ConnectorConfig -> (STM ConnectorState -> IO a) -> IO a
+withConnector producer config@ConnectorConfig{..} f =
    bracket open P.close $ \conn -> do
    schema <- fetchSchema c_table conn
    validate config schema
    tracker <- newTVarIO mempty
-   consume conn schema tracker
+   let readState = ConnectorState <$> readTVar tracker
+   withAsync (consume conn schema tracker) (const $ f readState)
    where
    open = P.connect P.ConnectInfo
       { P.connectHost = Text.unpack c_host

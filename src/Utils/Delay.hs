@@ -9,9 +9,10 @@ module Utils.Delay
   , toDiffTime
   ) where
 
-import Data.Time.Clock (NominalDiffTime, nominalDiffTimeToSeconds, secondsToNominalDiffTime)
 import Control.Concurrent (threadDelay)
 import Control.Monad (forever)
+import Data.Time.Clock (NominalDiffTime, nominalDiffTimeToSeconds, secondsToNominalDiffTime)
+import Data.Void (Void)
 
 delay :: Duration -> IO ()
 delay = threadDelay . toNano
@@ -35,7 +36,7 @@ toDiffTime :: Duration -> NominalDiffTime
 toDiffTime (Nanoseconds n) =
   secondsToNominalDiffTime $ fromIntegral n / 1_000_000
 
-every :: Duration -> IO a -> IO b
+every :: Duration -> IO a -> IO Void
 every period act = forever $ do
   delay period
   act

@@ -15,7 +15,7 @@ module Ambar.Emulator.Config
 
 import Control.Monad (forM_, when)
 import Control.Exception (throwIO, ErrorCall(..))
-import Data.Aeson (ToJSON, FromJSON, (.:))
+import Data.Aeson (ToJSON, FromJSON, (.:), FromJSONKey, ToJSONKey)
 import qualified Data.Aeson as Json
 import qualified Data.ByteString as BS
 import qualified Data.Text as Text
@@ -28,13 +28,13 @@ import qualified Ambar.Emulator.Connector.Postgres as Pg
 import Ambar.Transport.Http (Endpoint, User, Password)
 
 newtype Id a = Id { unId :: Text }
-  deriving newtype (ToJSON, FromJSON, Ord, Eq)
+  deriving newtype (ToJSON, FromJSON, FromJSONKey, ToJSONKey, Ord, Eq)
 
 -- | Configures the internals of the emulator
 data EmulatorConfig = EmulatorConfig
   { c_partitionsPerTopic :: Int
   , c_maxParallelism :: Maybe Int
-  , c_statePath :: FilePath
+  , c_dataPath :: FilePath
   }
 
 -- | An environment's configuration.

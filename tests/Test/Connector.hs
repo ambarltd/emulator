@@ -11,7 +11,6 @@ import Data.List (isInfixOf, sort)
 import qualified Data.Map.Strict as Map
 import Data.String (fromString)
 import qualified Data.Text as Text
-import Data.Void (Void)
 import Data.Word (Word16)
 import Control.Exception (bracket, throwIO, ErrorCall(..))
 import Control.Monad (void, replicateM, forM_)
@@ -94,29 +93,29 @@ testPostgreSQL p = do
         length rs `shouldBe` 10
 
     it "retrieves all events already in the db" $
-      with (PartitionCount 1) $ \conn table topic connect -> do
+      with (PartitionCount 1) $ \conn table topic connected -> do
         let count = 10
         insert conn table (take count $ head mocks)
-        withAsyncThrow connect $
+        connected $
           timeout_ (seconds 2) $
           Topic.withConsumer topic group $ \consumer -> do
           es <- replicateM count $ readEvent consumer
           length es `shouldBe` count
 
     it "can retrieve a large number of events" $
-      with (PartitionCount 1) $ \conn table topic connect -> do
+      with (PartitionCount 1) $ \conn table topic connected -> do
         let count = 10_000
         insert conn table (take count $ head mocks)
-        withAsyncThrow connect $ timeout_ (seconds 2) $
+        connected $ timeout_ (seconds 2) $
           Topic.withConsumer topic group $ \consumer -> do
           es <- replicateM count $ readEvent consumer
           length es `shouldBe` count
 
     it "retrieves events added after initial snapshot" $
-      with (PartitionCount 1) $ \conn table topic connect -> do
+      with (PartitionCount 1) $ \conn table topic connected -> do
         let count = 10
             write = insert conn table (take count $ head mocks)
-        withAsyncThrow connect $ timeout_ (seconds 1) $
+        connected $ timeout_ (seconds 1) $
           Topic.withConsumer topic group $ \consumer ->
           withAsyncThrow write $ do
           es <- replicateM count $ readEvent consumer
@@ -124,12 +123,12 @@ testPostgreSQL p = do
 
     it "maintains ordering through parallel writes" $ do
       let partitions = 5
-      with (PartitionCount partitions) $ \conn table topic connect -> do
+      with (PartitionCount partitions) $ \conn table topic connected -> do
         let count = 1_000
             write = mapConcurrently id
               [ insert conn table (take count $ mocks !! partition)
               | partition <- [1..partitions] ]
-        withAsyncThrow connect $ timeout_ (seconds 1) $
+        connected $ timeout_ (seconds 1) $
           Topic.withConsumer topic group $ \consumer -> do
           -- write and consume concurrently
           withAsyncThrow write $ do
@@ -142,15 +141,19 @@ testPostgreSQL p = do
               annotate ("ordered (" <> show a_id <> ")") $
                 sort seqs `shouldBe` seqs
   where
-  with :: PartitionCount -> (P.Connection -> TableName -> Topic -> IO Void -> IO a) -> IO a
+  with
+    :: PartitionCount
+    -> (P.Connection -> TableName -> Topic -> (IO b -> IO b) -> IO a)
+    -> IO a
   with partitions f =
-    OnDemand.with p $ \creds ->                                           -- load db
-    withEventsTable creds $ \conn table ->                                -- create events table
-    withFileTopic partitions $ \topic ->                                  -- create topic
+    OnDemand.with p $ \creds ->                                             -- load db
+    withEventsTable creds $ \conn table ->                                  -- create events table
+    withFileTopic partitions $ \topic ->                                    -- create topic
     let config = mkConfig creds table in
-    Topic.withProducer topic partitioner (encoder config) $ \producer ->  -- create topic producer
-    let connect = ConnectorPostgres.connect producer config in            -- setup connector
-    f conn table topic connect
+    Topic.withProducer topic partitioner (encoder config) $ \producer -> do -- create topic producer
+    let connected act =
+          ConnectorPostgres.withConnector producer config (const act)       -- setup connector
+    f conn table topic connected
 
   seconds n = n * 1_000_000 -- one second in microseconds
 
