@@ -31,7 +31,7 @@ import GHC.Generics (Generic)
 
 import Utils.Delay (Duration, millis, seconds)
 import qualified Ambar.Emulator.Connector.Poll as Poll
-import Ambar.Emulator.Connector.Poll (BoundaryTracker(..), Boundaries(..), EntryId(..))
+import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..))
 import Ambar.Emulator.Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
 
 _POLLING_INTERVAL :: Duration
@@ -136,7 +136,7 @@ connect producer config@ConnectorConfig{..} =
    consume
       :: P.Connection
       -> TableSchema
-      -> BoundaryTracker EntryId
+      -> BoundaryTracker
       -> (Row -> EntryId)
       -> IO Void
    consume conn schema tracker getSerial = Poll.connect tracker pc
@@ -212,7 +212,7 @@ mkParser cols (TableSchema schema) = Row <$> traverse (parser . getType) cols
 
 withTracker
    :: PgType
-   -> (BoundaryTracker EntryId -> (Row -> EntryId) -> IO b)
+   -> (BoundaryTracker -> (Row -> EntryId) -> IO b)
    -> IO b
 withTracker ty f = case ty of
    PgInt8 -> intTracker
@@ -229,7 +229,7 @@ withTracker ty f = case ty of
    where
    unsupported = error $ "Unsupported serial column type: " <> show ty
 
-   intTracker = f Poll.rangeTracker get
+   intTracker = f mempty get
       where
       get row = case serialValue row of
          Int n -> EntryId $ fromIntegral n

@@ -3,8 +3,10 @@ module Ambar.Emulator.Connector.Poll
    , PollingConnector(..)
    , EntryId(..)
    , connect
-   , BoundaryTracker(..)
-   , rangeTracker
+   , BoundaryTracker
+   , mark
+   , boundaries
+   , cleanup
    ) where
 
 {-| General polling connector -}
@@ -34,20 +36,18 @@ data PollingConnector entry = PollingConnector
    , c_producer :: Topic.Producer entry
    }
 
--- | Tracks seen ID boundaries
-data BoundaryTracker id = forall state. Monoid state => BoundaryTracker
-   { t_mark :: POSIXTime -> id -> state -> state
-   , t_boundaries :: state -> Boundaries
-   -- remove all relevant entries before given time.
-   , t_cleanup :: POSIXTime -> state -> state
-   }
+-- -- | Tracks seen ID boundaries
+-- data BoundaryTracker id = forall state. Monoid state => BoundaryTracker
+--    { t_mark :: POSIXTime -> id -> state -> state
+--    , t_boundaries :: state -> Boundaries
+--    -- remove all relevant entries before given time.
+--    , t_cleanup :: POSIXTime -> state -> state
+--    }
 
-connect :: BoundaryTracker EntryId -> PollingConnector entry -> IO Void
-connect
-   (BoundaryTracker mark boundaries cleanup)
-   (PollingConnector getId poll interval maxTransTime producer) = do
+connect :: BoundaryTracker -> PollingConnector entry -> IO Void
+connect tracker__ (PollingConnector getId poll interval maxTransTime producer) = do
    now <- getPOSIXTime
-   go now mempty
+   go now tracker__
    where
    diff = toDiffTime maxTransTime
    go before tracker_ = do
@@ -60,64 +60,56 @@ connect
 
 -- | Boundary tracker for enumerable ids. Takes advantage of ranges.
 -- Map by range's low Id
-newtype BoundaryTracker_ = BoundaryTracker_ (Map Integer (Range Integer))
+newtype BoundaryTracker = BoundaryTracker (Map EntryId Range)
    deriving newtype (Semigroup, Monoid)
 
--- | Boundary tracker for enumerable ids. Takes advantage of ranges.
-newtype EnumTracker a = EnumTracker (Map a (Range a)) -- map by range low Id
-   deriving newtype (Semigroup, Monoid)
-
-data Range a = Range
-   { _r_low :: (POSIXTime, a)
-   , _r_high :: (POSIXTime, a)
+data Range = Range
+   { _r_low :: (POSIXTime, EntryId)
+   , _r_high :: (POSIXTime, EntryId)
    }
    deriving Show
 
--- | Track id ranges.
-rangeTracker :: BoundaryTracker EntryId
-rangeTracker = BoundaryTracker mark boundaries cleanup
+mark :: POSIXTime -> EntryId -> BoundaryTracker -> BoundaryTracker
+mark time el (BoundaryTracker m) = BoundaryTracker $
+   case Map.lookupLE el m of
+     Nothing -> checkAbove
+     Just (_, Range (low_t, low) (_, high))
+         -- already in range
+         | el <= high -> m
+         | el == succ high ->
+            case Map.lookup (succ el) m of
+               Just (Range _ h) ->
+                  -- join ranges
+                  Map.insert low (Range (low_t, low) h) $
+                  Map.delete (succ el) m
+               Nothing ->
+                  -- extend range upwards
+                  Map.insert low (Range (low_t, low) (time , el)) m
+         | otherwise -> checkAbove
    where
-   mark :: (Ord a, Enum a) => POSIXTime -> a -> EnumTracker a -> EnumTracker a
-   mark time el (EnumTracker m) = EnumTracker $
-      case Map.lookupLE el m of
-        Nothing -> checkAbove
-        Just (_, Range (low_t, low) (_, high))
-            -- already in range
-            | el <= high -> m
-            | el == succ high ->
-               case Map.lookup (succ el) m of
-                  Just (Range _ h) ->
-                     -- join ranges
-                     Map.insert low (Range (low_t, low) h) $
-                     Map.delete (succ el) m
-                  Nothing ->
-                     -- extend range upwards
-                     Map.insert low (Range (low_t, low) (time , el)) m
-            | otherwise -> checkAbove
-      where
-      checkAbove =
-         case Map.lookupGT el m of
-            Nothing ->
-               -- disjoint range
+   checkAbove =
+      case Map.lookupGT el m of
+         Nothing ->
+            -- disjoint range
+            Map.insert el (Range (time, el) (time, el)) m
+         Just (_, Range (_, low) (high_t, high))
+            -- extends range downwards
+            | el == pred low ->
+               Map.insert el (Range (time, el) (high_t, high)) $
+               Map.delete low m
+            -- disjoint range
+            | otherwise ->
                Map.insert el (Range (time, el) (time, el)) m
-            Just (_, Range (_, low) (high_t, high))
-               -- extends range downwards
-               | el == pred low ->
-                  Map.insert el (Range (time, el) (high_t, high)) $
-                  Map.delete low m
-               -- disjoint range
-               | otherwise ->
-                  Map.insert el (Range (time, el) (time, el)) m
 
-   boundaries :: EnumTracker EntryId -> Boundaries
-   boundaries (EnumTracker m) =
-      Boundaries
-      [ (low, high)
-      | Range (_, low) (_, high) <- Map.elems m
-      ]
+boundaries :: BoundaryTracker -> Boundaries
+boundaries (BoundaryTracker m) =
+   Boundaries
+   [ (low, high)
+   | Range (_, low) (_, high) <- Map.elems m
+   ]
 
-   cleanup :: Show a => POSIXTime -> EnumTracker a -> EnumTracker a
-   cleanup bound (EnumTracker m) =
-      EnumTracker $ Map.filter (\(Range _ (t_high,_)) -> t_high > bound) m
+cleanup :: POSIXTime -> BoundaryTracker -> BoundaryTracker
+cleanup bound (BoundaryTracker m) =
+   BoundaryTracker $ Map.filter (\(Range _ (t_high,_)) -> t_high > bound) m
 
 
