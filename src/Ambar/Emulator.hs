@@ -33,7 +33,7 @@ emulate logger config env = do
     createTopics queue
     concurrently_ (connectAll queue) (projectAll queue)
   where
-  qpath = c_queuePath config
+  qpath = c_statePath config
   pcount = Topic.PartitionCount $ c_partitionsPerTopic config
 
   createTopics queue = do

@@ -20,17 +20,17 @@ main = do
   case cmd of
     CmdRun{..} -> do
       env <- parseEnvConfigFile o_configPath
-      queue <- maybe defaultQueuePath return o_queuePath
+      queue <- maybe defaultStatePath return o_statePath
       let config = EmulatorConfig
             { c_partitionsPerTopic = fromMaybe _DEFAULT_PARTITIONS_PER_TOPIC o_partitionsPerTopic
             , c_maxParallelism = Nothing -- can't be set for now
-            , c_queuePath = queue
+            , c_statePath = queue
             }
           severity = if o_verbose then Debug else Info
       emulate (plainLogger severity) config env
 
-defaultQueuePath :: IO FilePath
-defaultQueuePath = do
+defaultStatePath :: IO FilePath
+defaultStatePath = do
   -- here's some discussion why history files belong in XDG_DATA_HOME:
   --   https://github.com/fish-shell/fish-shell/issues/744
   dir <- getXdgDirectory XdgData "ambar-emulator"
@@ -40,7 +40,7 @@ defaultQueuePath = do
 data Command
   = CmdRun
     { o_partitionsPerTopic :: Maybe Int
-    , o_queuePath :: Maybe FilePath
+    , o_statePath :: Maybe FilePath
     , o_configPath :: FilePath
     , o_verbose :: Bool
     }
@@ -73,7 +73,7 @@ cliOptions = O.info (O.helper <*> parser) $ mconcat
           , O.metavar "INT"
           , O.help "How many partitions should newly created topics have."
           ]
-      o_queuePath <- optional $ O.strOption $ mconcat
+      o_statePath <- optional $ O.strOption $ mconcat
           [ O.long "data-path"
           , O.metavar "PATH"
           , O.help "Where to put emulation data including file queues. Defaults to $XDG_DATA_HOME/ambar-emulator."
