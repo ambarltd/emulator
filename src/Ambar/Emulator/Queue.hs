@@ -9,7 +9,6 @@ module Ambar.Emulator.Queue
   where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar, readMVar)
-import Control.Concurrent.Async (withAsync)
 import Control.Exception (bracket, throwIO, Exception(..), uninterruptibleMask_)
 import Control.Monad (forM, forM_, when)
 import qualified Data.ByteString.Lazy as LB
@@ -36,6 +35,7 @@ import Ambar.Emulator.Queue.Topic
 import qualified Ambar.Emulator.Queue.Topic as T
 import qualified Ambar.Emulator.Queue.Partition.File as FilePartition
 import Ambar.Emulator.Queue.Partition.File (FilePartition)
+import Utils.Async (withAsyncThrow)
 import Utils.Delay (every, seconds)
 import Utils.Some (Some(..))
 
@@ -79,8 +79,7 @@ withQueue
   -> (Queue -> IO a) -> IO a
 withQueue path count act =
   bracket (open (Store path) count) close $ \queue ->
-    withAsync (saver queue) $ \_ ->
-      act queue
+    withAsyncThrow (saver queue) (act queue)
   where
   saver :: Queue -> IO Void
   saver queue = every (seconds 5) (save queue)

@@ -1,6 +1,8 @@
 module Ambar.Emulator.Projector
   ( Projection(..)
   , project
+  , Message(..)
+  , Record(..)
   ) where
 
 {-| A projector reads messages from multiple queues, applies a filter to the
