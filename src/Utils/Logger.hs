@@ -155,7 +155,9 @@ logWarn :: (HasCallStack, Pretty a) => SimpleLogger -> a -> IO ()
 logWarn logger msg = logMsg logger (WithSeverity Warn $ PrettyT $ pretty msg)
 
 logDebug :: (HasCallStack, Pretty a) => SimpleLogger -> a -> IO ()
-logDebug logger msg = logMsg logger (WithSeverity Debug $ PrettyT $ pretty msg)
+logDebug logger msg = do
+  loc <- getLocation 2
+  logMsg logger (WithSeverity Debug $ PrettyT $ pretty $ WithLocation loc msg)
 
 logFatal :: (HasCallStack, Pretty a) => SimpleLogger -> a -> IO ()
 logFatal logger msg = logMsg logger (WithSeverity Fatal $ PrettyT $ pretty msg)
