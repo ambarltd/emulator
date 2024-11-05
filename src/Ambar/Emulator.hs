@@ -3,12 +3,11 @@ module Ambar.Emulator where
 import Control.Concurrent.STM (atomically)
 import Control.Concurrent.Async (concurrently_, forConcurrently_, withAsync)
 import Control.Exception (finally, uninterruptibleMask_)
-import Control.Monad (forM_, forM)
+import Control.Monad (forM)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.Map (Map)
 import qualified Data.Map as Map
-import qualified Data.HashMap.Strict as HashMap
 import Foreign.Marshal.Utils (withMany)
 import GHC.Generics (Generic)
 import System.FilePath ((</>))
@@ -32,7 +31,7 @@ import Ambar.Emulator.Config
   , DataDestination(..)
   , Destination(..)
   )
-import Utils.Logger (SimpleLogger, logInfo)
+import Utils.Logger (SimpleLogger, annotate)
 import Utils.Some (Some(..))
 import Utils.Delay (every, seconds)
 
@@ -50,24 +49,13 @@ newtype EmulatorState = EmulatorState
 
 emulate :: SimpleLogger -> EmulatorConfig -> EnvironmentConfig -> IO ()
 emulate logger config env = do
-  Queue.withQueue queuePath pcount $ \queue -> do
-    createTopics queue
+  Queue.withQueue queuePath pcount $ \queue ->
     concurrently_ (connectAll queue) (projectAll queue)
   where
   queuePath = c_dataPath config </> "queues"
   statePath = c_dataPath config </> "state.json"
   sources = Map.elems $ c_sources env
   pcount = Topic.PartitionCount $ c_partitionsPerTopic config
-
-  createTopics queue = do
-    info <- Queue.getInfo queue
-    forM_ sources $ \source -> do
-      let tname = topicName $ s_id source
-      if tname `HashMap.member` info
-        then logInfo logger $ "loaded topic '" <> unTopicName tname <> "'"
-        else do
-          _ <- Queue.openTopic queue tname
-          logInfo logger $ "created topic for '" <> unTopicName tname <> "'"
 
   connectAll queue =
     withMany (connect queue) sources $ \svars ->
@@ -82,10 +70,13 @@ emulate logger config env = do
   connect queue source f = do
     topic <- Queue.openTopic queue $ topicName $ s_id source
     case s_source source of
-      SourcePostgreSQL pconfig ->
-        Topic.withProducer topic Postgres.partitioner (Postgres.encoder pconfig) $ \producer ->
-        Postgres.withConnector producer pconfig $ \stateVar ->
-        f (s_id source, StatePostgres <$> stateVar)
+      SourcePostgreSQL pconfig -> do
+        let logger' = annotate ("source: " <> unId (s_id source)) logger
+            partitioner = Postgres.partitioner
+            encoder = Postgres.encoder pconfig
+        Topic.withProducer topic partitioner encoder $ \producer ->
+          Postgres.withConnector logger' producer pconfig $ \stateVar ->
+          f (s_id source, StatePostgres <$> stateVar)
 
       SourceFile path ->
         Topic.withProducer topic FileConnector.partitioner FileConnector.encoder $ \producer ->

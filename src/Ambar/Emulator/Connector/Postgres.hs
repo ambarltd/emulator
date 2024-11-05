@@ -8,7 +8,6 @@ module Ambar.Emulator.Connector.Postgres
   , Row
   ) where
 
-import Control.Concurrent.Async (withAsync)
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
 import Control.Exception (Exception, bracket, throwIO, ErrorCall(..))
 import Data.Aeson (FromJSON, ToJSON)
@@ -36,10 +35,12 @@ import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated)
 import Prettyprinter (pretty)
 import qualified Prettyprinter as Pretty
 
-import Utils.Delay (Duration, millis, seconds)
 import qualified Ambar.Emulator.Connector.Poll as Poll
 import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..))
 import Ambar.Emulator.Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
+import Utils.Async (withAsyncThrow)
+import Utils.Delay (Duration, millis, seconds)
+import Utils.Logger (SimpleLogger, logDebug)
 
 _POLLING_INTERVAL :: Duration
 _POLLING_INTERVAL = millis 50
@@ -129,14 +130,14 @@ newtype ConnectorState = ConnectorState BoundaryTracker
   deriving (Generic)
   deriving anyclass (FromJSON, ToJSON)
 
-withConnector :: Producer Row -> ConnectorConfig -> (STM ConnectorState -> IO a) -> IO a
-withConnector producer config@ConnectorConfig{..} f =
+withConnector :: SimpleLogger -> Producer Row -> ConnectorConfig -> (STM ConnectorState -> IO a) -> IO a
+withConnector logger producer config@ConnectorConfig{..} f =
    bracket open P.close $ \conn -> do
    schema <- fetchSchema c_table conn
    validate config schema
    tracker <- newTVarIO mempty
    let readState = ConnectorState <$> readTVar tracker
-   withAsync (consume conn schema tracker) (const $ f readState)
+   withAsyncThrow (consume conn schema tracker) (f readState)
    where
    open = P.connect P.ConnectInfo
       { P.connectHost = Text.unpack c_host
@@ -163,7 +164,11 @@ withConnector producer config@ConnectorConfig{..} f =
 
      parser = mkParser (columns config) schema
 
-     run (Boundaries bs) = P.queryWith parser conn query ()
+     run (Boundaries bs) = do
+       logDebug logger query
+       r <- P.queryWith parser conn (fromString query) ()
+       logDebug logger $ "results: " <> show (length r)
+       return r
        where
        query = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
           [ "SELECT" , commaSeparated $ map pretty $ columns config
@@ -177,7 +182,7 @@ withConnector producer config@ConnectorConfig{..} f =
              [ "("
              , pretty c_serialColumn, "<", pretty low
              , "OR"
-             , pretty c_serialColumn, ">", pretty high
+             ,  pretty high, "<", pretty c_serialColumn
              , ")"]
           | (EntryId low, EntryId high) <- bs
           ]
