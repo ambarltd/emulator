@@ -86,10 +86,10 @@ testPollingConnector = describe "Poll" $
       (boundaries . bs) [10, 1,5,3,2,4] `shouldBe` Boundaries [(1,5), (10,10)]
 
     it "cleanup removes ranges with ending lower than time given" $ do
-      (boundaries . cleanup 1 . bs) [1 ,3, 5, 7] `shouldBe` Boundaries [(5,5), (7,7)]
+      (boundaries . cleanup 2 . bs) [1 ,3, 5, 7] `shouldBe` Boundaries [(5,5), (7,7)]
 
     it "cleanup doesn't remove ranges ending higher than time given" $ do
-      (boundaries . cleanup 1 . bs) [1 ,2, 5, 3] `shouldBe` Boundaries [(1,3), (5,5)]
+      (boundaries . cleanup 2 . bs) [1 ,2, 5, 3] `shouldBe` Boundaries [(1,3), (5,5)]
 
 testPostgreSQL :: OnDemand PostgresCreds -> Spec
 testPostgreSQL p = do

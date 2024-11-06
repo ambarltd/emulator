@@ -114,6 +114,17 @@ boundaries (BoundaryTracker m) =
 
 cleanup :: POSIXTime -> BoundaryTracker -> BoundaryTracker
 cleanup bound (BoundaryTracker m) =
-   BoundaryTracker $ Map.filter (\(Range _ (t_high,_)) -> t_high > bound) m
+   BoundaryTracker $ Map.filter (\range -> highTime range >= safeBound) m
+   where
+   highTime (Range _ (t_high,_)) = t_high
+   -- a safe bound always leaves one element in the BoundaryTracker to
+   -- avoid fetching everything from the beginning.
+   highestTime = maximum $ highTime <$> Map.elems m
+   safeBound =
+      if Map.null m
+      then bound
+      else min bound highestTime
+
+
 
 
