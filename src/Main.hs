@@ -6,6 +6,7 @@ import Data.Maybe (fromMaybe)
 import qualified Options.Applicative as O
 import qualified Options.Applicative.Help.Pretty as OP
 import System.Directory (createDirectoryIfMissing, getXdgDirectory, XdgDirectory(..))
+import Prettyprinter (pretty)
 
 import Ambar.Emulator (emulate)
 import Ambar.Emulator.Config (parseEnvConfigFile, EmulatorConfig(..))
@@ -13,6 +14,10 @@ import Utils.Logger (plainLogger, Severity(..))
 
 _DEFAULT_PARTITIONS_PER_TOPIC :: Int
 _DEFAULT_PARTITIONS_PER_TOPIC = 10
+
+-- | Version of the binary file
+_VERSION :: String
+_VERSION = "v0.0.1 - alpha release"
 
 main :: IO ()
 main = do
@@ -27,6 +32,8 @@ main = do
             }
           severity = if o_verbose then Debug else Info
       emulate (plainLogger severity) config env
+    CmdVersion ->
+      print _VERSION
 
 defaultStatePath :: IO FilePath
 defaultStatePath = do
@@ -43,12 +50,13 @@ data Command
     , o_configPath :: FilePath
     , o_verbose :: Bool
     }
+  | CmdVersion
 
 cliOptions :: O.ParserInfo Command
-cliOptions = O.info (O.helper <*> parser) $ mconcat
+cliOptions = O.info (O.simpleVersioner _VERSION <*> O.helper <*> parser) $ mconcat
   [ O.fullDesc
   , O.headerDoc $ Just $ OP.vcat
-    [ "Ambar Ambar.Emulator"
+    [ "Ambar Emulator " <> pretty _VERSION
     , ""
     , OP.indent 2 $ OP.vcat
       [ "A local version of Ambar <https://ambar.cloud>"
