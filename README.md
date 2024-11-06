@@ -64,3 +64,25 @@ will start streaming your data.
 ``` bash
 > emulator run --config config.yaml
 ```
+
+## Help
+
+You can see all commands available with the `--help` flag
+
+``` bash
+Ambar Emulator v0.0.1 - alpha release
+
+  A local version of Ambar <https://ambar.cloud>
+  Connect your databases to multiple consumers with minimal configuration and no libraries needed.
+
+Usage: emulator COMMAND
+
+Available options:
+  --version                Show version information
+  -h,--help                Show this help text
+
+Available commands:
+  run                      run the emulator
+
+More info at <https://github.com/ambarltd/emulator>
+```
