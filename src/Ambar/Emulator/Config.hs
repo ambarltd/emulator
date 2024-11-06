@@ -30,6 +30,7 @@ import Ambar.Transport (SubmissionError)
 import Ambar.Transport.Http (Endpoint, User, Password)
 
 newtype Id a = Id { unId :: Text }
+  deriving (Show)
   deriving newtype (ToJSON, FromJSON, FromJSONKey, ToJSONKey, Ord, Eq)
 
 -- | Configures the internals of the emulator

@@ -16,6 +16,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LB
 import Data.ByteString.Base64 (encodeBase64)
 import Data.Base64.Types (extractBase64)
+import Data.Default (Default(..))
 import Data.Hashable (Hashable)
 import Data.Int (Int64)
 import Data.List ((\\))
@@ -128,16 +129,23 @@ instance Aeson.ToJSON Value where
 -- | Opaque serializable connector state
 newtype ConnectorState = ConnectorState BoundaryTracker
   deriving (Generic)
+  deriving newtype (Default)
   deriving anyclass (FromJSON, ToJSON)
 
-withConnector :: SimpleLogger -> Producer Row -> ConnectorConfig -> (STM ConnectorState -> IO a) -> IO a
-withConnector logger producer config@ConnectorConfig{..} f =
+withConnector
+  :: SimpleLogger
+  -> ConnectorState
+  -> Producer Row
+  -> ConnectorConfig
+  -> (STM ConnectorState -> IO a)
+  -> IO a
+withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..} f =
    bracket open P.close $ \conn -> do
    schema <- fetchSchema c_table conn
    validate config schema
-   tracker <- newTVarIO mempty
-   let readState = ConnectorState <$> readTVar tracker
-   withAsyncThrow (consume conn schema tracker) (f readState)
+   trackerVar <- newTVarIO tracker
+   let readState = ConnectorState <$> readTVar trackerVar
+   withAsyncThrow (consume conn schema trackerVar) (f readState)
    where
    open = P.connect P.ConnectInfo
       { P.connectHost = Text.unpack c_host
@@ -152,7 +160,7 @@ withConnector logger producer config@ConnectorConfig{..} f =
       -> TableSchema
       -> TVar BoundaryTracker
       -> IO Void
-   consume conn schema tracker = Poll.connect tracker pc
+   consume conn schema trackerVar = Poll.connect trackerVar pc
      where
      pc = Poll.PollingConnector
         { Poll.c_getId = entryId

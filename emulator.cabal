@@ -66,6 +66,7 @@ library emulator-lib
         , binary
         , casing
         , containers
+        , data-default
         , directory
         , extra
         , filepath
@@ -102,6 +103,7 @@ test-suite emulator-tests
         , async
         , bytestring
         , containers
+        , data-default
         , directory
         , filepath
         , hspec

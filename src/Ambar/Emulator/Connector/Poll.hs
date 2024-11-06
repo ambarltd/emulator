@@ -14,6 +14,7 @@ module Ambar.Emulator.Connector.Poll
 import Control.Concurrent.STM (TVar, atomically, writeTVar, readTVarIO)
 import Control.Monad (forM_)
 import Data.Aeson (ToJSON, FromJSON, FromJSONKey, ToJSONKey)
+import Data.Default (Default)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import Data.Void (Void)
 import Data.Map.Strict (Map)
@@ -62,7 +63,7 @@ connect trackerVar (PollingConnector getId poll interval maxTransTime producer) 
 -- Map by range's low Id
 newtype BoundaryTracker = BoundaryTracker (Map EntryId Range)
    deriving (Generic)
-   deriving newtype (Semigroup, Monoid)
+   deriving newtype (Semigroup, Monoid, Default)
    deriving anyclass (FromJSON, ToJSON)
 
 data Range = Range

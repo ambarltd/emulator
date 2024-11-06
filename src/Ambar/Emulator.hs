@@ -2,14 +2,17 @@ module Ambar.Emulator where
 
 import Control.Concurrent.STM (atomically)
 import Control.Concurrent.Async (concurrently_, forConcurrently_, withAsync)
-import Control.Exception (finally, uninterruptibleMask_)
+import Control.Exception (finally, uninterruptibleMask_, throwIO, ErrorCall(..))
 import Control.Monad (forM)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
+import Data.Default (def)
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Maybe (fromMaybe)
 import Foreign.Marshal.Utils (withMany)
 import GHC.Generics (Generic)
+import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
 import qualified Ambar.Emulator.Connector.Postgres as Postgres
@@ -54,12 +57,30 @@ emulate logger config env = do
   where
   queuePath = c_dataPath config </> "queues"
   statePath = c_dataPath config </> "state.json"
-  sources = Map.elems $ c_sources env
   pcount = Topic.PartitionCount $ c_partitionsPerTopic config
 
-  connectAll queue =
+  connectAll queue = do
+    EmulatorState connectorStates <- load
+    let getState source =
+          fromMaybe (initialStateFor source) $
+          Map.lookup (s_id source) connectorStates
+
+        sources =
+          [ (source, getState source) | source <- Map.elems $ c_sources env ]
+
     withMany (connect queue) sources $ \svars ->
       every (seconds 30) (save svars) `finally` save svars
+
+  load = do
+    exists <- doesFileExist statePath
+    if not exists
+    then return (EmulatorState def)
+    else do
+      r <- Aeson.eitherDecodeFileStrict statePath
+      case r of
+        Right v -> return v
+        Left err ->
+          throwIO $ ErrorCall $ "Unable to decode emulator state: " <> show err
 
   save svars =
     uninterruptibleMask_ $ do
@@ -67,21 +88,30 @@ emulate logger config env = do
       states <- forM svars $ \(sid, svar) -> (sid,) <$> atomically svar
       Aeson.encodeFile statePath $ EmulatorState (Map.fromList states)
 
-  connect queue source f = do
+  connect queue (source, sstate) f = do
     topic <- Queue.openTopic queue $ topicName $ s_id source
     case s_source source of
       SourcePostgreSQL pconfig -> do
         let logger' = annotate ("source: " <> unId (s_id source)) logger
             partitioner = Postgres.partitioner
             encoder = Postgres.encoder pconfig
+        state <- case sstate of
+          StatePostgres s -> return s
+          _ -> throwIO $ ErrorCall $
+            "Incompatible state for source: " <> show (s_id source)
         Topic.withProducer topic partitioner encoder $ \producer ->
-          Postgres.withConnector logger' producer pconfig $ \stateVar ->
+          Postgres.withConnector logger' state producer pconfig $ \stateVar ->
           f (s_id source, StatePostgres <$> stateVar)
 
       SourceFile path ->
         Topic.withProducer topic FileConnector.partitioner FileConnector.encoder $ \producer ->
-        withAsync (FileConnector.connect logger producer path) $ \_ ->
-        f (s_id source, return (StateFile ()))
+        withAsync (FileConnector.connect logger producer path) $ \_ -> do
+        f (s_id source, return $ StateFile ())
+
+  initialStateFor source =
+    case s_source source of
+      SourcePostgreSQL _ -> StatePostgres def
+      SourceFile _ -> StateFile ()
 
   projectAll queue = forConcurrently_ (c_destinations env) (project queue)
 

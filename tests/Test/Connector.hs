@@ -13,6 +13,7 @@ import Control.Concurrent (MVar, newMVar, modifyMVar)
 import Control.Concurrent.Async (mapConcurrently)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LB
+import Data.Default (def)
 import Data.List (isInfixOf, sort, stripPrefix)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
@@ -160,8 +161,8 @@ testPostgreSQL p = do
     let config = mkConfig creds table in
     Topic.withProducer topic partitioner (encoder config) $ \producer -> do -- create topic producer
     let logger = plainLogger Warn
-        connected act =
-          ConnectorPostgres.withConnector logger producer config (const act)-- setup connector
+        connected act = ConnectorPostgres.withConnector                     -- setup connector
+            logger def producer config (const act)
     f conn table topic connected
 
 readEvent :: Topic.Consumer -> IO (Event, Topic.Meta)
