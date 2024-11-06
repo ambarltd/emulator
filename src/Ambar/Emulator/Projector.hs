@@ -1,4 +1,9 @@
-module Ambar.Emulator.Projector where
+module Ambar.Emulator.Projector
+  ( Projection(..)
+  , project
+  , Message(..)
+  , Record(..)
+  ) where
 
 {-| A projector reads messages from multiple queues, applies a filter to the
 stream and submits passing messages to a single data destination.
@@ -15,7 +20,8 @@ import Control.Concurrent.Async (replicateConcurrently_, forConcurrently_)
 import Control.Monad.Extra (whileM)
 import GHC.Generics (Generic)
 
-import Ambar.Emulator.Queue.Topic (Topic, ReadError(..))
+import Ambar.Emulator.Config (Id(..), DataDestination, DataSource)
+import Ambar.Emulator.Queue.Topic (Topic, ReadError(..), PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Transport (Transport)
 import qualified Ambar.Transport as Transport
@@ -23,30 +29,17 @@ import Utils.Some (Some)
 import Utils.Logger (SimpleLogger, logFatal, logWarn, fatal, annotate)
 import Utils.Delay (Duration, delay, millis, seconds)
 
-data DataSource = DataSource
-  { s_id :: Text
-  , s_description :: Text
-  }
-
-data DataDestination = DataDestination
-  { d_id :: Text
-  , d_description :: Text
-  }
-
 data Projection = Projection
-  { p_id :: Text
-  , p_destination :: DataDestination
-  , p_sources :: [(DataSource, Topic)]
-  , p_parallelism :: Int
+  { p_id :: Id Projection
+  , p_destination :: Id DataDestination
+  , p_sources :: [(Id DataSource, Topic)]
   , p_transport :: Some Transport
   }
 
 -- | A record enriched with more information to send to the client.
 data Message = Message
   { data_source_id :: Text
-  , data_source_description :: Text
   , data_destination_id :: Text
-  , data_destination_description :: Text
   , payload :: Record
   }
   deriving (Generic, Show)
@@ -58,15 +51,19 @@ newtype Record = Record Json.Value
 
 project :: SimpleLogger -> Projection -> IO ()
 project logger_ Projection{..} =
-  forConcurrently_ p_sources $ \(source, topic) ->
-  replicateConcurrently_ p_parallelism $
-  Topic.withConsumer topic group $ \consumer -> do
-  let logger =
-        annotate ("source:" <> s_id source) $
-        annotate ("destination:" <> d_id p_destination)
-        logger_
-  whileM $ consume logger consumer source
+  forConcurrently_ p_sources projectSource
   where
+  projectSource (sid, topic) =
+    replicateConcurrently_ pcount $ -- one consumer per partition
+    Topic.withConsumer topic group $ \consumer ->
+    whileM $ consume logger consumer sid
+    where
+      PartitionCount pcount = Topic.partitionCount topic
+      logger =
+        annotate ("source:" <> unId sid) $
+        annotate ("destination:" <> unId  p_destination)
+        logger_
+
   consume logger consumer source = do
     r <- Topic.read consumer
     case r of
@@ -78,13 +75,11 @@ project logger_ Projection{..} =
         Topic.commit consumer meta
         return True
 
-  group = Topic.ConsumerGroupName p_id
+  group = Topic.ConsumerGroupName $ unId p_id
 
-  toMsg source record = LB.toStrict $ Json.encode $ Message
-    { data_source_id = s_id source
-    , data_source_description = s_description source
-    , data_destination_id = d_id p_destination
-    , data_destination_description = d_description p_destination
+  toMsg sid record = LB.toStrict $ Json.encode $ Message
+    { data_source_id = unId sid
+    , data_destination_id = unId p_destination
     , payload = record
     }
 

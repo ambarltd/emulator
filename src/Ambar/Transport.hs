@@ -22,3 +22,7 @@ data SubmissionError
 instance Transport (Some Transport) where
   send (Some a) = send a
   sendJSON (Some a) = sendJSON a
+
+instance Transport (ByteString -> IO (Maybe SubmissionError)) where
+  send f = f
+  sendJSON f = f

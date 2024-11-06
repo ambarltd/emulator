@@ -1,32 +1,45 @@
+# Connections to your databases.
+# The Emulator will read data from those dbs.
 data_sources:
-  - id: "postgres source"
-    type: "postgres"
-    host: "localhost"
-    username: "temp"
-    password: "some_pass"
-    database: "db_name"
-    table: "table_name"
+  - id: postgres_source
+    description: Main events store
+    type: postgres
+    host: localhost
+    port: 5432
+    username: my_user
+    password: my_pass
+    database: my_db
+    table: events_table
+    columns:
+      - id
+      - aggregate_id
+      - sequence_number
+      - payload
+    serialColumn: id
+    partitioningColumn: aggregate_id
 
-  - id: "file source"
-    type: "file"
-    path: "./source.txt"
-
+# Connections to your endpoint.
+# The Emulator will send data read from the databases to these endpoints.
 data_destinations:
-  - id: "file destination"
-    type: "file"
-    path: "./temp.file"
 
-    sources:
-      - id: "postgres source"
-      - id: "file source"
-
-  - id: "HTTP destination"
-    type: "http-push"
-    endpoint: http://some.url.com/one
-    password: password123
-    port: 22
+  # Send data via HTTP
+  - id: http_destination
+    description: my projection 2
+    type: http-push
+    endpoint: http://some.url.com:8080/my_projection
     username: name-of-user
+    password: password123
 
     sources:
-      - id: "postgres source"
-      - id: "file source"
+      - postgres source
+      - file source
+
+  # Send data to a file. One entry per line.
+  - id: file_destination
+    description: my projection 1
+    type: file
+    path: ./temp.file
+
+    sources:
+      - postgres_source
+      - file_source

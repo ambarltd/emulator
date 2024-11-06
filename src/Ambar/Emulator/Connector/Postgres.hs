@@ -1,19 +1,25 @@
 module Ambar.Emulator.Connector.Postgres
   ( ConnectorConfig(..)
-  , connect
+  , withConnector
+  , ConnectorState
   , partitioner
   , encoder
+  , Value(..)
+  , Row
   ) where
 
+import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
 import Control.Exception (Exception, bracket, throwIO, ErrorCall(..))
+import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LB
 import Data.ByteString.Base64 (encodeBase64)
 import Data.Base64.Types (extractBase64)
+import Data.Default (Default(..))
 import Data.Hashable (Hashable)
 import Data.Int (Int64)
-import Data.List ((\\), intercalate)
+import Data.List ((\\))
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
@@ -26,11 +32,16 @@ import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.FromField as P
 import qualified Database.PostgreSQL.Simple.FromRow as P
 import GHC.Generics (Generic)
+import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated)
+import Prettyprinter (pretty)
+import qualified Prettyprinter as Pretty
 
-import Utils.Delay (Duration, millis, seconds)
 import qualified Ambar.Emulator.Connector.Poll as Poll
-import Ambar.Emulator.Connector.Poll (BoundaryTracker(..), Boundaries(..))
+import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..))
 import Ambar.Emulator.Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
+import Utils.Async (withAsyncThrow)
+import Utils.Delay (Duration, millis, seconds)
+import Utils.Logger (SimpleLogger, logDebug)
 
 _POLLING_INTERVAL :: Duration
 _POLLING_INTERVAL = millis 50
@@ -89,7 +100,7 @@ instance P.FromField PgType where
       _ -> P.conversionError $ UnsupportedType str
 
 -- | One row retrieved from a PostgreSQL database.
-type Row = [Value]
+newtype Row = Row [Value]
 
 data Value
   = Boolean Bool
@@ -115,13 +126,26 @@ instance Aeson.ToJSON Value where
     Json b -> b
     Null -> Aeson.Null
 
-connect :: Producer Row -> ConnectorConfig -> IO Void
-connect producer config@ConnectorConfig{..} =
+-- | Opaque serializable connector state
+newtype ConnectorState = ConnectorState BoundaryTracker
+  deriving (Generic)
+  deriving newtype (Default)
+  deriving anyclass (FromJSON, ToJSON)
+
+withConnector
+  :: SimpleLogger
+  -> ConnectorState
+  -> Producer Row
+  -> ConnectorConfig
+  -> (STM ConnectorState -> IO a)
+  -> IO a
+withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..} f =
    bracket open P.close $ \conn -> do
    schema <- fetchSchema c_table conn
    validate config schema
-   let pcol = unTableSchema schema Map.! c_partitioningColumn
-   withTracker pcol $ consume conn schema
+   trackerVar <- newTVarIO tracker
+   let readState = ConnectorState <$> readTVar trackerVar
+   withAsyncThrow (consume conn schema trackerVar) (f readState)
    where
    open = P.connect P.ConnectInfo
       { P.connectHost = Text.unpack c_host
@@ -132,16 +156,14 @@ connect producer config@ConnectorConfig{..} =
       }
 
    consume
-      :: forall id. Show id
-      => P.Connection
+      :: P.Connection
       -> TableSchema
-      -> BoundaryTracker id
-      -> (Row -> id)
+      -> TVar BoundaryTracker
       -> IO Void
-   consume conn schema tracker getSerial = Poll.connect tracker pc
+   consume conn schema trackerVar = Poll.connect trackerVar pc
      where
      pc = Poll.PollingConnector
-        { Poll.c_getId = getSerial
+        { Poll.c_getId = entryId
         , Poll.c_poll = run
         , Poll.c_pollingInterval = _POLLING_INTERVAL
         , Poll.c_maxTransactionTime = _MAX_TRANSACTION_TIME
@@ -150,21 +172,28 @@ connect producer config@ConnectorConfig{..} =
 
      parser = mkParser (columns config) schema
 
-     run (Boundaries bs) = P.queryWith parser conn query ()
+     run (Boundaries bs) = do
+       logDebug logger query
+       r <- P.queryWith parser conn (fromString query) ()
+       logDebug logger $ "results: " <> show (length r)
+       return r
        where
-       query = fromString $ Text.unpack $ Text.unwords
-          [ "SELECT" , Text.intercalate ", " (columns config)
-          , "FROM" , c_table
+       query = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
+          [ "SELECT" , commaSeparated $ map pretty $ columns config
+          , "FROM" , pretty c_table
           , if null bs then "" else "WHERE" <> constraints
-          , "ORDER BY" , c_serialColumn
+          , "ORDER BY" , pretty c_serialColumn
           ]
-       constraints = Text.pack $ intercalate "AND" $ flip fmap bs
-         $ \(low, high) -> unwords
+
+       constraints = sepBy "AND"
+          [ Pretty.fillSep
              [ "("
-             , Text.unpack c_serialColumn, "<", show low
+             , pretty c_serialColumn, "<", pretty low
              , "OR"
-             , Text.unpack c_serialColumn, ">", show high
+             ,  pretty high, "<", pretty c_serialColumn
              , ")"]
+          | (EntryId low, EntryId high) <- bs
+          ]
 
 partitioner :: Partitioner Row
 partitioner = hashPartitioner partitioningValue
@@ -172,7 +201,7 @@ partitioner = hashPartitioner partitioningValue
 -- | A rows gets saved in the database as a JSON object with
 -- the columns specified in the config file as keys.
 encoder :: ConnectorConfig -> Encoder Row
-encoder config row =
+encoder config (Row row) =
   LB.toStrict $ Aeson.encode $ Map.fromList $ zip (columns config) row
 
 -- | Columns in the order they will be queried.
@@ -182,15 +211,16 @@ columns ConnectorConfig{..} =
     ((c_columns \\ [c_serialColumn]) \\ [c_partitioningColumn])
 
 serialValue :: Row -> Value
-serialValue = \case
-  [] -> error "serialValue: empty row"
-  x:_ -> x
+serialValue (Row row) =
+  case row of
+    [] -> error "serialValue: empty row"
+    x:_ -> x
 
 partitioningValue :: Row -> Value
-partitioningValue = (!! 1)
+partitioningValue (Row row) = row !! 1
 
 mkParser :: [Text] -> TableSchema -> P.RowParser Row
-mkParser cols (TableSchema schema) = traverse (parser . getType) cols
+mkParser cols (TableSchema schema) = Row <$> traverse (parser . getType) cols
   where
   getType col = schema Map.! col
 
@@ -208,36 +238,10 @@ mkParser cols (TableSchema schema) = traverse (parser . getType) cols
     PgTimestamptz -> fmap DateTime <$> P.field
     PgText -> fmap String <$> P.field
 
-withTracker
-   :: PgType
-   -> (forall id. Show id => BoundaryTracker id -> (Row -> id) -> IO b)
-   -> IO b
-withTracker ty f = case ty of
-   PgInt8 -> intTracker
-   PgInt2 -> intTracker
-   PgInt4 -> intTracker
-   PgFloat4 -> realTracker
-   PgFloat8 -> realTracker
-   PgBool -> unsupported
-   PgJson -> unsupported
-   PgBytea -> unsupported
-   PgTimestamp -> unsupported
-   PgTimestamptz -> unsupported
-   PgText -> unsupported
-   where
-   unsupported = error $ "Unsupported serial column type: " <> show ty
-
-   intTracker = f Poll.rangeTracker get
-      where
-      get row = case serialValue row of
-         Int n -> n
-         val -> error "Invalid serial column value:" (show val)
-
-   realTracker = f Poll.rangeTracker get
-      where
-      get row = case serialValue row of
-         Real n -> n
-         val -> error "Invalid serial column value:" (show val)
+entryId :: Row -> EntryId
+entryId row = case serialValue row of
+   Int n -> EntryId $ fromIntegral n
+   val -> error "Invalid serial column value:" (show val)
 
 validate :: ConnectorConfig -> TableSchema -> IO ()
 validate config (TableSchema schema) = do
@@ -255,7 +259,7 @@ validate config (TableSchema schema) = do
     then return ()
     else throwIO $ ErrorCall $ "Invalid serial column type: " <> show serialTy
   serialTy = schema Map.! c_serialColumn config
-  allowedSerialTypes = [PgInt8, PgInt2, PgInt4, PgFloat4, PgFloat8]
+  allowedSerialTypes = [PgInt8, PgInt2, PgInt4]
 
 fetchSchema :: Text -> P.Connection -> IO TableSchema
 fetchSchema table conn = do

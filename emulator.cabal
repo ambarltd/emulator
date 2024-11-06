@@ -24,7 +24,9 @@ executable emulator
     other-modules:
     build-depends:
         base ^>=4.17.2.1
+        , directory
         , emulator-lib
+        , filepath
         , prettyprinter
         , prettyprinter-ansi-terminal
         , optparse-applicative
@@ -34,6 +36,9 @@ library emulator-lib
     ghc-options: -Wall -Werror -fprof-auto
     hs-source-dirs: src
     exposed-modules:
+        Ambar.Emulator
+        Ambar.Emulator.Config
+        Ambar.Emulator.Connector.File
         Ambar.Emulator.Connector.Poll
         Ambar.Emulator.Connector.Postgres
         Ambar.Emulator.Projector
@@ -44,9 +49,11 @@ library emulator-lib
         Ambar.Emulator.Queue.Partition.STMReader
         Ambar.Transport
         Ambar.Transport.Http
+        Ambar.Transport.File
         Utils.Async
         Utils.Delay
         Utils.Logger
+        Utils.Prettyprinter
         Utils.STM
         Utils.Some
     build-depends:
@@ -59,6 +66,7 @@ library emulator-lib
         , binary
         , casing
         , containers
+        , data-default
         , directory
         , extra
         , filepath
@@ -73,6 +81,7 @@ library emulator-lib
         , text
         , time
         , unordered-containers
+        , yaml
 
 test-suite emulator-tests
     import: common
@@ -80,8 +89,10 @@ test-suite emulator-tests
     hs-source-dirs: tests
     main-is: Tests.hs
     other-modules:
+        Test.Config
         Test.Queue
         Test.Connector
+        Test.Emulator
         Test.Utils.Tests
         Test.Utils.OnDemand
     type:    exitcode-stdio-1.0
@@ -92,6 +103,7 @@ test-suite emulator-tests
         , async
         , bytestring
         , containers
+        , data-default
         , directory
         , filepath
         , hspec
@@ -101,6 +113,7 @@ test-suite emulator-tests
         , process
         , QuickCheck
         , stm
+        , string-interpolate
         , temporary
         , text
         , unordered-containers

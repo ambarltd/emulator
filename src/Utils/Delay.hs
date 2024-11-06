@@ -2,41 +2,51 @@ module Utils.Delay
   ( Duration
   , delay
   , every
+  , timeout
   , seconds
   , millis
-  , nanos
+  , micros
   , fromDiffTime
   , toDiffTime
   ) where
 
-import Data.Time.Clock (NominalDiffTime, nominalDiffTimeToSeconds, secondsToNominalDiffTime)
 import Control.Concurrent (threadDelay)
 import Control.Monad (forever)
+import Data.Time.Clock (NominalDiffTime, nominalDiffTimeToSeconds, secondsToNominalDiffTime)
+import Data.Void (Void)
+import qualified System.Timeout as T
 
 delay :: Duration -> IO ()
-delay = threadDelay . toNano
+delay = threadDelay . toMicro
 
-newtype Duration = Nanoseconds { toNano :: Int }
+newtype Duration = Microseconds { toMicro :: Int }
   deriving newtype (Show, Eq, Ord, Num)
 
 seconds :: Int -> Duration
-seconds n = Nanoseconds $ n * 1_000_000
+seconds n = Microseconds $ n * 1_000_000
 
 millis :: Int -> Duration
-millis n = Nanoseconds $ n * 1_000
+millis n = Microseconds $ n * 1_000
 
-nanos :: Int -> Duration
-nanos = Nanoseconds
+micros :: Int -> Duration
+micros = Microseconds
 
 fromDiffTime :: NominalDiffTime -> Duration
-fromDiffTime n = Nanoseconds $ ceiling $ nominalDiffTimeToSeconds n * 1_000_000
+fromDiffTime n = Microseconds $ ceiling $ nominalDiffTimeToSeconds n * 1_000_000
 
 toDiffTime :: Duration -> NominalDiffTime
-toDiffTime (Nanoseconds n) =
+toDiffTime (Microseconds n) =
   secondsToNominalDiffTime $ fromIntegral n / 1_000_000
 
-every :: Duration -> IO a -> IO b
+every :: Duration -> IO a -> IO Void
 every period act = forever $ do
   delay period
   act
 
+-- | Version of timeout that throws on timeout
+timeout :: Duration -> IO a -> IO a
+timeout time act = do
+  r <- T.timeout (toMicro time) act
+  case r of
+    Nothing -> error "timed out"
+    Just v -> return v

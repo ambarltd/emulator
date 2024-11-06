@@ -15,7 +15,7 @@ import Control.Concurrent.STM
   , TMVar
   , atomically
   )
-import Control.Exception (Exception(..), bracket, bracketOnError, throwIO)
+import Control.Exception (Exception(..), bracket, bracketOnError, throwIO, uninterruptibleMask_)
 import Control.Monad (void, unless, when)
 import qualified Data.Binary as Binary
 import Data.ByteString (ByteString)
@@ -157,11 +157,17 @@ open location name = do
     loadIndex index = do
       indexSize <- fromIntegral <$> getFileSize index
       let count = (indexSize `div` _WORD64_SIZE) - 1
-      byteOffsetOfNextEntry <- readIndexEntry index (Offset count)
+      lastIndexEntry <- readIndexEntry index (Offset count)
+      -- This should be the same as the size of the records file.
+      -- However we use the last index entry in case the program
+      -- was interrupted between writing to the records file and
+      -- to the index file.
+      let byteOffsetOfNextEntry = lastIndexEntry
       return (Count count, byteOffsetOfNextEntry)
 
 close :: HasCallStack => FilePartition -> IO ()
 close FilePartition{..} =
+  uninterruptibleMask_ $
   modifyMVar_ p_handles $ \case
     Nothing -> return Nothing -- already closed
     Just (fd_records, fd_index) -> do
@@ -244,7 +250,7 @@ instance Partition FilePartition where
     acquire = atomicallyNamed "file.seek.acquire" $ do
       info <- STM.takeTMVar var
       (Count count, _) <- STM.readTVar $ p_info $ r_partition info
-      let offset = case pos of
+      let offset = max 0 $ case pos of
             At o -> o
             Beginning -> 0
             End -> Offset count - 1
@@ -307,13 +313,13 @@ instance Partition FilePartition where
       (Count count, Bytes partitionSize) <- STM.readTVarIO p_info
 
       let entry = bs <> "\n"
-          entrySize = fromIntegral (B.length bs)
-          entryByteOffset = B.toStrict $ Binary.encode partitionSize
+          entrySize = fromIntegral (B.length entry)
           newSize = entrySize + partitionSize
           newCount = count + 1
+          nextEntryByteOffset = B.toStrict $ Binary.encode newSize
 
       writeFD fd_records entry
-      writeFD fd_index entryByteOffset
+      writeFD fd_index nextEntryByteOffset
       atomicallyNamed "file.write" $ STM.writeTVar p_info (Count newCount, Bytes newSize)
 
 writeFD :: HasCallStack => FD -> ByteString -> IO ()
@@ -322,12 +328,13 @@ writeFD fd bs =
   FD.write fd (coerce ptr) 0 (fromIntegral len)
 
 readIndexEntry :: HasCallStack => FilePath -> Offset -> IO Bytes
-readIndexEntry indexPath (Offset offset)  = do
+readIndexEntry indexPath (Offset offset) =
   withFile indexPath ReadMode $ \handle -> do
     hSeek handle AbsoluteSeek $ fromIntegral $ offset * _WORD64_SIZE
     bytes <- B.hGet handle _WORD64_SIZE
     byteOffset <- case Binary.decodeOrFail $ LB.fromStrict bytes of
-      Left (_,_,err) -> error $ "FilePartition: Error reading index: " <> err
+      Left (_,_,err) ->
+        error $ "FilePartition: Error reading index at offset "<> show offset <> ": " <> err
       Right  (_,_,n) -> return n
     return $ Bytes byteOffset
 

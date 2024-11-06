@@ -29,12 +29,13 @@ import Test.Hspec
 import Foreign.Marshal.Utils (withMany)
 
 import qualified Ambar.Emulator.Queue as Queue
-import Ambar.Emulator.Queue (TopicName(..), PartitionCount(..))
+import Ambar.Emulator.Queue (TopicName(..))
 import Ambar.Emulator.Queue.Topic
   ( Topic
   , Meta(..)
   , ConsumerGroupName(..)
   , PartitionNumber(..)
+  , PartitionCount(..)
   , ReadError(..)
   , withTopic
   )
@@ -338,6 +339,17 @@ testPartition with = do
           (_, one_) <- P.read reader
           (_, two_) <- P.read reader
           one_ `shouldBe` one
+          two_ `shouldBe` two
+
+  it "reopens at offset" $
+    withTempPath $ \path -> do
+      one : two : _ <- return messages
+      with path $ \partition -> do
+        P.write partition one
+        P.write partition two
+      with path $ \partition ->
+        P.withReader partition (At 1) $ \reader -> do
+          (_, two_) <- P.read reader
           two_ `shouldBe` two
 
   it "no concurrent opens" $

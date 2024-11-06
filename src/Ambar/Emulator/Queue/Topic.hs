@@ -1,12 +1,13 @@
 module Ambar.Emulator.Queue.Topic
   ( Topic
-  , t_partitions
   , TopicState(..)
   , PartitionNumber(..)
+  , PartitionCount(..)
   , withTopic
   , openTopic
   , closeTopic
   , getState
+  , partitionCount
 
   , Consumer
   , ConsumerGroupName(..)
@@ -204,17 +205,17 @@ getState Topic{..} = STM.atomically $ do
     , s_consumers = consumers
     }
 
-newtype Partitioner a = Partitioner (Int -> a -> PartitionNumber)
+newtype Partitioner a = Partitioner (PartitionCount -> a -> PartitionNumber)
 
 -- | Choose a partition based on the hash of a partitioning key.
 hashPartitioner :: Hashable key => (a -> key) -> Partitioner a
-hashPartitioner f = Partitioner $ \partitionCount x ->
-  PartitionNumber $ hash (f x) `mod` partitionCount
+hashPartitioner f = Partitioner $ \(PartitionCount pcount) x ->
+  PartitionNumber $ hash (f x) `mod` pcount
 
 -- | Control exactly which partition to use for a message.
 modPartitioner :: (a -> Int) -> Partitioner a
-modPartitioner f = Partitioner $ \partitionCount x ->
-  PartitionNumber $ f x `mod` partitionCount
+modPartitioner f = Partitioner $ \(PartitionCount pcount) x ->
+  PartitionNumber $ f x `mod` pcount
 
 type Encoder a = a -> ByteString
 
@@ -228,11 +229,9 @@ withProducer
 withProducer topic (Partitioner p) encode act =
   act $ Producer
     { p_topic = topic
-    , p_select = p partitionCount
+    , p_select = p (partitionCount topic)
     , p_encode = Record . encode
     }
-  where
-  partitionCount = HashMap.size (t_partitions topic)
 
 write :: HasCallStack => Producer a -> a -> IO ()
 write Producer{..} msg = do
@@ -317,11 +316,17 @@ withConsumer topic@Topic{..} name act = do
           return $ PartitionReader r pnumber offsetVar
 
   remove :: ConsumerId -> Consumer -> IO ()
-  remove cid consumer = do
+  remove cid consumer@(Consumer _ var) = do
     toClose <- atomically $ do
-      closeConsumer consumer
       groups <- STM.readTVar t_cgroups
+      assigned <- fromMaybe [] <$> STM.readTVar var
+      closeConsumer consumer
+
       let group_before = groups HashMap.! name
+          isGroupClosed = case g_state group_before of
+            Ready _ -> False
+            Initialising -> False
+            Closed -> True
           remaining = HashMap.delete cid (g_consumers group_before)
           group = group_before
             { g_consumers = remaining
@@ -330,7 +335,10 @@ withConsumer topic@Topic{..} name act = do
                 then Closed
                 else g_state group_before
             }
-      unless (HashMap.null remaining) $ rebalance group
+
+      unless (HashMap.null remaining || null assigned || isGroupClosed) $
+        rebalance group
+
       STM.writeTVar t_cgroups $ HashMap.insert name group groups
       return $ case g_state group of
         Initialising -> error "unexpected initialising state"
@@ -446,3 +454,7 @@ commit (Consumer _ var) (Meta pnumber offset) = atomically $ do
     -- not the actual ofset value saved.
     STM.modifyTVar (r_committed r) $ \previous -> max previous (offset + 1)
 
+newtype PartitionCount = PartitionCount Int
+
+partitionCount :: Topic -> PartitionCount
+partitionCount topic = PartitionCount $ HashMap.size (t_partitions topic)

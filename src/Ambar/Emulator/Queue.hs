@@ -2,15 +2,14 @@ module Ambar.Emulator.Queue
   ( Queue
   , TopicName(..)
   , OpenQueueError(..)
-  , PartitionCount(..)
   , withQueue
   , openTopic
+  , getInfo
   )
   where
 
-import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar)
-import Control.Concurrent.Async (withAsync)
-import Control.Exception (bracket, throwIO, Exception(..))
+import Control.Concurrent (MVar, newMVar, modifyMVar, withMVar, readMVar)
+import Control.Exception (bracket, throwIO, Exception(..), uninterruptibleMask_)
 import Control.Monad (forM, forM_, when)
 import qualified Data.ByteString.Lazy as LB
 import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
@@ -31,10 +30,12 @@ import Ambar.Emulator.Queue.Topic
   ( Topic
   , TopicState(..)
   , PartitionNumber(..)
+  , PartitionCount(..)
   )
 import qualified Ambar.Emulator.Queue.Topic as T
 import qualified Ambar.Emulator.Queue.Partition.File as FilePartition
 import Ambar.Emulator.Queue.Partition.File (FilePartition)
+import Utils.Async (withAsyncThrow)
 import Utils.Delay (every, seconds)
 import Utils.Some (Some(..))
 
@@ -72,22 +73,20 @@ instance Exception OpenQueueError where
     CorruptedInventory err -> "Inventory file is corrupetd: " <> err
     QueueLocked path -> "Queue locked. The queue is already open. Lock found at: " <> path
 
-newtype PartitionCount = PartitionCount Int
-
 withQueue
   :: FilePath
   -> PartitionCount  -- ^ default partition count for new topics
   -> (Queue -> IO a) -> IO a
 withQueue path count act =
   bracket (open (Store path) count) close $ \queue ->
-    withAsync (saver queue) $ \_ ->
-      act queue
+    withAsyncThrow (saver queue) (act queue)
   where
   saver :: Queue -> IO Void
   saver queue = every (seconds 5) (save queue)
 
 open :: Store -> PartitionCount -> IO Queue
-open store count = do
+open store@(Store path) count = do
+  createDirectoryIfMissing True path
   inventoryLock store
   e <- inventoryLoad store
   inventory <- case e of
@@ -104,7 +103,8 @@ open store count = do
     }
 
 close :: Queue -> IO ()
-close queue@(Queue store _ var) = do
+close queue@(Queue store _ var) =
+  uninterruptibleMask_ $ do
   save queue
   modifyMVar var $ \topics -> do
     forM_ topics $ \tdata -> do
@@ -195,7 +195,8 @@ inventoryRelease (Store path) = do
   let lock = path </> "inventory.lock"
   removeFile lock
 
-
-
-
-
+getInfo :: Queue -> IO (HashMap TopicName PartitionCount)
+getInfo queue = do
+  topics <- readMVar (q_topics queue)
+  return $ flip fmap topics $ \tdata ->
+    PartitionCount $ HashMap.size (d_partitions tdata)

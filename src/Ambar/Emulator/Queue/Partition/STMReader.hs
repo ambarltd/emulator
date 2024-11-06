@@ -18,10 +18,10 @@ import Control.Concurrent.STM
   , TVar
   , TMVar
   )
-import Control.Exception (finally)
+import Control.Exception
+   (finally, handle, throwIO, fromException, SomeAsyncException)
 import Control.Monad (forM_, when)
 import Data.Maybe (isJust)
-import Data.Void (Void)
 
 import Ambar.Emulator.Queue.Partition
   ( Partition
@@ -35,7 +35,7 @@ import qualified Ambar.Emulator.Queue.Partition as Partition
 
 -- | A single (totally ordered) stream of data from a partition.
 data STMReader = STMReader
-  { r_worker :: Async Void
+  { r_worker :: Async ()
   , r_next :: TMVar (Offset, Record) -- ^ take this to get the next element
   , r_expected :: TVar Offset        -- ^ next offset to be read. Change this to seek.
   }
@@ -66,7 +66,7 @@ new partition start = do
   nextVar <- STM.newEmptyTMVarIO
 
   -- the reader is only controlled by the worker
-  let work needle = do
+  let work needle = handle printSync $ do
         -- check if seek is needed and if value in nextVar is still valid.
         mseek <- atomicallyNamed "STMReader" $ do
           mval <- STM.tryReadTMVar nextVar
@@ -97,11 +97,18 @@ new partition start = do
 
         work (offset + 1)
 
+      printSync ex =
+        case fromException ex of
+          Just (_ :: SomeAsyncException) -> throwIO ex
+          _ -> print ex
+
       cleanup = do
         Partition.closeReader reader
         atomicallyNamed "STMReader" $ STM.writeTMVar nextVar $ error $ unwords
           [ "reading from destroyed reader" ]
 
+  -- TODO: Errors from this worker are swalloed.
+  -- We MUST implement something to make the whole queue seize-up.
   worker <- Async.async (work 0 `finally` cleanup)
   return STMReader
     { r_worker = worker
