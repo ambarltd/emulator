@@ -74,13 +74,15 @@ withWarden f = bracket create shutdown $ \warden ->
 
 spawnMask :: Warden -> ((forall b. IO b -> IO b) -> IO a) -> IO (Async a)
 spawnMask (Warden _ v) act =
-  modifyMVar v $ \mas -> do
-    a <- case mas of
-      Nothing -> async (throwIO AsyncCancelled)
-      Just _ -> fixIO $ \a -> mask_ $
+  modifyMVar v $ \case
+    Nothing -> do
+      a <- async (throwIO AsyncCancelled)
+      return (Nothing, a)
+    Just as -> do
+      a <- fixIO $ \a -> mask_ $
         asyncWithUnmask $ \unmask ->
-          act unmask `finally` forget a
-    return (fmap (HashSet.insert (void a)) mas, a)
+        act unmask `finally` forget a
+      return (Just $ HashSet.insert (void a) as, a)
   where
   forget a = modifyMVar_ v $ return . fmap (HashSet.delete (void a))
 
