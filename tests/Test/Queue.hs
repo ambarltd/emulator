@@ -46,6 +46,7 @@ import qualified Ambar.Emulator.Queue.Partition.File as FilePartition
 import Utils.Async (withAsyncThrow)
 import Utils.Some (Some(..))
 import Utils.Delay (delay, millis)
+import Utils.Warden (withWarden)
 
 testQueues :: Spec
 testQueues = do
@@ -63,10 +64,9 @@ withFileTopic :: PartitionCount -> (Topic -> IO a) -> IO a
 withFileTopic (PartitionCount n) act =
   withTempPath $ \path ->
   withMany (f path) [0..n-1] $ \pinstances ->
-  withTopic
-    (HashMap.fromList $ zip [0..] pinstances)
-    mempty
-    act
+  withWarden $ \warden -> do
+  let groups = HashMap.fromList $ zip [0..] pinstances
+  withTopic warden groups mempty act
   where
   f path pnumber g = do
     FilePartition.withFilePartition path (show pnumber) (g . Some)
