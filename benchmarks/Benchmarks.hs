@@ -22,6 +22,7 @@ import qualified Ambar.Emulator.Queue.Partition as P
 import Ambar.Emulator.Queue.Partition.File (FilePartition)
 import qualified Ambar.Emulator.Queue.Partition.File as F
 import Utils.Some (Some(..))
+import Utils.Warden as Warden
 
 main :: IO ()
 main =
@@ -184,10 +185,9 @@ withFileTopic :: PartitionCount -> (Topic -> IO a) -> IO a
 withFileTopic (PartitionCount n) act =
   withTempPath $ \path ->
   withMany (f path) [0..n-1] $ \pinstances ->
-  T.withTopic
-    (HashMap.fromList $ zip [0..] pinstances)
-    mempty
-    act
+  Warden.withWarden $ \warden -> do
+  let groups = HashMap.fromList $ zip [0..] pinstances
+  T.withTopic warden groups mempty act
   where
   f path pnumber g = do
     F.withFilePartition path (show pnumber) (g . Some)
