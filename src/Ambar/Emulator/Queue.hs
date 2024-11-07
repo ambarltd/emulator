@@ -119,6 +119,7 @@ save (Queue store _ var) =
   -- do it in separate STM transactions to minimise retries.
   -- any offset moved during a `getState` operation
   inventory <- Inventory <$> forM topics (T.getState . d_topic)
+  -- keep the MVar during writing to prevent concurrent saves.
   inventoryWrite store inventory
 
 openTopics :: Store -> Inventory -> IO (HashMap TopicName TopicData)

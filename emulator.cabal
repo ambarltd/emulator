@@ -56,6 +56,7 @@ library emulator-lib
         Utils.Prettyprinter
         Utils.STM
         Utils.Some
+        Utils.Warden
     build-depends:
         base ^>=4.17.2.1
         , aeson
