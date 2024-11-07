@@ -21,10 +21,10 @@ import Control.Concurrent
 import Control.Concurrent.Async
   ( Async
   , AsyncCancelled(..)
-  , async
   , asyncWithUnmask
   , cancel
   , mapConcurrently
+  , withAsync
   )
 import Control.Exception
   ( SomeException
@@ -75,9 +75,9 @@ withWarden f = bracket create shutdown $ \warden ->
 spawnMask :: Warden -> ((forall b. IO b -> IO b) -> IO a) -> IO (Async a)
 spawnMask (Warden _ v) act =
   modifyMVar v $ \case
-    Nothing -> do
-      a <- async (throwIO AsyncCancelled)
-      return (Nothing, a)
+    Nothing ->
+      withAsync (throwIO AsyncCancelled) $ \a ->
+        return (Nothing, a)
     Just as -> do
       a <- fixIO $ \a -> mask_ $
         asyncWithUnmask $ \unmask ->
