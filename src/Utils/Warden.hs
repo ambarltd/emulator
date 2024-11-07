@@ -107,4 +107,3 @@ spawnLinkedMask w f = spawnMask w $ \unmask -> f unmask `catch` throwUp
 
 spawnLinked :: Warden -> IO a -> IO (Async a)
 spawnLinked w act = spawnLinkedMask w $ \unmask -> unmask act
-

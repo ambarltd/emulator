@@ -18,8 +18,7 @@ import Control.Concurrent.STM
   , TVar
   , TMVar
   )
-import Control.Exception
-   (finally, handle, throwIO, fromException, SomeAsyncException)
+import Control.Exception (finally)
 import Control.Monad (forM_, when)
 import Data.Maybe (isJust)
 
@@ -69,7 +68,7 @@ new warden partition start = do
   nextVar <- STM.newEmptyTMVarIO
 
   -- the reader is only controlled by the worker
-  let work needle = handle printSync $ do
+  let work needle = do
         -- check if seek is needed and if value in nextVar is still valid.
         mseek <- atomicallyNamed "STMReader" $ do
           mval <- STM.tryReadTMVar nextVar
@@ -99,11 +98,6 @@ new warden partition start = do
           when (expected == offset ) $ STM.putTMVar nextVar (offset, record)
 
         work (offset + 1)
-
-      printSync ex =
-        case fromException ex of
-          Just (_ :: SomeAsyncException) -> throwIO ex
-          _ -> print ex
 
       cleanup = do
         Partition.closeReader reader
