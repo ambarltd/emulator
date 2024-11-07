@@ -1,6 +1,5 @@
 module Ambar.Emulator where
 
-import Control.Concurrent.STM (atomically)
 import Control.Concurrent.Async (concurrently_, forConcurrently_, withAsync)
 import Control.Exception (finally, uninterruptibleMask_, throwIO, ErrorCall(..))
 import Control.Monad (forM)
@@ -34,9 +33,10 @@ import Ambar.Emulator.Config
   , DataDestination(..)
   , Destination(..)
   )
+import Utils.Delay (every, seconds)
 import Utils.Logger (SimpleLogger, annotate)
 import Utils.Some (Some(..))
-import Utils.Delay (every, seconds)
+import Utils.STM (atomicallyNamed)
 
 data ConnectorState
   = StatePostgres Postgres.ConnectorState
@@ -85,7 +85,7 @@ emulate logger config env = do
   save svars =
     uninterruptibleMask_ $ do
       -- reading is non-blocking so should be fine to run under uninterruptibleMask
-      states <- forM svars $ \(sid, svar) -> (sid,) <$> atomically svar
+      states <- forM svars $ \(sid, svar) -> (sid,) <$> atomicallyNamed "emulator.save" svar
       Aeson.encodeFile statePath $ EmulatorState (Map.fromList states)
 
   connect queue (source, sstate) f = do

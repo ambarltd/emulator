@@ -30,7 +30,7 @@ import Prelude hiding (read)
 
 import Control.Concurrent.Async (forConcurrently_ , forConcurrently)
 import qualified Control.Concurrent.STM as STM
-import Control.Concurrent.STM (STM, TVar, atomically)
+import Control.Concurrent.STM (STM, TVar)
 import Control.Exception (bracket, handle, BlockedIndefinitelyOnSTM)
 import Control.Monad (forM_, forM, when, unless)
 import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
@@ -54,6 +54,7 @@ import GHC.Stack (HasCallStack)
 import System.Random (randomIO)
 
 import Utils.Some (Some(..))
+import Utils.STM (atomicallyNamed)
 import Utils.Warden (Warden)
 import Ambar.Emulator.Queue.Partition
   ( Partition
@@ -159,7 +160,8 @@ openTopic
   -> HashMap PartitionNumber (Some Partition)
   -> HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
   -> IO Topic
-openTopic warden partitions groupOffsets = STM.atomically $ do
+openTopic warden partitions groupOffsets =
+  atomicallyNamed "topic.openTopic" $ do
   groups <- forM groupOffsets $ \partitionOffsets -> do
     offsets <- forM partitionOffsets STM.newTVar
     return ConsumerGroup
@@ -176,7 +178,7 @@ openTopic warden partitions groupOffsets = STM.atomically $ do
 
 closeTopic :: Topic -> IO ()
 closeTopic topic = do
-  readers <- STM.atomically $ do
+  readers <- atomicallyNamed "topic.closeTopic" $ do
     groups <- STM.readTVar (t_cgroups topic)
 
     -- close all consumers
@@ -202,7 +204,7 @@ closeTopic topic = do
 
 -- | Get the state of the latest committed offsets of the topic.
 getState :: Topic -> IO TopicState
-getState Topic{..} = STM.atomically $ do
+getState Topic{..} = atomicallyNamed "topic.getState" $ do
   cgroups <- STM.readTVar t_cgroups
   consumers <- forM cgroups $ \group -> forM (g_comitted group) STM.readTVar
   return TopicState
@@ -262,7 +264,7 @@ withConsumer topic@Topic{..} name act = do
     initialise group
     act consumer
   where
-  add cid = STM.atomically $ do
+  add cid = atomicallyNamed "topic.consumer.add" $ do
     consumer <- do
       rvar <- STM.newTVar (Just [])
       return $ Consumer topic rvar
@@ -305,7 +307,7 @@ withConsumer topic@Topic{..} name act = do
     case g_state group of
       Initialising -> do
         readers <- openReaders group
-        STM.atomically $ do
+        atomicallyNamed "topic.consumer.initialise" $ do
           groups <- STM.readTVar t_cgroups
           let group' = (groups HashMap.! name) { g_state = Ready readers }
           let groups' = HashMap.insert name group' groups
@@ -327,7 +329,7 @@ withConsumer topic@Topic{..} name act = do
 
   remove :: ConsumerId -> Consumer -> IO ()
   remove cid consumer@(Consumer _ var) = do
-    toClose <- atomically $ do
+    toClose <- atomicallyNamed "topic.consumer.remove" $ do
       groups <- STM.readTVar t_cgroups
       assigned <- fromMaybe [] <$> STM.readTVar var
       closeConsumer consumer
@@ -432,7 +434,7 @@ data ReadError
 -- Blocks until there is a message.
 read :: HasCallStack => Consumer -> IO (Either ReadError (ByteString, Meta))
 read (Consumer _ var) = do
-  handle whenBlocked $ atomically $ do
+  handle whenBlocked $ atomicallyNamed "topic.consumer.read" $ do
     mreaders <- STM.readTVar var
     case mreaders of
       Nothing -> return $ Left ClosedConsumer
@@ -456,7 +458,8 @@ read (Consumer _ var) = do
 -- | If the partition was moved to a different consumer
 -- the commit will fail silently.
 commit :: HasCallStack => Consumer -> Meta -> IO ()
-commit (Consumer _ var) (Meta pnumber offset) = atomically $ do
+commit (Consumer _ var) (Meta pnumber offset) =
+  atomicallyNamed "topic.consumer.commit" $ do
   mreaders <- STM.readTVar var
   let mreader = find (\r -> r_partition r == pnumber) $ fromMaybe [] mreaders
   forM_ mreader $ \r ->

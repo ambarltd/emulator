@@ -13,7 +13,6 @@ import qualified Control.Concurrent.STM as STM
 import Control.Concurrent.STM
   ( TVar
   , TMVar
-  , atomically
   )
 import Control.Exception (Exception(..), bracket, bracketOnError, throwIO, uninterruptibleMask_)
 import Control.Monad (void, unless, when)
@@ -346,11 +345,11 @@ throwErr p msg =
 modifyTMVarIO :: TMVar a -> (a -> IO (a, b)) -> IO b
 modifyTMVarIO var act =
   bracketOnError
-    (atomically $ STM.takeTMVar var)
-    (atomically . STM.putTMVar var)
+    (atomicallyNamed "modifyTMVarIO.acquire" $ STM.takeTMVar var)
+    (atomicallyNamed "modifyTMVarIO.release" . STM.putTMVar var)
     $ \x -> do
       (x', y) <- act x
-      atomically $ STM.putTMVar var x'
+      atomicallyNamed "modifyTMVarIO.put" $ STM.putTMVar var x'
       return y
 
 modifyTMVarIO_ :: TMVar a -> (a -> IO a) -> IO ()
