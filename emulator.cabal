@@ -95,6 +95,7 @@ test-suite emulator-tests
         Test.Connector
         Test.Emulator
         Test.OnDemand
+        Test.Warden
         Test.Utils.OnDemand
     type:    exitcode-stdio-1.0
     build-depends:
