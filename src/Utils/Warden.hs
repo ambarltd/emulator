@@ -35,7 +35,7 @@ withWarden f = bracket create shutdown $ \warden ->
 
   shutdown :: Warden -> IO ()
   shutdown (Warden _ v) = do
-    masyncs <- swapMVar v Nothing
+    masyncs <- uninterruptibleMask_ $ swapMVar v Nothing
     forM_ masyncs $ mapConcurrently cancel . HashSet.toList
 
   monitor :: Warden -> IO ()
