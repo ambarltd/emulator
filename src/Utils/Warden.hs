@@ -8,9 +8,36 @@ module Utils.Warden
   ) where
 
 import Control.Concurrent
-import Control.Concurrent.Async (Async, cancel, mapConcurrently, async, AsyncCancelled(..), asyncWithUnmask)
+  ( MVar
+  , modifyMVar
+  , modifyMVar_
+  , newEmptyMVar
+  , newMVar
+  , swapMVar
+  , takeMVar
+  , tryPutMVar
+  )
+import Control.Concurrent.Async
+  ( Async
+  , AsyncCancelled(..)
+  , async
+  , asyncWithUnmask
+  , cancel
+  , mapConcurrently
+  )
 import Control.Exception
-import Control.Monad
+  ( SomeException
+  , BlockedIndefinitelyOnMVar(..)
+  , bracket
+  , catch
+  , finally
+  , fromException
+  , handle
+  , mask_
+  , throwIO
+  , uninterruptibleMask_
+  )
+import Control.Monad (forM_, void)
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
 import System.IO (fixIO)
