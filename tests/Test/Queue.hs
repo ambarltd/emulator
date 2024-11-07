@@ -325,6 +325,7 @@ testTopic with = do
     withProducer topic f =
       T.withProducer topic (T.modPartitioner fst) (unRecord . snd) f
 
+-- | A type of partition that always fails to be read.
 data FailPartition = FailPartition
   deriving (Show, Eq, Typeable, Exception)
 
