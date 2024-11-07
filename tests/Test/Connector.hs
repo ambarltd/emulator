@@ -45,7 +45,7 @@ import Test.Utils.OnDemand (OnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
 
 import Utils.Async (withAsyncThrow)
-import Utils.Delay (timeout, seconds)
+import Utils.Delay (deadline, seconds)
 import Utils.Logger (plainLogger, Severity(..))
 
 testConnectors :: OnDemand PostgresCreds -> Spec
@@ -106,7 +106,7 @@ testPostgreSQL p = do
         let count = 10
         insert conn table (take count $ head mocks)
         connected $
-          timeout (seconds 2) $
+          deadline (seconds 2) $
           Topic.withConsumer topic group $ \consumer -> do
           es <- replicateM count $ readEvent consumer
           length es `shouldBe` count
@@ -115,7 +115,7 @@ testPostgreSQL p = do
       with (PartitionCount 1) $ \conn table topic connected -> do
         let count = 10_000
         insert conn table (take count $ head mocks)
-        connected $ timeout (seconds 2) $
+        connected $ deadline (seconds 2) $
           Topic.withConsumer topic group $ \consumer -> do
           es <- replicateM count $ readEvent consumer
           length es `shouldBe` count
@@ -124,7 +124,7 @@ testPostgreSQL p = do
       with (PartitionCount 1) $ \conn table topic connected -> do
         let count = 10
             write = insert conn table (take count $ head mocks)
-        connected $ timeout (seconds 1) $
+        connected $ deadline (seconds 1) $
           Topic.withConsumer topic group $ \consumer ->
           withAsyncThrow write $ do
           es <- replicateM count $ readEvent consumer
@@ -137,7 +137,7 @@ testPostgreSQL p = do
             write = mapConcurrently id
               [ insert conn table (take count $ mocks !! partition)
               | partition <- [1..partitions] ]
-        connected $ timeout (seconds 1) $
+        connected $ deadline (seconds 1) $
           Topic.withConsumer topic group $ \consumer -> do
           -- write and consume concurrently
           withAsyncThrow write $ do

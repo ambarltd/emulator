@@ -2,6 +2,7 @@ module Utils.Warden
   ( Warden
   , withWarden
   , spawn
+  , spawn_
   , spawnMask
   , spawnLinked
   , spawnLinkedMask
@@ -85,6 +86,9 @@ spawnMask (Warden _ v) act =
 
 spawn :: Warden -> IO a -> IO (Async a)
 spawn w act = spawnMask w $ \unmask -> unmask act
+
+spawn_ :: Warden -> IO a -> IO ()
+spawn_ w act = void $ spawn w act
 
 -- | Make a thread's exceptions seize-up the entire Warden computation.
 spawnLinkedMask :: Warden -> ((forall b. IO b -> IO b) -> IO a) -> IO (Async a)
