@@ -3,6 +3,7 @@ module Utils.Delay
   , delay
   , every
   , timeout
+  , hang
   , seconds
   , millis
   , micros
@@ -50,3 +51,7 @@ timeout time act = do
   case r of
     Nothing -> error "timed out"
     Just v -> return v
+
+-- | Never return
+hang :: IO a
+hang = forever $ threadDelay maxBound
