@@ -54,6 +54,7 @@ import GHC.Stack (HasCallStack)
 import System.Random (randomIO)
 
 import Utils.Some (Some(..))
+import Utils.Warden (Warden)
 import Ambar.Emulator.Queue.Partition
   ( Partition
   , Offset
@@ -78,7 +79,8 @@ import qualified Ambar.Emulator.Queue.Partition.STMReader as R
 -- * Partitions that change consumers during a rebalance are rewinded to the
 --    latest committed Offset.
 data Topic = Topic
-  { t_partitions :: HashMap PartitionNumber (Some Partition)
+  { t_warden :: Warden
+  , t_partitions :: HashMap PartitionNumber (Some Partition)
   , t_cgroups :: TVar (HashMap ConsumerGroupName ConsumerGroup)
   }
 
@@ -143,19 +145,21 @@ data TopicState = TopicState
 
 withTopic
   :: HasCallStack
-  => HashMap PartitionNumber (Some Partition)
+  => Warden
+  -> HashMap PartitionNumber (Some Partition)
   -> HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
   -> (Topic -> IO a)
   -> IO a
-withTopic partitions groupOffsets =
-  bracket (openTopic partitions groupOffsets) closeTopic
+withTopic warden partitions groupOffsets =
+  bracket (openTopic warden partitions groupOffsets) closeTopic
 
 openTopic
   :: HasCallStack
-  => HashMap PartitionNumber (Some Partition)
+  => Warden
+  -> HashMap PartitionNumber (Some Partition)
   -> HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
   -> IO Topic
-openTopic partitions groupOffsets = STM.atomically $ do
+openTopic warden partitions groupOffsets = STM.atomically $ do
   groups <- forM groupOffsets $ \partitionOffsets -> do
     offsets <- forM partitionOffsets STM.newTVar
     return ConsumerGroup
@@ -165,7 +169,8 @@ openTopic partitions groupOffsets = STM.atomically $ do
       }
   var <- STM.newTVar groups
   return Topic
-    { t_partitions = partitions
+    { t_warden = warden
+    , t_partitions = partitions
     , t_cgroups = var
     }
 
@@ -245,7 +250,12 @@ write Producer{..} msg = do
     <> show (unPartitionNumber pid)
     ]
 
-withConsumer :: HasCallStack => Topic -> ConsumerGroupName -> (Consumer -> IO b) -> IO b
+withConsumer
+  :: HasCallStack
+  => Topic
+  -> ConsumerGroupName
+  -> (Consumer -> IO b)
+  -> IO b
 withConsumer topic@Topic{..} name act = do
   cid <- ConsumerId <$> newUUID
   bracket (add cid) (remove cid . fst) $ \(consumer, group) -> do
@@ -312,7 +322,7 @@ withConsumer topic@Topic{..} name act = do
       case p of
         Some partition -> do
           start <- STM.readTVarIO offsetVar
-          r <- R.new partition start
+          r <- R.new t_warden partition start
           return $ PartitionReader r pnumber offsetVar
 
   remove :: ConsumerId -> Consumer -> IO ()
