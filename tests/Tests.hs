@@ -6,7 +6,7 @@ import Test.Config (testConfig)
 import Test.Emulator (testEmulator)
 import Test.Queue (testQueues)
 import Test.Connector (testConnectors, withPostgresSQL)
-import Test.Utils.Tests (testUtils)
+import Test.OnDemand (testOnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
 
 
@@ -26,6 +26,6 @@ main = do
     -- unit tests use the projector library
     testQueues
     testConnectors pcreds
-    testUtils
+    testOnDemand
     testConfig
     testEmulator pcreds

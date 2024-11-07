@@ -1,4 +1,4 @@
-module Test.Utils.Tests (testUtils) where
+module Test.OnDemand (testOnDemand) where
 
 import Test.Hspec
   ( Spec
@@ -20,8 +20,8 @@ import System.Mem (performMajorGC)
 
 import Utils.Delay (delay, millis)
 
-testUtils :: Spec
-testUtils = do
+testOnDemand :: Spec
+testOnDemand = do
   describe "OnDemand" $ do
     describe "lazy" $ do
       it "doesn't instantiate if `with` is not called" $
