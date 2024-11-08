@@ -112,8 +112,7 @@ new warden partition start = do
 
       cleanup = do
         Partition.closeReader reader
-        atomicallyNamed "STMReader" $ STM.writeTMVar nextVar $ error $ unwords
-          [ "reading from destroyed reader" ]
+        atomicallyNamed "STMReader" $ STM.writeTMVar nextVar ClosedReader
 
   -- TODO: Errors from this worker are swalloed.
   -- We MUST implement something to make the whole queue seize-up.
