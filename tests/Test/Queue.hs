@@ -232,7 +232,10 @@ testTopic with = do
       withProducer topic $ \producer -> do
       var <- newIORef msgs
       let write = do
-            msg <- atomicModifyIORef var $ \xs -> (tail xs, head xs)
+            msg <- atomicModifyIORef var $ \xs ->
+              case xs of
+                [] -> error "empty messages"
+                (x:xs') -> (xs', x)
             T.write producer msg
 
           read consumer = pnumber <$> T.read consumer

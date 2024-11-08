@@ -20,7 +20,6 @@ import Control.Concurrent.STM
   )
 import Control.Exception (finally)
 import Control.Monad (forM_, when)
-import Data.Maybe (isJust)
 
 import Ambar.Emulator.Queue.Partition
   ( Partition
@@ -37,9 +36,13 @@ import qualified Ambar.Emulator.Queue.Partition as Partition
 -- | A single (totally ordered) stream of data from a partition.
 data STMReader = STMReader
   { r_worker :: Async ()
-  , r_next :: TMVar (Offset, Record) -- ^ take this to get the next element
-  , r_expected :: TVar Offset        -- ^ next offset to be read. Change this to seek.
+  , r_next :: TMVar (Next (Offset, Record)) -- ^ take this to get the next element.
+  , r_expected :: TVar Offset               -- ^ next offset to be read. Change this to seek.
   }
+
+data Next a
+  = Next a
+  | ClosedReader
 
 seek :: STMReader -> Offset -> STM ()
 seek STMReader{..} offset = do
@@ -49,9 +52,13 @@ seek STMReader{..} offset = do
 
 tryRead :: STMReader -> STM (Maybe (Offset, Record))
 tryRead STMReader{..} = do
-  mval <- STM.tryTakeTMVar r_next
-  when (isJust mval) $ STM.modifyTVar r_expected (+1)
-  return mval
+  enext <- STM.tryTakeTMVar r_next
+  case enext of
+    Just (Next r) -> do
+      STM.modifyTVar r_expected (+1)
+      return (Just r)
+    Just ClosedReader -> return Nothing
+    Nothing -> return Nothing
 
 destroy :: STMReader -> IO ()
 destroy STMReader{..} = Async.cancel r_worker
@@ -65,20 +72,20 @@ new
 new warden partition start = do
   reader <- Partition.openReader partition
   expectedVar <- STM.newTVarIO start
-  nextVar <- STM.newEmptyTMVarIO
+  nextVar <- STM.newEmptyTMVarIO :: IO (TMVar (Next (Offset, Record)))
 
   -- the reader is only controlled by the worker
   let work needle = do
         -- check if seek is needed and if value in nextVar is still valid.
-        mseek <- atomicallyNamed "STMReader" $ do
+        nseek <- atomicallyNamed "STMReader" $ do
           mval <- STM.tryReadTMVar nextVar
           expected <- STM.readTVar expectedVar
           case mval of
-            Nothing ->
+            Nothing -> return $ Next $
               if needle /= expected
-              then return $ Just expected
-              else return Nothing
-            Just (offset, _) ->
+              then Just expected
+              else Nothing
+            Just (Next (offset, _)) ->
               if offset == expected
               then STM.retry -- wait till value is consumed
               else do
@@ -86,23 +93,26 @@ new warden partition start = do
                 -- Let's discard the value read and
                 -- move the needle to the new position.
                 _ <- STM.takeTMVar nextVar
-                return $ Just expected
+                return $ Next $ Just expected
+            Just ClosedReader -> return ClosedReader
 
-        forM_ mseek $ \pos -> Partition.seek reader (At pos)
+        case nseek of
+          ClosedReader -> return ()
+          Next mseek -> do
+            forM_ mseek $ \pos -> Partition.seek reader (At pos)
 
-        -- block till a value is read
-        (offset, record) <- Partition.read reader
+            -- block till a value is read
+            (offset, record) <- Partition.read reader
 
-        atomicallyNamed "STMReader" $ do
-          expected <- STM.readTVar expectedVar
-          when (expected == offset ) $ STM.putTMVar nextVar (offset, record)
+            atomicallyNamed "STMReader" $ do
+              expected <- STM.readTVar expectedVar
+              when (expected == offset) $ STM.putTMVar nextVar (Next (offset, record))
 
-        work (offset + 1)
+            work (offset + 1)
 
       cleanup = do
         Partition.closeReader reader
-        atomicallyNamed "STMReader" $ STM.writeTMVar nextVar $ error $ unwords
-          [ "reading from destroyed reader" ]
+        atomicallyNamed "STMReader" $ STM.writeTMVar nextVar ClosedReader
 
   -- TODO: Errors from this worker are swalloed.
   -- We MUST implement something to make the whole queue seize-up.

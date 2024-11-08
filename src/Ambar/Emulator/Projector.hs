@@ -117,4 +117,4 @@ backoff
   $ dropWhile (< 5)
   $ map millis fibs
   where
-  fibs = 1 : 1 : zipWith (+) fibs (tail fibs)
+  fibs = 1 : 1 : zipWith (+) fibs (drop 1 fibs)
