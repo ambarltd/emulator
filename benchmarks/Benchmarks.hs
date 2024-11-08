@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wno-x-partial #-}
 module Main where
 
 import Control.Concurrent (MVar, modifyMVar, newMVar)
