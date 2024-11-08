@@ -23,7 +23,7 @@ executable emulator
     main-is:          src/Main.hs
     other-modules:
     build-depends:
-        base ^>=4.17.2.1
+        base
         , directory
         , emulator-lib
         , filepath
@@ -58,7 +58,7 @@ library emulator-lib
         Utils.Some
         Utils.Warden
     build-depends:
-        base ^>=4.17.2.1
+        base
         , aeson
         , aeson-pretty
         , async
@@ -99,7 +99,7 @@ test-suite emulator-tests
         Test.Utils.OnDemand
     type:    exitcode-stdio-1.0
     build-depends:
-        base ^>=4.17.2.1
+        base
         , emulator-lib
         , aeson
         , async
@@ -126,7 +126,7 @@ benchmark emulator-bench
   type:    exitcode-stdio-1.0
   main-is: benchmarks/Benchmarks.hs
   build-depends:
-        base ^>=4.17.2.1
+        base
         , emulator-lib
         , async
         , bytestring
