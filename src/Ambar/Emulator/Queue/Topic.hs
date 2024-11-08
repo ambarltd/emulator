@@ -56,6 +56,7 @@ import System.Random (randomIO)
 import Utils.Some (Some(..))
 import Utils.STM (atomicallyNamed)
 import Utils.Warden (Warden)
+
 import Ambar.Emulator.Queue.Partition
   ( Partition
   , Offset
@@ -264,7 +265,7 @@ withConsumer topic@Topic{..} name act = do
     initialise group
     act consumer
   where
-  add cid = atomicallyNamed "topic.consumer.add" $ do
+  add cid = atomicallyNamed "topic.withConsumer.add" $ do
     consumer <- do
       rvar <- STM.newTVar (Just [])
       return $ Consumer topic rvar
@@ -307,7 +308,7 @@ withConsumer topic@Topic{..} name act = do
     case g_state group of
       Initialising -> do
         readers <- openReaders group
-        atomicallyNamed "topic.consumer.initialise" $ do
+        atomicallyNamed "topic.withConsumer.initialise" $ do
           groups <- STM.readTVar t_cgroups
           let group' = (groups HashMap.! name) { g_state = Ready readers }
           let groups' = HashMap.insert name group' groups
@@ -433,8 +434,9 @@ data ReadError
 -- | Try to read all readers assigned to the consumer in round-robin fashion.
 -- Blocks until there is a message.
 read :: HasCallStack => Consumer -> IO (Either ReadError (ByteString, Meta))
-read (Consumer _ var) = do
-  handle whenBlocked $ atomicallyNamed "topic.consumer.read" $ do
+read (Consumer _ var) =
+  handle whenBlocked $
+  STM.atomically $ do
     mreaders <- STM.readTVar var
     case mreaders of
       Nothing -> return $ Left ClosedConsumer
