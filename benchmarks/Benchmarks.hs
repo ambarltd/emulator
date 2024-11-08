@@ -2,7 +2,7 @@ module Main where
 
 import Control.Concurrent (MVar, modifyMVar, newMVar)
 import Control.Concurrent.Async (concurrently_, replicateConcurrently_, forConcurrently_)
-import Control.Exception (ErrorCall(..), throwIO, onException)
+import Control.Exception (ErrorCall(..), throwIO)
 import qualified Data.HashMap.Strict as HashMap
 import Control.Monad (replicateM_, forM_)
 import qualified Data.Text as Text
@@ -125,7 +125,7 @@ benchTopic preFilled msgs = Criterion.bgroup "topic" $
   readFrom topic group n =
     T.withConsumer topic group $ \consumer ->
     forM_ [1.. n] $ \k -> do
-      r <- T.read consumer `onException` putStrLn "read failure"
+      r <- T.read consumer
       case r of
         Right _ -> return ()
         Left e -> throwIO $ ErrorCall $ "unexpected read at " <> show k <> ": " <> show e
