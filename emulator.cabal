@@ -73,7 +73,7 @@ library emulator-lib
         , filepath
         , hashable
         , http-client
-        , http-client-tls ==0.3.6.3
+        , http-client-tls
         , http-types
         , postgresql-simple
         , prettyprinter
