@@ -6,7 +6,8 @@ import Test.Config (testConfig)
 import Test.Emulator (testEmulator)
 import Test.Queue (testQueues)
 import Test.Connector (testConnectors, withPostgresSQL)
-import Test.Utils.Tests (testUtils)
+import Test.OnDemand (testOnDemand)
+import Test.Warden (testWarden)
 import qualified Test.Utils.OnDemand as OnDemand
 
 
@@ -24,8 +25,9 @@ main = do
   pcreds <- OnDemand.lazy withPostgresSQL
   hspec $ parallel $ do
     -- unit tests use the projector library
-    testQueues
-    testConnectors pcreds
-    testUtils
+    testOnDemand
+    testWarden
     testConfig
+    testQueues
     testEmulator pcreds
+    testConnectors pcreds

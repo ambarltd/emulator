@@ -33,7 +33,7 @@ import qualified Test.Connector as C
 import Test.Utils.OnDemand (OnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
 import Utils.Async (withAsyncThrow)
-import Utils.Delay (timeout, seconds)
+import Utils.Delay (deadline, seconds)
 import Utils.Logger (plainLogger, Severity(..))
 
 testEmulator :: OnDemand PostgresCreds -> Spec
@@ -46,7 +46,7 @@ testEmulator p = describe "emulator" $ do
           events = addIds $ take 10 $ head mocks
       insert events
       withAsyncThrow (emulate logger config env) $
-        timeout (seconds 5) $ do
+        deadline (seconds 5) $ do
         consumed <- consume out (length events)
         consumed `shouldBe` events
 
@@ -85,7 +85,7 @@ testEmulator p = describe "emulator" $ do
 
     -- read from projected output
     consume out n =
-      timeout (seconds 3) $ do
+      deadline (seconds 3) $ do
       xs <- atomically $ do
         xs <- readTVar out
         unless (length xs >= n) retry

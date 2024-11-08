@@ -3,7 +3,7 @@ module Test.Queue (testQueues, withFileTopic) where
 import Prelude hiding (read)
 
 import Control.Concurrent.Async (concurrently)
-import Control.Exception (fromException)
+import Control.Exception (fromException, Exception, throwIO)
 import Control.Monad (replicateM, forM_, replicateM_)
 import Data.ByteString (ByteString)
 import Data.Char (isAscii)
@@ -14,6 +14,7 @@ import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Text as Text
 import Data.Foldable (traverse_)
 import qualified Data.Text.Encoding as Text
+import Data.Typeable (Typeable)
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
   ( Spec
@@ -45,7 +46,8 @@ import qualified Ambar.Emulator.Queue.Partition as P
 import qualified Ambar.Emulator.Queue.Partition.File as FilePartition
 import Utils.Async (withAsyncThrow)
 import Utils.Some (Some(..))
-import Utils.Delay (delay, millis)
+import Utils.Delay (delay, deadline, seconds, millis, hang)
+import Utils.Warden (withWarden)
 
 testQueues :: Spec
 testQueues = do
@@ -62,14 +64,14 @@ testQueues = do
 withFileTopic :: PartitionCount -> (Topic -> IO a) -> IO a
 withFileTopic (PartitionCount n) act =
   withTempPath $ \path ->
-  withMany (f path) [0..n-1] $ \pinstances ->
-  withTopic
-    (HashMap.fromList $ zip [0..] pinstances)
-    mempty
-    act
+  withMany (f path) [0..PartitionNumber n-1] $ \pinstances ->
+  withWarden $ \warden -> do
+  let groups = HashMap.fromList pinstances
+  withTopic warden groups mempty act
   where
   f path pnumber g = do
-    FilePartition.withFilePartition path (show pnumber) (g . Some)
+    FilePartition.withFilePartition path (show pnumber) $ \partition ->
+      g (pnumber, Some partition)
 
 withTempPath :: (FilePath -> IO a) -> IO a
 withTempPath = withSystemTempDirectory "partition-XXXXX"
@@ -292,6 +294,17 @@ testTopic with = do
             metaOffset (Meta _ o) = o
         sort (metaOffset <$> metas) `shouldBe` [0,1,2,2]
         sort (metaPartition <$> metas) `shouldBe` [0,0,0,1]
+
+  it "stops everything if parition reader throws" $ do
+    let groups = HashMap.singleton 0 (Some FailPartition)
+        run =
+          deadline (seconds 1) $
+          withWarden $ \warden ->
+          withTopic warden groups mempty $ \topic ->
+          T.withConsumer topic group $ \consumer -> do
+            _ <- T.read consumer
+            hang
+    run `shouldThrow` ((== Just FailPartition) . fromException)
   where
     mmeta :: Either ReadError (ByteString, Meta) -> Meta
     mmeta = \case
@@ -311,6 +324,18 @@ testTopic with = do
 
     withProducer topic f =
       T.withProducer topic (T.modPartitioner fst) (unRecord . snd) f
+
+-- | A type of partition that always fails to be read.
+data FailPartition = FailPartition
+  deriving (Show, Eq, Typeable, Exception)
+
+instance Partition FailPartition where
+  type Reader FailPartition = ()
+  openReader _ = return ()
+  closeReader _ = return ()
+  seek _ _ = return ()
+  read _ = throwIO FailPartition
+  write _ _ = return ()
 
 testPartition :: Partition a => (forall b. FilePath -> (a -> IO b) -> IO b) -> Spec
 testPartition with = do

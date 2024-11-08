@@ -38,9 +38,12 @@ import Ambar.Emulator.Queue.Partition.File (FilePartition)
 import Utils.Async (withAsyncThrow)
 import Utils.Delay (every, seconds)
 import Utils.Some (Some(..))
+import Utils.Warden (Warden)
+import qualified Utils.Warden as Warden
 
 data Queue = Queue
-  { q_store :: Store
+  { q_warden :: Warden
+  , q_store :: Store
   , q_count :: PartitionCount -- ^ default number of partitions in new topics
   , q_topics :: MVar (HashMap TopicName TopicData)
   }
@@ -78,14 +81,15 @@ withQueue
   -> PartitionCount  -- ^ default partition count for new topics
   -> (Queue -> IO a) -> IO a
 withQueue path count act =
-  bracket (open (Store path) count) close $ \queue ->
+  Warden.withWarden $ \warden ->
+  bracket (open warden (Store path) count) close $ \queue ->
     withAsyncThrow (saver queue) (act queue)
   where
   saver :: Queue -> IO Void
   saver queue = every (seconds 5) (save queue)
 
-open :: Store -> PartitionCount -> IO Queue
-open store@(Store path) count = do
+open :: Warden -> Store -> PartitionCount -> IO Queue
+open warden store@(Store path) count = do
   createDirectoryIfMissing True path
   inventoryLock store
   e <- inventoryLoad store
@@ -94,16 +98,17 @@ open store@(Store path) count = do
     Left (Unreadable err) -> throwIO $ CorruptedInventory err
     Right i -> return i
 
-  topics <- openTopics store inventory
+  topics <- openTopics warden store inventory
   topicsVar <- newMVar topics
   return $ Queue
-    { q_store = store
+    { q_warden = warden
+    , q_store = store
     , q_count = count
     , q_topics = topicsVar
     }
 
 close :: Queue -> IO ()
-close queue@(Queue store _ var) =
+close queue@(Queue _ store _ var) =
   uninterruptibleMask_ $ do
   save queue
   modifyMVar var $ \topics -> do
@@ -114,18 +119,19 @@ close queue@(Queue store _ var) =
   inventoryRelease store
 
 save :: Queue -> IO ()
-save (Queue store _ var) =
+save (Queue _ store _ var) =
   withMVar var $ \topics -> do
   -- do it in separate STM transactions to minimise retries.
   -- any offset moved during a `getState` operation
   inventory <- Inventory <$> forM topics (T.getState . d_topic)
+  -- keep the MVar during writing to prevent concurrent saves.
   inventoryWrite store inventory
 
-openTopics :: Store -> Inventory -> IO (HashMap TopicName TopicData)
-openTopics store (Inventory inventory) = do
+openTopics :: Warden -> Store -> Inventory -> IO (HashMap TopicName TopicData)
+openTopics warden store (Inventory inventory) = do
   flip HashMap.traverseWithKey inventory $ \name (TopicState ps cs) -> do
     partitions <- openPartitions store name ps
-    topic <- T.openTopic (Some <$> partitions) cs
+    topic <- T.openTopic warden (Some <$> partitions) cs
     return $ TopicData topic partitions
 
 openPartitions
@@ -172,14 +178,14 @@ inventoryLoad store = do
         Right i -> Right i
 
 openTopic :: Queue -> TopicName -> IO Topic
-openTopic (Queue store (PartitionCount count) var) name =
+openTopic (Queue warden store (PartitionCount count) var) name =
   modifyMVar var $ \topics ->
   case HashMap.lookup name topics of
     Just (TopicData topic _) -> return (topics, topic)
     Nothing -> do
       let pnumbers = Set.fromList $ fmap PartitionNumber [0..count - 1]
       partitions <- openPartitions store name pnumbers
-      topic <- T.openTopic (Some <$> partitions) mempty
+      topic <- T.openTopic warden (Some <$> partitions) mempty
       let tdata = TopicData topic partitions
       return (HashMap.insert name tdata topics, topic)
 

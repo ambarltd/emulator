@@ -18,8 +18,7 @@ import Control.Concurrent.STM
   , TVar
   , TMVar
   )
-import Control.Exception
-   (finally, handle, throwIO, fromException, SomeAsyncException)
+import Control.Exception (finally)
 import Control.Monad (forM_, when)
 import Data.Maybe (isJust)
 
@@ -30,6 +29,8 @@ import Ambar.Emulator.Queue.Partition
   , Position(..)
   )
 import Utils.STM (atomicallyNamed)
+import qualified Utils.Warden as Warden
+import Utils.Warden (Warden)
 
 import qualified Ambar.Emulator.Queue.Partition as Partition
 
@@ -57,16 +58,17 @@ destroy STMReader{..} = Async.cancel r_worker
 
 new
   :: Partition a
-  => a
+  => Warden
+  -> a
   -> Offset  -- ^ variable we will use to keep track of comitted offsets
   -> IO STMReader
-new partition start = do
+new warden partition start = do
   reader <- Partition.openReader partition
   expectedVar <- STM.newTVarIO start
   nextVar <- STM.newEmptyTMVarIO
 
   -- the reader is only controlled by the worker
-  let work needle = handle printSync $ do
+  let work needle = do
         -- check if seek is needed and if value in nextVar is still valid.
         mseek <- atomicallyNamed "STMReader" $ do
           mval <- STM.tryReadTMVar nextVar
@@ -97,11 +99,6 @@ new partition start = do
 
         work (offset + 1)
 
-      printSync ex =
-        case fromException ex of
-          Just (_ :: SomeAsyncException) -> throwIO ex
-          _ -> print ex
-
       cleanup = do
         Partition.closeReader reader
         atomicallyNamed "STMReader" $ STM.writeTMVar nextVar $ error $ unwords
@@ -109,7 +106,7 @@ new partition start = do
 
   -- TODO: Errors from this worker are swalloed.
   -- We MUST implement something to make the whole queue seize-up.
-  worker <- Async.async (work 0 `finally` cleanup)
+  worker <- Warden.spawnLinked warden (work 0 `finally` cleanup)
   return STMReader
     { r_worker = worker
     , r_next = nextVar

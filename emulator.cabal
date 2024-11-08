@@ -56,6 +56,7 @@ library emulator-lib
         Utils.Prettyprinter
         Utils.STM
         Utils.Some
+        Utils.Warden
     build-depends:
         base ^>=4.17.2.1
         , aeson
@@ -93,7 +94,8 @@ test-suite emulator-tests
         Test.Queue
         Test.Connector
         Test.Emulator
-        Test.Utils.Tests
+        Test.OnDemand
+        Test.Warden
         Test.Utils.OnDemand
     type:    exitcode-stdio-1.0
     build-depends:

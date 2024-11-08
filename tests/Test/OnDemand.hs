@@ -1,4 +1,4 @@
-module Test.Utils.Tests (testUtils) where
+module Test.OnDemand (testOnDemand) where
 
 import Test.Hspec
   ( Spec
@@ -10,7 +10,6 @@ import Test.Hspec
 import Test.Hspec.Expectations.Contrib (annotate)
 
 import Control.Concurrent.Async
-import Control.Monad
 import Control.Exception
 
 import Control.Concurrent.STM (newTVarIO, atomically, readTVarIO, modifyTVar)
@@ -18,10 +17,10 @@ import Data.Maybe (isJust)
 import qualified Test.Utils.OnDemand as OnDemand
 import System.Mem (performMajorGC)
 
-import Utils.Delay (delay, millis)
+import Utils.Delay (delay, millis, deadline)
 
-testUtils :: Spec
-testUtils = do
+testOnDemand :: Spec
+testOnDemand = do
   describe "OnDemand" $ do
     describe "lazy" $ do
       it "doesn't instantiate if `with` is not called" $
@@ -78,24 +77,18 @@ testUtils = do
         let err = "Fake Error"
         r <- OnDemand.lazy $ \_ -> throwIO (ErrorCall err)
 
-        [t1, t2] <- replicateM 2 $ async $
-          OnDemand.with r return
-
-        delay (millis 10)
-        forM_ (zip @Int [0..] [t1, t2]) $ \(n, t) -> do
-          outcome <- poll t
-          annotate ("thread " <> show n) $
-            case outcome  of
-              Just (Left e)
-                | Just (ErrorCall msg) <- fromException e
-                , msg == err -> return ()
-                | otherwise ->
-                  expectationFailure (show e)
-              Just (Right _) ->
-                  expectationFailure "unexpected success"
-              Nothing -> do
-                  cancel t
-                  expectationFailure "thread not finished"
+        forConcurrently_ ([1..3] :: [Int]) $ \n ->
+          withAsync (OnDemand.with r return) $ \t -> do
+            outcome <- deadline (millis 50) $ waitCatch t
+            annotate ("thread " <> show n) $
+              case outcome  of
+                Left e
+                  | Just (ErrorCall msg) <- fromException e
+                  , msg == err -> return ()
+                  | otherwise ->
+                    expectationFailure (show e)
+                Right _ ->
+                    expectationFailure "unexpected success"
 
     describe "withLazy" $ do
       it "ensures cleanup is run before returning" $

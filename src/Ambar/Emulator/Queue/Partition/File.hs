@@ -8,14 +8,20 @@ module Ambar.Emulator.Queue.Partition.File
   , WriteError(..)
   ) where
 
-import Control.Concurrent (MVar, newMVar, withMVar, modifyMVar_)
+import Control.Concurrent (MVar, newMVar, withMVarMasked, modifyMVar_)
 import qualified Control.Concurrent.STM as STM
 import Control.Concurrent.STM
   ( TVar
   , TMVar
-  , atomically
   )
-import Control.Exception (Exception(..), bracket, bracketOnError, throwIO, uninterruptibleMask_)
+import Control.Exception
+  ( Exception(..)
+  , bracket
+  , throwIO
+  , uninterruptibleMask_
+  , mask
+  , onException
+  )
 import Control.Monad (void, unless, when)
 import qualified Data.Binary as Binary
 import Data.ByteString (ByteString)
@@ -167,6 +173,7 @@ open location name = do
 
 close :: HasCallStack => FilePartition -> IO ()
 close FilePartition{..} =
+  -- will wait if we are writing to the file
   uninterruptibleMask_ $
   modifyMVar_ p_handles $ \case
     Nothing -> return Nothing -- already closed
@@ -235,46 +242,47 @@ instance Partition FilePartition where
 
   seek :: HasCallStack => FileReader -> Position -> IO ()
   seek (FileReader _ var) pos =
-    bracketOnError acquire undo $ \(next, offset, info) -> do
-      when (next /= offset) $
-        case r_handle info of
-          Nothing ->
-            throwErr (r_partition info) "seek: closed reader."
-          Just handle -> do
-            Bytes byteOffset <- readIndexEntry (p_index $ r_partition info) offset
-            hSeek handle AbsoluteSeek (fromIntegral byteOffset)
+    withTMVarIO var $ \info ->
+    bracketOnException (acquire info) (release info) (undo info) $
+      \(next, offset, count) -> do
+        when (offset > fromIntegral count) $
+          throwErr (r_partition info) $ unwords
+            [ "seek: offset out of bounds."
+            , "Entries:", show count
+            , "Offset:", show offset
+            ]
 
-      atomicallyNamed "file.seek" $ do
-        STM.putTMVar var info
+        when (next /= offset) $
+          case r_handle info of
+            Nothing ->
+              throwErr (r_partition info) "seek: closed reader."
+            Just handle -> do
+              Bytes byteOffset <- readIndexEntry (p_index $ r_partition info) offset
+              hSeek handle AbsoluteSeek (fromIntegral byteOffset)
     where
-    acquire = atomicallyNamed "file.seek.acquire" $ do
-      info <- STM.takeTMVar var
-      (Count count, _) <- STM.readTVar $ p_info $ r_partition info
-      let offset = max 0 $ case pos of
-            At o -> o
-            Beginning -> 0
-            End -> Offset count - 1
+    acquire info =
+      atomicallyNamed "file.seek.acquire" $ do
+        (Count count, _) <- STM.readTVar $ p_info $ r_partition info
+        next <- STM.readTVar (r_next info)
+        let offset = max 0 $ case pos of
+              At o -> o
+              Beginning -> 0
+              End -> Offset count - 1
+        return (next, offset, count)
 
-      when (offset > fromIntegral count) $
-        throwErr (r_partition info) $ unwords
-          [ "seek: offset out of bounds."
-          , "Entries:", show count
-          , "Offset:", show offset
-          ]
+    release info (_, offset, _) =
+      atomicallyNamed "file.seek.release" $ do
+        STM.writeTVar (r_next info) offset
 
-      next <- STM.readTVar (r_next info)
-      STM.writeTVar (r_next info) offset
-      return (next, offset, info)
-
-    undo (next,_,info) = atomicallyNamed "file.undo" $ do
-      STM.putTMVar var info
-      STM.writeTVar (r_next info) next
+    undo info (next, _, _) =
+      atomicallyNamed "file.seek.undo" $ do
+        STM.writeTVar (r_next info) next
 
   -- | Reads one record and advances the Reader.
   -- Blocks if there are no more records.
   read :: HasCallStack => FileReader -> IO (Offset, Record)
   read (FileReader _ var) =
-    bracketOnError acquire undo $ \(len, next, info) -> do
+    bracketOnException acquire release undo $ \(_, next, info) -> do
       handle <- case r_handle info of
         Nothing -> error $ unwords
             [ "FilePartition: read: closed reader."
@@ -283,11 +291,6 @@ instance Partition FilePartition where
         Just h -> return h
 
       record <- Record <$> Char8.hGetLine handle
-
-      atomicallyNamed "file.read" $ do
-        STM.writeTVar (r_next info) (next + 1)
-        STM.putTMVar var info { r_length = len }
-
       return (next, record)
     where
       acquire = atomicallyNamed "file.read.acquire" $ do
@@ -301,14 +304,19 @@ instance Partition FilePartition where
         unless (partitionLength > fromIntegral next) STM.retry
         return (partitionLength, next, info)
 
-      undo (_,_,info) = atomicallyNamed "file.read.undo" $ STM.putTMVar var info
+      release (len, next, info) = atomicallyNamed "file.read.release" $ do
+        STM.writeTVar (r_next info) (next + 1)
+        STM.putTMVar var info { r_length = len }
+
+      undo (_, _, info) =  do
+        atomicallyNamed "file.read.undo" $ STM.putTMVar var info
 
   write :: HasCallStack => FilePartition -> Record -> IO ()
-  write (FilePartition{..}) (Record bs)  = do
+  write (FilePartition{..}) (Record bs) = do
     when (Char8.elem '\n' bs) $
       error "FilePartition write: record contains newline character"
 
-    withMVar p_handles $ \mhandles -> do
+    withMVarMasked p_handles $ \mhandles -> do
       (fd_records, fd_index) <- maybe (throwIO ClosedPartition) return mhandles
       (Count count, Bytes partitionSize) <- STM.readTVarIO p_info
 
@@ -318,8 +326,10 @@ instance Partition FilePartition where
           newCount = count + 1
           nextEntryByteOffset = B.toStrict $ Binary.encode newSize
 
-      writeFD fd_records entry
-      writeFD fd_index nextEntryByteOffset
+      uninterruptibleMask_ $ do
+        writeFD fd_records entry
+        writeFD fd_index nextEntryByteOffset
+
       atomicallyNamed "file.write" $ STM.writeTVar p_info (Count newCount, Bytes newSize)
 
 writeFD :: HasCallStack => FD -> ByteString -> IO ()
@@ -343,17 +353,35 @@ throwErr p msg =
   error $
     "FilePartition (" <> unPartitionName (p_name p) <> "): " <> msg
 
+bracketOnException
+  :: IO a          -- ^ acquire resource
+  -> (a -> IO ())  -- ^ release on success
+  -> (a -> IO ())  -- ^ release on error
+  -> (a -> IO b)   -- ^ use resource
+  -> IO b
+bracketOnException acquire release undo act =
+  mask $ \unmask -> do
+    r <- acquire
+    x <- unmask (act r) `onException` undo r
+    release r
+    return x
+
 modifyTMVarIO :: TMVar a -> (a -> IO (a, b)) -> IO b
-modifyTMVarIO var act =
-  bracketOnError
-    (atomically $ STM.takeTMVar var)
-    (atomically . STM.putTMVar var)
-    $ \x -> do
-      (x', y) <- act x
-      atomically $ STM.putTMVar var x'
-      return y
+modifyTMVarIO var act = mask $ \release -> do
+  x <- atomicallyNamed "modifyTMVarIO.acquire" $ STM.takeTMVar var
+  (x', y) <- release (act x)
+    `onException`
+    atomicallyNamed "modifyTMVarIO.release" (STM.putTMVar var x)
+  atomicallyNamed "modifyTMVarIO.put" $ STM.putTMVar var x'
+  return y
 
 modifyTMVarIO_ :: TMVar a -> (a -> IO a) -> IO ()
 modifyTMVarIO_ var act =
   modifyTMVarIO var $ fmap (,()) . act
+
+withTMVarIO :: TMVar a -> (a -> IO b) -> IO b
+withTMVarIO var act =
+  modifyTMVarIO var $ \x -> do
+    r <- act x
+    return (x, r)
 

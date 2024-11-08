@@ -2,7 +2,8 @@ module Utils.Delay
   ( Duration
   , delay
   , every
-  , timeout
+  , deadline
+  , hang
   , seconds
   , millis
   , micros
@@ -10,9 +11,11 @@ module Utils.Delay
   , toDiffTime
   ) where
 
+import Control.Exception (Exception, throwIO)
 import Control.Concurrent (threadDelay)
 import Control.Monad (forever)
 import Data.Time.Clock (NominalDiffTime, nominalDiffTimeToSeconds, secondsToNominalDiffTime)
+import Data.Typeable (Typeable)
 import Data.Void (Void)
 import qualified System.Timeout as T
 
@@ -43,10 +46,18 @@ every period act = forever $ do
   delay period
   act
 
+data TimedOut = TimedOut
+  deriving (Show, Eq, Typeable)
+  deriving anyclass (Exception)
+
 -- | Version of timeout that throws on timeout
-timeout :: Duration -> IO a -> IO a
-timeout time act = do
+deadline :: Duration -> IO a -> IO a
+deadline time act = do
   r <- T.timeout (toMicro time) act
   case r of
-    Nothing -> error "timed out"
+    Nothing -> throwIO TimedOut
     Just v -> return v
+
+-- | Never return
+hang :: IO a
+hang = forever $ threadDelay maxBound
