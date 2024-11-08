@@ -17,6 +17,7 @@ import Control.Concurrent
   , swapMVar
   , takeMVar
   , tryPutMVar
+  , putMVar
   )
 import Control.Concurrent.Async
   ( Async
@@ -25,15 +26,14 @@ import Control.Concurrent.Async
   , cancel
   , mapConcurrently
   , withAsync
+  , concurrently_
   )
 import Control.Exception
   ( SomeException
-  , BlockedIndefinitelyOnMVar(..)
   , bracket
   , catch
   , finally
   , fromException
-  , handle
   , mask_
   , throwIO
   , uninterruptibleMask_
@@ -44,6 +44,7 @@ import qualified Data.HashSet as HashSet
 import System.IO (fixIO)
 
 import Utils.Async (withAsyncThrow)
+import Utils.Delay (hang)
 
 -- | A Warden is an owner of Asyncs which cancels them on shutdown
 -- and can propagate exceptions from children to parent.
@@ -67,10 +68,10 @@ withWarden f = bracket create shutdown $ \warden ->
     forM_ masyncs $ mapConcurrently cancel . HashSet.toList
 
   monitor :: Warden -> IO ()
-  monitor warden =
-    handle (\BlockedIndefinitelyOnMVar -> return ()) $ do
-    ex <- takeMVar (childException warden)
-    throwIO ex
+  monitor (Warden evar _) =
+    concurrently_
+      (throwIO =<< takeMVar evar)       -- throw child exception
+      (hang <* putMVar evar undefined)  -- prevent blocked indefinitely on mvar
 
 spawnMask :: Warden -> ((forall b. IO b -> IO b) -> IO a) -> IO (Async a)
 spawnMask (Warden _ v) act =
