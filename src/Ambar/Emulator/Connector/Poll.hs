@@ -51,10 +51,13 @@ connect trackerVar (PollingConnector getId poll interval maxTransTime producer) 
    diff = toDiffTime maxTransTime
    loop = do
       before <- getPOSIXTime
-      tracker <- cleanup (before - diff) <$> readTVarIO trackerVar
+      tracker <- readTVarIO trackerVar
       items <- poll (boundaries tracker)
       forM_ items (Topic.write producer)
-      atomically $ writeTVar trackerVar $ foldr (mark before . getId) tracker items
+      atomically $
+         writeTVar trackerVar $
+         cleanup (before - diff) $
+         foldr (mark before . getId) tracker items
       after <- getPOSIXTime
       delay $ max 0 $ interval - fromDiffTime (after - before)
       loop
