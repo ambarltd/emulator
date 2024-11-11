@@ -18,7 +18,7 @@ import qualified Data.Text.Lazy.Encoding as Text
 
 import Ambar.Emulator.Queue.Topic (Producer, Encoder, Partitioner, modPartitioner)
 import qualified Ambar.Emulator.Queue.Topic as Topic
-import Utils.Logger (SimpleLogger, fatal)
+import Utils.Logger (SimpleLogger, fatal, logInfo)
 
 newtype FileRecord = FileRecord Json.Value
 
@@ -40,4 +40,5 @@ connect logger producer path = do
             ]
          Right v -> return v
       Topic.write producer (FileRecord value)
+      logInfo logger $ "ingested. " <> Text.decodeUtf8 line
 
