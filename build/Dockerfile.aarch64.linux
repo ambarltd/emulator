@@ -66,14 +66,14 @@ WORKDIR /opt/emulator
 COPY ./emulator.cabal       /opt/emulator
 COPY ./cabal.project        /opt/emulator
 
+RUN cabal build --dependencies-only
+
 # Add and build application code.
 # The 'cabal install' command will also add the 'emulator' binary to the PATH.
 # For maximum caching we only copy source code files.
 COPY ./src          /opt/emulator/src
 COPY ./tests        /opt/emulator/tests
 COPY ./benchmarks   /opt/emulator/benchmarks
-
-RUN cabal build --dependencies-only
 
 RUN cabal build \
     --enable-executable-static \
