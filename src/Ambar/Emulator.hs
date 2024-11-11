@@ -34,7 +34,7 @@ import Ambar.Emulator.Config
   , Destination(..)
   )
 import Utils.Delay (every, seconds)
-import Utils.Logger (SimpleLogger, annotate)
+import Utils.Logger (SimpleLogger, annotate, logInfo)
 import Utils.Some (Some(..))
 import Utils.STM (atomicallyNamed)
 
@@ -89,23 +89,25 @@ emulate logger config env = do
       Aeson.encodeFile statePath $ EmulatorState (Map.fromList states)
 
   connect queue (source, sstate) f = do
+    let logger' = annotate ("source: " <> unId (s_id source)) logger
     topic <- Queue.openTopic queue $ topicName $ s_id source
     case s_source source of
       SourcePostgreSQL pconfig -> do
-        let logger' = annotate ("source: " <> unId (s_id source)) logger
-            partitioner = Postgres.partitioner
+        let partitioner = Postgres.partitioner
             encoder = Postgres.encoder pconfig
         state <- case sstate of
           StatePostgres s -> return s
           _ -> throwIO $ ErrorCall $
             "Incompatible state for source: " <> show (s_id source)
         Topic.withProducer topic partitioner encoder $ \producer ->
-          Postgres.withConnector logger' state producer pconfig $ \stateVar ->
+          Postgres.withConnector logger' state producer pconfig $ \stateVar -> do
+          logInfo @String logger' "connected"
           f (s_id source, StatePostgres <$> stateVar)
 
       SourceFile path ->
         Topic.withProducer topic FileConnector.partitioner FileConnector.encoder $ \producer ->
         withAsync (FileConnector.connect logger producer path) $ \_ -> do
+        logInfo @String logger' "connected"
         f (s_id source, return $ StateFile ())
 
   initialStateFor source =
