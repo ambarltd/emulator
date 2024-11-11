@@ -82,4 +82,4 @@ RUN cabal build \
 
 ENV PATH="/root/.local/bin:${PATH}"
 
-CMD ["emulator"]
+ENTRYPOINT ["emulator"]
