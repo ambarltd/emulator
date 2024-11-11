@@ -10,7 +10,7 @@ import Prettyprinter (pretty)
 
 import Ambar.Emulator (emulate)
 import Ambar.Emulator.Config (parseEnvConfigFile, EmulatorConfig(..))
-import Utils.Logger (plainLogger, Severity(..))
+import Utils.Logger (plainLogger, Severity(..), logInfo)
 
 _DEFAULT_PARTITIONS_PER_TOPIC :: Int
 _DEFAULT_PARTITIONS_PER_TOPIC = 10
@@ -24,14 +24,19 @@ main = do
   cmd <- O.execParser cliOptions
   case cmd of
     CmdRun{..} -> do
+      let logger = plainLogger severity
+          severity = if o_verbose then Debug else Info
+
       env <- parseEnvConfigFile o_configPath
+      logInfo @String logger "configuration loaded"
+
       queue <- maybe defaultStatePath return o_statePath
       let config = EmulatorConfig
             { c_partitionsPerTopic = fromMaybe _DEFAULT_PARTITIONS_PER_TOPIC o_partitionsPerTopic
             , c_dataPath = queue
             }
-          severity = if o_verbose then Debug else Info
-      emulate (plainLogger severity) config env
+
+      emulate logger config env
     CmdVersion ->
       print _VERSION
 
