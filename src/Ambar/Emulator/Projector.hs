@@ -16,17 +16,18 @@ import Data.Aeson (ToJSON, FromJSON)
 import qualified Data.ByteString.Lazy as LB
 import Data.Maybe (listToMaybe, fromMaybe)
 import Data.Text (Text)
+import qualified Data.Text.Encoding as Text (decodeUtf8)
 import Control.Concurrent.Async (replicateConcurrently_, forConcurrently_)
 import Control.Monad.Extra (whileM)
 import GHC.Generics (Generic)
 
-import Ambar.Emulator.Config (Id(..), DataDestination, DataSource)
+import Ambar.Emulator.Config (Id(..), DataDestination, DataSource, Source)
 import Ambar.Emulator.Queue.Topic (Topic, ReadError(..), PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Transport (Transport)
 import qualified Ambar.Transport as Transport
 import Utils.Some (Some)
-import Utils.Logger (SimpleLogger, logFatal, logWarn, fatal, annotate)
+import Utils.Logger (SimpleLogger, logFatal, logWarn, logInfo, fatal, annotate)
 import Utils.Delay (Duration, delay, millis, seconds)
 
 data Projection = Projection
@@ -75,6 +76,7 @@ project logger_ Projection{..} =
       Right (bs, meta) -> do
         record <- decode logger bs
         retrying logger $ Transport.sendJSON p_transport (toMsg source record)
+        logInfo logger $ "sent. " <> relevantFields undefined record
         Topic.commit consumer meta
         return True
 
@@ -91,6 +93,9 @@ project logger_ Projection{..} =
   decode logger bs = case Json.eitherDecode $ LB.fromStrict bs of
     Left err -> fatal logger $ "decoding error: " <> err
     Right v -> return v
+
+relevantFields :: Source -> Record -> Text
+relevantFields _ (Record value) = Text.decodeUtf8 $ LB.toStrict $ Json.encode value
 
 -- | Retry forever
 retrying :: Show err => SimpleLogger -> IO (Maybe err) -> IO ()
