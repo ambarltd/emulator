@@ -1,0 +1,17 @@
+name: Build static binary
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+  branches:
+    - main
+
+jobs:
+  build-release:
+    name: Build static binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker build
+        run: ./utils.sh build-docker

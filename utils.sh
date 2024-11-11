@@ -16,6 +16,10 @@ function bench {
   cabal run emulator-bench -- "${@}"
 }
 
+function build-docker {
+  docker build --file "./build/Dockerfile.aarch64.linux" -t emulator .
+}
+
 # Save results of benchmarking
 function bench-save {
   cabal build emulator-bench
