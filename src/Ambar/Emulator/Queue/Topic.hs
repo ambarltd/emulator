@@ -32,7 +32,7 @@ import Control.Concurrent.Async (forConcurrently_ , forConcurrently)
 import qualified Control.Concurrent.STM as STM
 import Control.Concurrent.STM (STM, TVar)
 import Control.Exception (bracket, handle, BlockedIndefinitelyOnSTM)
-import Control.Monad (forM_, forM, when, unless)
+import Control.Monad (forM_, forM, unless)
 import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 import Data.ByteString (ByteString)
 import Data.Foldable (sequenceA_)
@@ -120,8 +120,7 @@ newtype ConsumerId = ConsumerId UUID
 
 -- | A consumer holds any number of reader instances.
 -- The particular instances and their number is adjusted through
--- rebalances at consumer creation and descruction.
--- Contains an infinite cycling list of reader instances for round-robin picking
+-- rebalances at consumer creation and destruction.
 -- A value of Nothing means that the consumer is closed.
 data Consumer = Consumer Topic (TVar (Maybe [PartitionReader]))
 
@@ -372,7 +371,7 @@ withConsumer topic@Topic{..} name act = do
       Ready allReaders -> do
         let cids = HashMap.keys (g_consumers group)
             readerCount = length allReaders
-            consumerCount = length cids
+            consumerCount = max 1 $ length cids
             chunkSize = ceiling @Double $ fromIntegral readerCount / fromIntegral consumerCount
             chunks = if chunkSize > 0
               then chunksOf chunkSize allReaders
@@ -388,7 +387,7 @@ withConsumer topic@Topic{..} name act = do
             Just (Consumer _ rvar) -> STM.writeTVar rvar $
               if null readers
                then Just []
-               else Just (cycle readers)
+               else Just readers
 
         after <- assignments group
 
@@ -440,22 +439,27 @@ read (Consumer _ var) =
     mreaders <- STM.readTVar var
     case mreaders of
       Nothing -> return $ Left ClosedConsumer
-      Just rs -> go [] rs
+      Just rs -> go $ zip rs (rotations rs)
   where
+    -- rotations [1,2,3] == [[2,3,1],[3,1,2],[1,2,3]]
+    rotations xs =
+      take (length xs)
+      [ take (length xs) $ drop n (cycle xs) | n <- [1..]]
+
     -- if we are blocked is because no new writing threads can be
     -- created and we are at the end of the partition.
     whenBlocked :: BlockedIndefinitelyOnSTM -> IO (Either ReadError a)
     whenBlocked _ = return $ Left EndOfPartition
 
-    go _ [] = STM.retry
-    go seen (PartitionReader reader pnumber _: rs) = do
-      when (pnumber `elem` seen) STM.retry
-      mval <- R.tryRead reader
-      case mval of
-        Nothing -> go (pnumber : seen) rs
-        Just (offset, Record bs) -> do
-          STM.writeTVar var (Just rs)
-          return $ Right (bs, Meta pnumber offset)
+    go = \case
+      [] -> STM.retry
+      (PartitionReader reader pnumber _, rs) : xs -> do
+        mval <- R.tryRead reader
+        case mval of
+          Nothing -> go xs
+          Just (offset, Record bs) -> do
+            STM.writeTVar var (Just rs)
+            return $ Right (bs, Meta pnumber offset)
 
 -- | If the partition was moved to a different consumer
 -- the commit will fail silently.
