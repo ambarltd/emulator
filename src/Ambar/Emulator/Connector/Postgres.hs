@@ -165,7 +165,7 @@ withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..
      where
      pc = Poll.PollingConnector
         { Poll.c_getId = entryId
-        , Poll.c_poll = run
+        , Poll.c_poll = Poll.batched . run
         , Poll.c_pollingInterval = _POLLING_INTERVAL
         , Poll.c_maxTransactionTime = _MAX_TRANSACTION_TIME
         , Poll.c_producer = producer

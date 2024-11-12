@@ -7,12 +7,13 @@ module Ambar.Emulator.Connector.Poll
    , mark
    , boundaries
    , cleanup
+   , batched
    ) where
 
 {-| General polling connector -}
 
+import Data.IORef (newIORef, writeIORef, readIORef)
 import Control.Concurrent.STM (TVar, atomically, writeTVar, readTVarIO)
-import Control.Monad (forM_)
 import Data.Aeson (ToJSON, FromJSON, FromJSONKey, ToJSONKey)
 import Data.Default (Default)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
@@ -38,11 +39,35 @@ instance Pretty EntryId where
 
 data PollingConnector entry = PollingConnector
    { c_getId :: entry -> EntryId
-   , c_poll :: Boundaries -> IO [entry]  -- ^ run query
+   , c_poll :: Boundaries -> IO (Stream entry)
+      -- ^ run query, optionally streaming results.
    , c_pollingInterval :: Duration
    , c_maxTransactionTime :: Duration
    , c_producer :: Topic.Producer entry
    }
+
+type Stream a = IO (Maybe a)
+
+batched :: IO [a] -> IO (Stream a)
+batched act = do
+  ref <- newIORef =<< act
+  return $ do
+    xs <- readIORef ref
+    case xs of
+      [] -> return Nothing
+      x:xs' -> do
+        writeIORef ref xs'
+        return $ Just x
+
+-- | foldl' over the stream.
+foldStream :: Stream a -> b -> (a -> b -> IO b) -> IO b
+foldStream getNext acc f = do
+   next <- getNext
+   case next of
+     Nothing -> return acc
+     Just item -> do
+        !acc' <- f item acc
+        foldStream getNext acc' f
 
 connect :: TVar BoundaryTracker -> PollingConnector entry -> IO Void
 connect trackerVar (PollingConnector getId poll interval maxTransTime producer) = do
@@ -52,12 +77,11 @@ connect trackerVar (PollingConnector getId poll interval maxTransTime producer) 
    loop = do
       before <- getPOSIXTime
       tracker <- readTVarIO trackerVar
-      items <- poll (boundaries tracker)
-      forM_ items (Topic.write producer)
-      atomically $
-         writeTVar trackerVar $
-         cleanup (before - diff) $
-         foldr (mark before . getId) tracker items
+      stream <- poll (boundaries tracker)
+      tracker' <- foldStream stream tracker $ \item t -> do
+        Topic.write producer item
+        return $ mark before (getId item) t
+      atomically $ writeTVar trackerVar $ cleanup (before - diff) tracker'
       after <- getPOSIXTime
       delay $ max 0 $ interval - fromDiffTime (after - before)
       loop
