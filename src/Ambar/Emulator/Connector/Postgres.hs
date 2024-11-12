@@ -34,7 +34,7 @@ import qualified Database.PostgreSQL.Simple.FromField as P
 import qualified Database.PostgreSQL.Simple.FromRow as P
 import GHC.Generics (Generic)
 import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
-import Prettyprinter (pretty)
+import Prettyprinter (pretty, (<+>))
 import qualified Prettyprinter as Pretty
 
 import qualified Ambar.Emulator.Connector.Poll as Poll
@@ -198,11 +198,11 @@ withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..
           ]
 
        logResult row =
-        logInfo logger $ renderPretty $ Pretty.fillSep
-          ["ingested."
-          , "serial value:", prettyJSON $ serialValue row
-          , "partitioning value:", prettyJSON $ partitioningValue row
-          ]
+        logInfo logger $ renderPretty $
+          "ingested." <+> commaSeparated
+            [ "serial_value:" <+> prettyJSON (serialValue row)
+            , "partitioning_value:" <+> prettyJSON (partitioningValue row)
+            ]
 
 partitioner :: Partitioner Row
 partitioner = hashPartitioner partitioningValue

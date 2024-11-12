@@ -69,8 +69,8 @@ project logger_ Projection{..} =
     where
       PartitionCount pcount = Topic.partitionCount topic
       logger =
-        annotate ("source:" <> unId (s_id source)) $
-        annotate ("destination:" <> unId  p_destination)
+        annotate ("src: " <> unId (s_id source)) $
+        annotate ("dst: " <> unId  p_destination)
         logger_
 
   consume logger consumer source = do

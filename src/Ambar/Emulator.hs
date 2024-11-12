@@ -89,7 +89,7 @@ emulate logger_ config env = do
       Aeson.encodeFile statePath $ EmulatorState (Map.fromList states)
 
   connect queue (source, sstate) f = do
-    let logger = annotate ("source: " <> unId (s_id source)) logger_
+    let logger = annotate ("src: " <> unId (s_id source)) logger_
     topic <- Queue.openTopic queue $ topicName $ s_id source
     case s_source source of
       SourcePostgreSQL pconfig -> do

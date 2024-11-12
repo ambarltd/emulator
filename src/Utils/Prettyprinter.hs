@@ -18,7 +18,7 @@ sepBy :: Doc ann -> [Doc ann] -> Doc ann
 sepBy s = concatWith (\x y -> x <+> s <+> y)
 
 commaSeparated :: [Doc ann] -> Doc ann
-commaSeparated = sepBy ","
+commaSeparated = concatWith (\x y -> x <> "," <+> y)
 
 prettyJSON :: Aeson.ToJSON a => a -> Doc ann
 prettyJSON = pretty . Text.decodeUtf8 . Aeson.encode
