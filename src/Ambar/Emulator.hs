@@ -119,12 +119,9 @@ emulate logger_ config env = do
 
   project queue dest =
     withDestination dest $ \transport -> do
-    sourceTopics <- forM (d_sources dest) $ \sid -> do
-      DataSource{..} <- case Map.lookup sid (c_sources env) of
-        Nothing -> throwIO $ ErrorCall $ "missing source: " <> show sid
-        Just s -> return s
-      topic <- Queue.openTopic queue (topicName sid)
-      return (sid, s_description, topic)
+    sourceTopics <- forM (d_sources dest) $ \source -> do
+      topic <- Queue.openTopic queue (topicName $ s_id source)
+      return (source, topic)
 
     Projector.project logger_ Projection
         { p_id = projectionId (d_id dest)

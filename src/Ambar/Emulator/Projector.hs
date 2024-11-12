@@ -13,28 +13,33 @@ We do not implement filters for now.
 
 import qualified Data.Aeson as Json
 import Data.Aeson (ToJSON, FromJSON)
+import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as LB
 import Data.Maybe (listToMaybe, fromMaybe)
+import Data.String (fromString)
 import Data.Text (Text)
-import qualified Data.Text.Encoding as Text (decodeUtf8)
+import qualified Data.Text as Text
 import Control.Concurrent.Async (replicateConcurrently_, forConcurrently_)
 import Control.Monad.Extra (whileM)
 import GHC.Generics (Generic)
 
-import Ambar.Emulator.Config (Id(..), DataDestination, DataSource, Source)
+import Ambar.Emulator.Config (Id(..), DataDestination, DataSource(..), Source(..))
 import Ambar.Emulator.Queue.Topic (Topic, ReadError(..), PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
+import qualified Ambar.Emulator.Connector.Postgres as Pg
 import Ambar.Transport (Transport)
 import qualified Ambar.Transport as Transport
 import Utils.Some (Some)
 import Utils.Logger (SimpleLogger, logFatal, logWarn, logInfo, fatal, annotate)
 import Utils.Delay (Duration, delay, millis, seconds)
+import Utils.Prettyprinter (prettyJSON, renderPretty)
+import Prettyprinter (pretty, fillSep, (<+>))
 
 data Projection = Projection
   { p_id :: Id Projection
   , p_destination :: Id DataDestination
   , p_destinationDescription :: Text
-  , p_sources :: [(Id DataSource, Text, Topic)]
+  , p_sources :: [(DataSource, Topic)]
   , p_transport :: Some Transport
   }
 
@@ -57,14 +62,14 @@ project :: SimpleLogger -> Projection -> IO ()
 project logger_ Projection{..} =
   forConcurrently_ p_sources projectSource
   where
-  projectSource (sid, sdesc, topic) =
+  projectSource (source, topic) =
     replicateConcurrently_ pcount $ -- one consumer per partition
     Topic.withConsumer topic group $ \consumer ->
-    whileM $ consume logger consumer (sid, sdesc)
+    whileM $ consume logger consumer source
     where
       PartitionCount pcount = Topic.partitionCount topic
       logger =
-        annotate ("source:" <> unId sid) $
+        annotate ("source:" <> unId (s_id source)) $
         annotate ("destination:" <> unId  p_destination)
         logger_
 
@@ -76,15 +81,15 @@ project logger_ Projection{..} =
       Right (bs, meta) -> do
         record <- decode logger bs
         retrying logger $ Transport.sendJSON p_transport (toMsg source record)
-        logInfo logger $ "sent. " <> relevantFields undefined record
+        logInfo logger $ "sent. " <> relevantFields (s_source source) record
         Topic.commit consumer meta
         return True
 
   group = Topic.ConsumerGroupName $ unId p_id
 
-  toMsg (sid, sdesc) record = LB.toStrict $ Json.encode $ Message
-    { data_source_id = unId sid
-    , data_source_description = sdesc
+  toMsg source record = LB.toStrict $ Json.encode $ Message
+    { data_source_id = unId (s_id source)
+    , data_source_description = s_description source
     , data_destination_id = unId p_destination
     , data_destination_description = p_destinationDescription
     , payload = record
@@ -94,8 +99,25 @@ project logger_ Projection{..} =
     Left err -> fatal logger $ "decoding error: " <> err
     Right v -> return v
 
+-- | Fields to print when a record is sent.
 relevantFields :: Source -> Record -> Text
-relevantFields _ (Record value) = Text.decodeUtf8 $ LB.toStrict $ Json.encode value
+relevantFields source (Record value) = renderPretty $
+  withObject $ \o ->
+  case source of
+    SourceFile _ -> prettyJSON value
+    SourcePostgreSQL Pg.ConnectorConfig{..} ->
+      let fields = [c_serialColumn, c_partitioningColumn] in
+      fillSep $
+        [ pretty field <> ":" <+> prettyJSON v
+        | field <- fields
+        , Just v <- [KeyMap.lookup (fromString $ Text.unpack field) o]
+        ]
+  where
+  withObject f =
+    case value of
+      Json.Object o -> f o
+      _ -> prettyJSON value
+
 
 -- | Retry forever
 retrying :: Show err => SimpleLogger -> IO (Maybe err) -> IO ()

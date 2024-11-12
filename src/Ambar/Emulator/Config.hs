@@ -14,10 +14,11 @@ module Ambar.Emulator.Config
 {-| Parsing of the configuration file
 -}
 
-import Control.Monad (forM_, when)
+import Control.Monad (forM_, when, forM)
 import Control.Exception (throwIO, ErrorCall(..))
 import Data.Aeson (ToJSON, FromJSON, (.:), FromJSONKey, ToJSONKey)
 import qualified Data.Aeson as Json
+import qualified Data.Aeson.Types as Json
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.Text as Text
@@ -59,7 +60,7 @@ data Source
 
 data DataDestination = DataDestination
   { d_id :: Id DataDestination
-  , d_sources :: [Id DataSource]
+  , d_sources :: [DataSource]
   , d_description :: Text
   , d_destination :: Destination
   }
@@ -83,16 +84,13 @@ instance FromJSON EnvironmentConfig where
         fail $ Text.unpack $ "Multiple data sources with ID '" <> unId (s_id $ head xs) <> "'"
       return $ fmap head multimap
     c_destinations <- do
-      dsts <- o .: "data_destinations"
+      let parser = Json.listParser $ parseDataDestination c_sources
+      dsts <- Json.explicitParseField parser o "data_destinations"
       let multimap = Map.fromListWith (++) [ (d_id s, [s]) | s <- dsts ]
       forM_ multimap $ \xs ->
         when (length xs > 1) $
-        fail $ Text.unpack $ "Multiple data destinations with ID '" <> unId (d_id $ head xs) <> "'"
+          fail $ Text.unpack $ "Multiple data destinations with ID '" <> unId (d_id $ head xs) <> "'"
       return $ fmap head multimap
-    forM_ c_destinations $ \dest ->
-      forM_ (d_sources dest) $ \sid ->
-      when (sid `Map.notMember` c_sources) $
-        fail $ Text.unpack $ "Unknown data source: '" <> unId sid <> "'"
     return EnvironmentConfig{..}
 
 instance FromJSON DataSource where
@@ -123,10 +121,18 @@ instance FromJSON DataSource where
 
     parseFile o = SourceFile <$> (o .: "path")
 
-instance FromJSON DataDestination where
-  parseJSON = Json.withObject "DataSource" $ \o -> do
+parseDataDestination
+  :: Map (Id DataSource) DataSource
+  -> Json.Value
+  -> Json.Parser DataDestination
+parseDataDestination sourcesMap = Json.withObject "DataSource" $ \o -> do
     d_id <- o .: "id"
-    d_sources <- o .: "sources"
+    d_sources <- do
+      sids <- o .: "sources"
+      forM sids $ \sid ->
+        case Map.lookup sid sourcesMap of
+          Nothing -> fail $ Text.unpack $ "Unknown data source: '" <> unId sid <> "'"
+          Just source -> return source
     d_description <- o .: "description"
     d_destination <- (o .: "type") >>= \t ->
       case t of

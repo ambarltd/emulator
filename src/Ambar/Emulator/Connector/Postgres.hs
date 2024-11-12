@@ -27,14 +27,13 @@ import qualified Data.Map.Strict as Map
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import qualified Data.Text.Lazy.Encoding as Text (decodeUtf8)
 import Data.Void (Void)
 import Data.Word (Word64, Word16)
 import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.FromField as P
 import qualified Database.PostgreSQL.Simple.FromRow as P
 import GHC.Generics (Generic)
-import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated)
+import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
 import Prettyprinter (pretty)
 import qualified Prettyprinter as Pretty
 
@@ -204,8 +203,6 @@ withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..
           , "serial value:", prettyJSON $ serialValue row
           , "partitioning value:", prettyJSON $ partitioningValue row
           ]
-
-       prettyJSON = pretty . Text.decodeUtf8 . Aeson.encode
 
 partitioner :: Partitioner Row
 partitioner = hashPartitioner partitioningValue
