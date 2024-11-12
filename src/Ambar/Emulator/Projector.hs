@@ -32,14 +32,17 @@ import Utils.Delay (Duration, delay, millis, seconds)
 data Projection = Projection
   { p_id :: Id Projection
   , p_destination :: Id DataDestination
-  , p_sources :: [(Id DataSource, Topic)]
+  , p_destinationDescription :: Text
+  , p_sources :: [(Id DataSource, Text, Topic)]
   , p_transport :: Some Transport
   }
 
 -- | A record enriched with more information to send to the client.
 data Message = Message
   { data_source_id :: Text
+  , data_source_description :: Text
   , data_destination_id :: Text
+  , data_destination_description :: Text
   , payload :: Record
   }
   deriving (Generic, Show)
@@ -53,10 +56,10 @@ project :: SimpleLogger -> Projection -> IO ()
 project logger_ Projection{..} =
   forConcurrently_ p_sources projectSource
   where
-  projectSource (sid, topic) =
+  projectSource (sid, sdesc, topic) =
     replicateConcurrently_ pcount $ -- one consumer per partition
     Topic.withConsumer topic group $ \consumer ->
-    whileM $ consume logger consumer sid
+    whileM $ consume logger consumer (sid, sdesc)
     where
       PartitionCount pcount = Topic.partitionCount topic
       logger =
@@ -77,9 +80,11 @@ project logger_ Projection{..} =
 
   group = Topic.ConsumerGroupName $ unId p_id
 
-  toMsg sid record = LB.toStrict $ Json.encode $ Message
+  toMsg (sid, sdesc) record = LB.toStrict $ Json.encode $ Message
     { data_source_id = unId sid
+    , data_source_description = sdesc
     , data_destination_id = unId p_destination
+    , data_destination_description = p_destinationDescription
     , payload = record
     }
 

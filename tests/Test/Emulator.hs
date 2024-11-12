@@ -72,7 +72,7 @@ testEmulator p = describe "emulator" $ do
         consumed <- consume out (length after)
         consumed `shouldBe` after
     where
-    msgToEvent (Message _ _ (Record r)) =
+    msgToEvent (Message _ _ _ _ (Record r)) =
       case Json.fromJSON @Event r of
         Json.Error str -> Left str
         Json.Success e -> Right e
