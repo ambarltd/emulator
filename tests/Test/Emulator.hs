@@ -103,7 +103,7 @@ testEmulator p = describe "emulator" $ do
       out <- newTVarIO []
       let dest = DataDestination
             { d_id = Id "fun"
-            , d_sources = fmap s_id sources
+            , d_sources = sources
             , d_description = "Function destination"
             , d_destination = DestinationFun $ \e -> do
                 atomically $ modifyTVar out (e:)

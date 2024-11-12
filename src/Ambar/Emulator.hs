@@ -34,7 +34,7 @@ import Ambar.Emulator.Config
   , Destination(..)
   )
 import Utils.Delay (every, seconds)
-import Utils.Logger (SimpleLogger, annotate)
+import Utils.Logger (SimpleLogger, annotate, logInfo)
 import Utils.Some (Some(..))
 import Utils.STM (atomicallyNamed)
 
@@ -51,7 +51,7 @@ newtype EmulatorState = EmulatorState
   deriving anyclass (ToJSON, FromJSON)
 
 emulate :: SimpleLogger -> EmulatorConfig -> EnvironmentConfig -> IO ()
-emulate logger config env = do
+emulate logger_ config env = do
   Queue.withQueue queuePath pcount $ \queue ->
     concurrently_ (connectAll queue) (projectAll queue)
   where
@@ -89,23 +89,25 @@ emulate logger config env = do
       Aeson.encodeFile statePath $ EmulatorState (Map.fromList states)
 
   connect queue (source, sstate) f = do
+    let logger = annotate ("src: " <> unId (s_id source)) logger_
     topic <- Queue.openTopic queue $ topicName $ s_id source
     case s_source source of
       SourcePostgreSQL pconfig -> do
-        let logger' = annotate ("source: " <> unId (s_id source)) logger
-            partitioner = Postgres.partitioner
+        let partitioner = Postgres.partitioner
             encoder = Postgres.encoder pconfig
         state <- case sstate of
           StatePostgres s -> return s
           _ -> throwIO $ ErrorCall $
             "Incompatible state for source: " <> show (s_id source)
         Topic.withProducer topic partitioner encoder $ \producer ->
-          Postgres.withConnector logger' state producer pconfig $ \stateVar ->
+          Postgres.withConnector logger state producer pconfig $ \stateVar -> do
+          logInfo @String logger "connected"
           f (s_id source, StatePostgres <$> stateVar)
 
       SourceFile path ->
         Topic.withProducer topic FileConnector.partitioner FileConnector.encoder $ \producer ->
         withAsync (FileConnector.connect logger producer path) $ \_ -> do
+        logInfo @String logger "connected"
         f (s_id source, return $ StateFile ())
 
   initialStateFor source =
@@ -117,14 +119,11 @@ emulate logger config env = do
 
   project queue dest =
     withDestination dest $ \transport -> do
-    sourceTopics <- forM (d_sources dest) $ \sid -> do
-      DataSource{..} <- case Map.lookup sid (c_sources env) of
-        Nothing -> throwIO $ ErrorCall $ "missing source: " <> show sid
-        Just s -> return s
-      topic <- Queue.openTopic queue (topicName sid)
-      return (sid, s_description, topic)
+    sourceTopics <- forM (d_sources dest) $ \source -> do
+      topic <- Queue.openTopic queue (topicName $ s_id source)
+      return (source, topic)
 
-    Projector.project logger Projection
+    Projector.project logger_ Projection
         { p_id = projectionId (d_id dest)
         , p_destination = d_id dest
         , p_destinationDescription = d_description dest

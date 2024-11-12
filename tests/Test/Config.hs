@@ -107,16 +107,14 @@ testConfig = do
             type: file
             path: ./temp.file
             sources:
-              - postgres_source
-              - file_source
+              - source_1
 
           - id: dest_1
             description: my projection 1
             type: file
             path: ./temp.file
             sources:
-              - postgres_source
-              - file_source
+              - source_1
         |] `shouldThrow` errorWith "Multiple data destinations with ID"
 
     it "detects invalid sources" $ do

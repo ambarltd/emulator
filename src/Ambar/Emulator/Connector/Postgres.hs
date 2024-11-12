@@ -10,6 +10,7 @@ module Ambar.Emulator.Connector.Postgres
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
 import Control.Exception (Exception, bracket, throwIO, ErrorCall(..))
+import Control.Monad (forM_)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
@@ -32,8 +33,8 @@ import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.FromField as P
 import qualified Database.PostgreSQL.Simple.FromRow as P
 import GHC.Generics (Generic)
-import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated)
-import Prettyprinter (pretty)
+import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
+import Prettyprinter (pretty, (<+>))
 import qualified Prettyprinter as Pretty
 
 import qualified Ambar.Emulator.Connector.Poll as Poll
@@ -41,7 +42,7 @@ import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(.
 import Ambar.Emulator.Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
 import Utils.Async (withAsyncThrow)
 import Utils.Delay (Duration, millis, seconds)
-import Utils.Logger (SimpleLogger, logDebug)
+import Utils.Logger (SimpleLogger, logDebug, logInfo)
 
 _POLLING_INTERVAL :: Duration
 _POLLING_INTERVAL = millis 50
@@ -176,6 +177,7 @@ withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..
        logDebug logger query
        r <- P.queryWith parser conn (fromString query) ()
        logDebug logger $ "results: " <> show (length r)
+       forM_ r logResult
        return r
        where
        query = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
@@ -194,6 +196,13 @@ withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..
              , ")"]
           | (EntryId low, EntryId high) <- bs
           ]
+
+       logResult row =
+        logInfo logger $ renderPretty $
+          "ingested." <+> commaSeparated
+            [ "serial_value:" <+> prettyJSON (serialValue row)
+            , "partitioning_value:" <+> prettyJSON (partitioningValue row)
+            ]
 
 partitioner :: Partitioner Row
 partitioner = hashPartitioner partitioningValue

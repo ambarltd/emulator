@@ -87,13 +87,11 @@ data WithSeverity a = WithSeverity Severity a
 
 instance Pretty a => Pretty (WithSeverity a) where
   pretty (WithSeverity severity a) =
-    "[" <> fromString s <> "]" <+> pretty a
-    where
-    s = case severity of
-      Fatal -> "FATAL"
-      Warn -> "WARN"
-      Info -> "INFO"
-      Debug -> "DEBUG"
+    case severity of
+      Fatal -> "[FATAL]" <+> pretty a
+      Warn -> "[WARN]" <+> pretty a
+      Info -> pretty a
+      Debug -> "[DEBUG]" <+> pretty a
 
 -- ============================================================================
 -- Loggers
@@ -123,7 +121,6 @@ standardLogger = Logger $ Text.hPutStrLn stderr
 plainLogger :: Severity -> SimpleLogger
 plainLogger maxSeverity =
   filterM (\(WithSeverity s _) -> s <= maxSeverity) $
-  enhanceM withTimeStamp $
   enhance prettify $
   serialised standardLogger
 
