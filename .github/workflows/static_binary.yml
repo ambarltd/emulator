@@ -6,6 +6,11 @@ on:
     branches:
       - main
 
+# only one build per branch
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-release:
     name: Build static binary
