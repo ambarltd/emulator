@@ -7,7 +7,7 @@ module Ambar.Emulator.Connector.Poll
    , mark
    , boundaries
    , cleanup
-   , batched
+   , streamed
    ) where
 
 {-| General polling connector -}
@@ -48,8 +48,9 @@ data PollingConnector entry = PollingConnector
 
 type Stream a = IO (Maybe a)
 
-batched :: IO [a] -> IO (Stream a)
-batched act = do
+-- | Take a batched computation and stream its results.
+streamed :: IO [a] -> IO (Stream a)
+streamed act = do
   ref <- newIORef =<< act
   return $ do
     xs <- readIORef ref
