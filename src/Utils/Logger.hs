@@ -151,6 +151,13 @@ logInfo logger msg = logMsg logger (WithSeverity Info $ PrettyT $ pretty msg)
 logWarn :: (HasCallStack, Pretty a) => SimpleLogger -> a -> IO ()
 logWarn logger msg = logMsg logger (WithSeverity Warn $ PrettyT $ pretty msg)
 
+logDebugAction :: (HasCallStack) => SimpleLogger -> Text -> IO b -> IO b
+logDebugAction logger msg act = do
+  logDebug logger (msg <> ": start")
+  r <- act
+  logDebug logger (msg <> ": end")
+  return r
+
 logDebug :: (HasCallStack, Pretty a) => SimpleLogger -> a -> IO ()
 logDebug logger msg = do
   loc <- getLocation 2
