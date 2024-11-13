@@ -14,7 +14,7 @@ module Ambar.Emulator.Connector.Poll
 {-| General polling connector -}
 
 import Control.Monad (foldM)
-import Control.Concurrent.STM (TVar, atomically, writeTVar, readTVarIO)
+import Control.Concurrent.STM (TVar, atomically, readTVarIO, modifyTVar)
 import Data.Aeson (ToJSON, FromJSON, FromJSONKey, ToJSONKey)
 import Data.Default (Default)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
@@ -63,10 +63,10 @@ connect trackerVar (PollingConnector getId poll interval maxTransTime producer) 
    loop = do
       before <- getPOSIXTime
       tracker <- readTVarIO trackerVar
-      tracker' <- poll (boundaries tracker) tracker $ \t item -> do
+      poll (boundaries tracker) () $ \() item -> do
         Topic.write producer item
-        return $ mark before (getId item) t
-      atomically $ writeTVar trackerVar $ cleanup (before - diff) tracker'
+        atomically $ modifyTVar trackerVar $ mark before (getId item)
+      atomically $ modifyTVar trackerVar $ cleanup (before - diff)
       after <- getPOSIXTime
       delay $ max 0 $ interval - fromDiffTime (after - before)
       loop
