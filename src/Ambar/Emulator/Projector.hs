@@ -19,7 +19,7 @@ import Data.Maybe (listToMaybe, fromMaybe)
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Control.Concurrent.Async (replicateConcurrently_, forConcurrently_)
+import Control.Concurrent.Async (forConcurrently_)
 import Control.Monad.Extra (whileM)
 import GHC.Generics (Generic)
 
@@ -63,8 +63,9 @@ project logger_ Projection{..} =
   forConcurrently_ p_sources projectSource
   where
   projectSource (source, topic) =
-    replicateConcurrently_ pcount $ -- one consumer per partition
-    Topic.withConsumer topic group $ \consumer ->
+    -- one consumer per partition
+    Topic.withConsumers topic group pcount $ \consumers ->
+    forConcurrently_ consumers $ \consumer ->
     whileM $ consume logger consumer source
     where
       PartitionCount pcount = Topic.partitionCount topic

@@ -14,6 +14,7 @@ module Ambar.Emulator.Queue.Topic
   , Meta(..)
   , ReadError(..)
   , withConsumer
+  , withConsumers
   , read
   , commit
 
