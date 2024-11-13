@@ -7,12 +7,13 @@ module Ambar.Emulator.Connector.Poll
    , mark
    , boundaries
    , cleanup
+   , Stream
    , streamed
    ) where
 
 {-| General polling connector -}
 
-import Data.IORef (newIORef, writeIORef, readIORef)
+import Control.Monad (foldM)
 import Control.Concurrent.STM (TVar, atomically, writeTVar, readTVarIO)
 import Data.Aeson (ToJSON, FromJSON, FromJSONKey, ToJSONKey)
 import Data.Default (Default)
@@ -39,36 +40,20 @@ instance Pretty EntryId where
 
 data PollingConnector entry = PollingConnector
    { c_getId :: entry -> EntryId
-   , c_poll :: Boundaries -> IO (Stream entry)
+   , c_poll :: Boundaries -> Stream entry
       -- ^ run query, optionally streaming results.
    , c_pollingInterval :: Duration
    , c_maxTransactionTime :: Duration
    , c_producer :: Topic.Producer entry
    }
 
-type Stream a = IO (Maybe a)
+type Stream a = forall b. b -> (b -> a -> IO b) -> IO b
 
 -- | Take a batched computation and stream its results.
-streamed :: IO [a] -> IO (Stream a)
-streamed act = do
-  ref <- newIORef =<< act
-  return $ do
-    xs <- readIORef ref
-    case xs of
-      [] -> return Nothing
-      x:xs' -> do
-        writeIORef ref xs'
-        return $ Just x
-
--- | foldl' over the stream.
-foldStream :: Stream a -> b -> (a -> b -> IO b) -> IO b
-foldStream getNext acc f = do
-   next <- getNext
-   case next of
-     Nothing -> return acc
-     Just item -> do
-        !acc' <- f item acc
-        foldStream getNext acc' f
+streamed :: IO [a] -> Stream a
+streamed act acc f = do
+   xs <- act
+   foldM f acc xs
 
 connect :: TVar BoundaryTracker -> PollingConnector entry -> IO Void
 connect trackerVar (PollingConnector getId poll interval maxTransTime producer) = do
@@ -78,8 +63,7 @@ connect trackerVar (PollingConnector getId poll interval maxTransTime producer) 
    loop = do
       before <- getPOSIXTime
       tracker <- readTVarIO trackerVar
-      stream <- poll (boundaries tracker)
-      tracker' <- foldStream stream tracker $ \item t -> do
+      tracker' <- poll (boundaries tracker) tracker $ \t item -> do
         Topic.write producer item
         return $ mark before (getId item) t
       atomically $ writeTVar trackerVar $ cleanup (before - diff) tracker'

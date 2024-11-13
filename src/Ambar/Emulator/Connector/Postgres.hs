@@ -165,7 +165,7 @@ withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..
      where
      pc = Poll.PollingConnector
         { Poll.c_getId = entryId
-        , Poll.c_poll = Poll.streamed . run
+        , Poll.c_poll = \boundaries -> Poll.streamed (run boundaries)
         , Poll.c_pollingInterval = _POLLING_INTERVAL
         , Poll.c_maxTransactionTime = _MAX_TRANSACTION_TIME
         , Poll.c_producer = producer
@@ -173,6 +173,7 @@ withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..
 
      parser = mkParser (columns config) schema
 
+     run :: Boundaries -> IO [Row]
      run (Boundaries bs) = do
        logDebug logger query
        r <- P.queryWith parser conn (fromString query) ()
