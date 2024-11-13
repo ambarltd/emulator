@@ -101,17 +101,25 @@ testQueue = do
   it "restores state as it was" $
     withTempPath $ \path -> do
     let tname = TopicName "test-topic"
+    putStrLn "D state 1.."
     state1 <- Queue.withQueue path (PartitionCount 2) $ \queue -> do
       topic <- Queue.openTopic queue tname
       withProducer topic $ \producer ->
         traverse_ (T.write producer) (take 40 msgs)
 
-      T.withConsumer topic group $ \c1 ->
-        T.withConsumer topic group $ \c2 ->
+      putStrLn "D withConsumer.."
+      T.withConsumer topic group $ \c1 -> do
+        putStrLn "D withConsumer 2.."
+        T.withConsumer topic group $ \c2 -> do
+          putStrLn "D inside.."
           forM_ [c1, c2] $ \c -> do
             replicateM_ 10 $ do
+              putStrLn "D reading.."
               Right (_, meta) <- T.read c
+              print meta
               T.commit c meta
+          putStrLn "D done.."
+      putStrLn "D getting state.."
       T.getState topic
 
     state2 <- Queue.withQueue path (PartitionCount 10) $ \queue -> do

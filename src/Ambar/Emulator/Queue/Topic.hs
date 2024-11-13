@@ -32,7 +32,7 @@ import Control.Concurrent.Async (forConcurrently_ , forConcurrently)
 import qualified Control.Concurrent.STM as STM
 import Control.Concurrent.STM (STM, TVar)
 import Control.Exception (bracket, handle, BlockedIndefinitelyOnSTM)
-import Control.Monad (forM_, forM, unless)
+import Control.Monad (forM_, forM, unless, replicateM)
 import Data.Aeson (FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 import Data.ByteString (ByteString)
 import Data.Foldable (sequenceA_)
@@ -122,7 +122,7 @@ newtype ConsumerId = ConsumerId UUID
 -- The particular instances and their number is adjusted through
 -- rebalances at consumer creation and destruction.
 -- A value of Nothing means that the consumer is closed.
-data Consumer = Consumer Topic (TVar (Maybe [PartitionReader]))
+data Consumer = Consumer ConsumerId Topic (TVar (Maybe [PartitionReader]))
 
 newtype UUID = UUID Text
   deriving Show
@@ -258,52 +258,66 @@ withConsumer
   -> ConsumerGroupName
   -> (Consumer -> IO b)
   -> IO b
-withConsumer topic@Topic{..} name act = do
-  cid <- ConsumerId <$> newUUID
-  bracket (add cid) (remove cid . fst) $ \(consumer, group) -> do
-    initialise group
-    act consumer
+withConsumer topic name act =
+  withConsumers topic name 1 $ \cs ->
+    case cs of
+      [c] -> act c
+      _ -> error $ "Topic.withConsumer: unexpected count: " <> show (length cs)
+
+withConsumers
+  :: HasCallStack
+  => Topic
+  -> ConsumerGroupName
+  -> Int               -- ^ number of consumer
+  -> ([Consumer] -> IO b)
+  -> IO b
+withConsumers topic@Topic{..} gname count act = do
+  cids <- fmap ConsumerId <$> replicateM count newUUID
+  bracket (add gname cids) (remove gname . fst) $ \(consumers, group) -> do
+    initialise gname group
+    act consumers
   where
-  add cid = atomicallyNamed "topic.withConsumer.add" $ do
-    consumer <- do
-      rvar <- STM.newTVar (Just [])
-      return $ Consumer topic rvar
+  add name cids = atomicallyNamed "topic.withConsumer.add" $ do
     groups <- STM.readTVar t_cgroups
-    group <- prepare cid consumer groups
-    STM.writeTVar t_cgroups $ HashMap.insert name group groups
+    consumers <- forM cids $ \cid -> do
+      rvar <- STM.newTVar (Just [])
+      return $ Consumer cid topic rvar
+
+    group <- do
+      group <- prepare name groups
+      let new = HashMap.fromList (zip cids consumers)
+          old = g_consumers group
+      return $ group { g_consumers = HashMap.union old new }
+
+    STM.writeTVar t_cgroups $ HashMap.insert gname group groups
+
     case g_state group of
       Ready _ -> rebalance group
       Closed -> error "closed group"
       Initialising -> return () -- will be rebalanced after initialisation
-    return (consumer, group)
+    return (consumers, group)
 
   -- retrieve an existing group or create a new one
   prepare
-    :: ConsumerId
-    -> Consumer
+    :: ConsumerGroupName
     -> HashMap ConsumerGroupName ConsumerGroup
     -> STM ConsumerGroup
-  prepare cid consumer groups =
+  prepare name groups =
     case HashMap.lookup name groups of
       Just group -> case g_state group of
-        Closed -> return group      -- we will initialise the group
-          { g_state = Initialising
-          , g_consumers = HashMap.singleton cid consumer
-          }
-        Initialising -> STM.retry   -- someone else is initialising it. Let's wait
+        Closed -> return group { g_state = Initialising } -- we will initialise the group
+        Initialising -> STM.retry -- someone else is initialising it. Let's wait
         Ready _ -> return group
-          { g_consumers = HashMap.insert cid consumer (g_consumers group)
-          }
       Nothing -> do
         -- create a new group
         offsets <- traverse (const $ STM.newTVar 0) t_partitions
         return ConsumerGroup
           { g_state = Initialising
           , g_comitted = offsets
-          , g_consumers = HashMap.singleton cid consumer
+          , g_consumers = mempty
           }
 
-  initialise group =
+  initialise name group =
     case g_state group of
       Initialising -> do
         readers <- openReaders group
@@ -327,19 +341,22 @@ withConsumer topic@Topic{..} name act = do
           r <- R.new t_warden partition start
           return $ PartitionReader r pnumber offsetVar
 
-  remove :: ConsumerId -> Consumer -> IO ()
-  remove cid consumer@(Consumer _ var) = do
+  remove :: ConsumerGroupName -> [Consumer] -> IO ()
+  remove name consumers = do
     toClose <- atomicallyNamed "topic.consumer.remove" $ do
       groups <- STM.readTVar t_cgroups
-      assigned <- fromMaybe [] <$> STM.readTVar var
-      closeConsumer consumer
+      assigned <- fmap concat $ forM consumers $ \consumer@(Consumer _ _ var) -> do
+        readers <- fromMaybe [] <$> STM.readTVar var
+        closeConsumer consumer
+        return readers
 
       let group_before = groups HashMap.! name
           isGroupClosed = case g_state group_before of
             Ready _ -> False
             Initialising -> False
             Closed -> True
-          remaining = HashMap.delete cid (g_consumers group_before)
+          cids = fmap (\(Consumer cid _ _) -> cid) consumers
+          remaining = foldr HashMap.delete (g_consumers group_before) cids
           group = group_before
             { g_consumers = remaining
             , g_state =
@@ -384,10 +401,7 @@ withConsumer topic@Topic{..} name act = do
         forM_ (zip cids readerLists) $ \(c, readers) ->
           case HashMap.lookup c (g_consumers group) of
             Nothing -> error "rebalancing: missing consumer id"
-            Just (Consumer _ rvar) -> STM.writeTVar rvar $
-              if null readers
-               then Just []
-               else Just readers
+            Just (Consumer _ _ rvar) -> STM.writeTVar rvar $ Just readers
 
         after <- assignments group
 
@@ -403,7 +417,7 @@ withConsumer topic@Topic{..} name act = do
         :: ConsumerGroup
         -> STM (HashMap (ConsumerId, PartitionNumber) PartitionReader)
       assignments g = do
-        xss <- forM (HashMap.toList (g_consumers g)) $ \(cid, Consumer _ rvar) -> do
+        xss <- forM (HashMap.elems (g_consumers g)) $ \(Consumer cid _ rvar) -> do
           readers <- STM.readTVar rvar
           let deduped = case readers of
                 Just [] -> []
@@ -413,7 +427,7 @@ withConsumer topic@Topic{..} name act = do
         return $ HashMap.fromList (concat xss)
 
 closeConsumer :: HasCallStack => Consumer -> STM ()
-closeConsumer (Consumer _ var) =  STM.writeTVar var Nothing
+closeConsumer (Consumer _ _ var) =  STM.writeTVar var Nothing
 
 newUUID :: IO UUID
 newUUID = do
@@ -433,7 +447,7 @@ data ReadError
 -- | Try to read all readers assigned to the consumer in round-robin fashion.
 -- Blocks until there is a message.
 read :: HasCallStack => Consumer -> IO (Either ReadError (ByteString, Meta))
-read (Consumer _ var) =
+read (Consumer _ _ var) =
   handle whenBlocked $
   STM.atomically $ do
     mreaders <- STM.readTVar var
@@ -464,8 +478,8 @@ read (Consumer _ var) =
 -- | If the partition was moved to a different consumer
 -- the commit will fail silently.
 commit :: HasCallStack => Consumer -> Meta -> IO ()
-commit (Consumer _ var) (Meta pnumber offset) =
-  atomicallyNamed "topic.consumer.commit" $ do
+commit (Consumer cid _ var) (Meta pnumber offset) =
+  atomicallyNamed ("topic.consumer.commit " <> show cid) $ do
   mreaders <- STM.readTVar var
   let mreader = find (\r -> r_partition r == pnumber) $ fromMaybe [] mreaders
   forM_ mreader $ \r ->
