@@ -7,12 +7,14 @@ module Ambar.Emulator.Connector.Poll
    , mark
    , boundaries
    , cleanup
+   , Stream
+   , streamed
    ) where
 
 {-| General polling connector -}
 
-import Control.Concurrent.STM (TVar, atomically, writeTVar, readTVarIO)
-import Control.Monad (forM_)
+import Control.Monad (foldM)
+import Control.Concurrent.STM (TVar, atomically, readTVarIO, modifyTVar)
 import Data.Aeson (ToJSON, FromJSON, FromJSONKey, ToJSONKey)
 import Data.Default (Default)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
@@ -38,11 +40,20 @@ instance Pretty EntryId where
 
 data PollingConnector entry = PollingConnector
    { c_getId :: entry -> EntryId
-   , c_poll :: Boundaries -> IO [entry]  -- ^ run query
+   , c_poll :: Boundaries -> Stream entry
+      -- ^ run query, optionally streaming results.
    , c_pollingInterval :: Duration
    , c_maxTransactionTime :: Duration
    , c_producer :: Topic.Producer entry
    }
+
+type Stream a = forall b. b -> (b -> a -> IO b) -> IO b
+
+-- | Take a batched computation and stream its results.
+streamed :: IO [a] -> Stream a
+streamed act acc f = do
+   xs <- act
+   foldM f acc xs
 
 connect :: TVar BoundaryTracker -> PollingConnector entry -> IO Void
 connect trackerVar (PollingConnector getId poll interval maxTransTime producer) = do
@@ -52,12 +63,10 @@ connect trackerVar (PollingConnector getId poll interval maxTransTime producer) 
    loop = do
       before <- getPOSIXTime
       tracker <- readTVarIO trackerVar
-      items <- poll (boundaries tracker)
-      forM_ items (Topic.write producer)
-      atomically $
-         writeTVar trackerVar $
-         cleanup (before - diff) $
-         foldr (mark before . getId) tracker items
+      poll (boundaries tracker) () $ \() item -> do
+        Topic.write producer item
+        atomically $ modifyTVar trackerVar $ mark before (getId item)
+      atomically $ modifyTVar trackerVar $ cleanup (before - diff)
       after <- getPOSIXTime
       delay $ max 0 $ interval - fromDiffTime (after - before)
       loop

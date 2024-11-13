@@ -34,7 +34,7 @@ import Ambar.Emulator.Config
   , Destination(..)
   )
 import Utils.Delay (every, seconds)
-import Utils.Logger (SimpleLogger, annotate, logInfo)
+import Utils.Logger (SimpleLogger, annotate, logInfo, logDebugAction)
 import Utils.Some (Some(..))
 import Utils.STM (atomicallyNamed)
 
@@ -83,6 +83,7 @@ emulate logger_ config env = do
           throwIO $ ErrorCall $ "Unable to decode emulator state: " <> show err
 
   save svars =
+    logDebugAction logger_ "saving state" $
     uninterruptibleMask_ $ do
       -- reading is non-blocking so should be fine to run under uninterruptibleMask
       states <- forM svars $ \(sid, svar) -> (sid,) <$> atomicallyNamed "emulator.save" svar

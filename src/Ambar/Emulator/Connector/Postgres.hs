@@ -10,7 +10,6 @@ module Ambar.Emulator.Connector.Postgres
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
 import Control.Exception (Exception, bracket, throwIO, ErrorCall(..))
-import Control.Monad (forM_)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
@@ -38,7 +37,7 @@ import Prettyprinter (pretty, (<+>))
 import qualified Prettyprinter as Pretty
 
 import qualified Ambar.Emulator.Connector.Poll as Poll
-import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..))
+import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream)
 import Ambar.Emulator.Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
 import Utils.Async (withAsyncThrow)
 import Utils.Delay (Duration, millis, seconds)
@@ -173,12 +172,16 @@ withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..
 
      parser = mkParser (columns config) schema
 
-     run (Boundaries bs) = do
+     run :: Boundaries -> Stream Row
+     run (Boundaries bs) acc0 emit = do
        logDebug logger query
-       r <- P.queryWith parser conn (fromString query) ()
-       logDebug logger $ "results: " <> show (length r)
-       forM_ r logResult
-       return r
+       (acc, count) <- P.foldWith parser conn (fromString query) () (acc0, 0) $
+         \(acc, !count) row -> do
+           logResult row
+           acc' <- emit acc row
+           return (acc', succ count)
+       logDebug logger $ "results: " <> show @Int count
+       return acc
        where
        query = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
           [ "SELECT" , commaSeparated $ map pretty $ columns config
