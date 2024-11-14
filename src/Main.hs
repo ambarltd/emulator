@@ -3,15 +3,17 @@
 module Main where
 
 import Control.Applicative (optional)
-import Control.Concurrent (myThreadId)
-import Control.Exception (throwTo, AsyncException(UserInterrupt))
-import Control.Monad (void)
 import Data.Maybe (fromMaybe)
 import qualified Options.Applicative as O
 import qualified Options.Applicative.Help.Pretty as OP
 import System.Directory (createDirectoryIfMissing, getXdgDirectory, XdgDirectory(..))
-import System.Posix.Signals (installHandler, sigINT, sigTERM, Handler(Catch))
 import Prettyprinter (pretty)
+
+#if !defined(mingw32_HOST_OS)
+import Control.Concurrent (myThreadId)
+import Control.Exception (throwTo, AsyncException(UserInterrupt))
+import System.Posix.Signals (installHandler, sigINT, sigTERM, Handler(Catch))
+#endif
 
 import Ambar.Emulator (emulate)
 import Ambar.Emulator.Config (parseEnvConfigFile, EmulatorConfig(..))
@@ -50,12 +52,11 @@ main = do
   handleInterrupts = do
 #if !defined(mingw32_HOST_OS)
     tid <- myThreadId
-    let handler = Catch (throwTo tid UserInterrupt)
-    void $ installHandler sigINT handler Nothing
-    void $ installHandler sigTERM handler Nothing
-#else
-    return ()
+    let interrupt = Catch (throwTo tid UserInterrupt)
+    _ <- installHandler sigINT interrupt Nothing
+    _ <- installHandler sigTERM interrupt Nothing
 #endif
+    return ()
 
 
 defaultStatePath :: IO FilePath
