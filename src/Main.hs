@@ -1,4 +1,5 @@
 {-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE CPP #-}
 module Main where
 
 import Control.Applicative (optional)
@@ -47,10 +48,14 @@ main = do
       print _VERSION
   where
   handleInterrupts = do
+#if !defined(mingw32_HOST_OS)
     tid <- myThreadId
     let handler = Catch (throwTo tid UserInterrupt)
     void $ installHandler sigINT handler Nothing
     void $ installHandler sigTERM handler Nothing
+#else
+    return ()
+#endif
 
 
 defaultStatePath :: IO FilePath
