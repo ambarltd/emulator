@@ -80,6 +80,6 @@ RUN cabal build \
     --ghc-options='-optl-lpq -optl-lssl -optl-lcrypto -optl-lpgcommon -optl-lpgport -optl-lzstd -optl-llz4 -optl-lxml2 -optl-lssl -optl-lcrypto -optl-lz -optl-lreadline -optl-lm' \
     emulator
 
-ENV PATH="/root/.local/bin:${PATH}"
+RUN ln -s $(cabal list-bin emulator) /usr/local/bin/emulator
 
 ENTRYPOINT ["emulator"]

@@ -30,6 +30,9 @@ executable emulator
         , prettyprinter
         , prettyprinter-ansi-terminal
         , optparse-applicative
+    if !os(windows)
+        build-depends:
+            unix
 
 library emulator-lib
     import: common

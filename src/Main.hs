@@ -1,4 +1,5 @@
 {-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE CPP #-}
 module Main where
 
 import Control.Applicative (optional)
@@ -8,9 +9,16 @@ import qualified Options.Applicative.Help.Pretty as OP
 import System.Directory (createDirectoryIfMissing, getXdgDirectory, XdgDirectory(..))
 import Prettyprinter (pretty)
 
+#if !defined(mingw32_HOST_OS)
+import Control.Concurrent (myThreadId)
+import Control.Exception (throwTo, AsyncException(UserInterrupt))
+import System.Posix.Signals (installHandler, sigINT, sigTERM, Handler(Catch))
+#endif
+
 import Ambar.Emulator (emulate)
 import Ambar.Emulator.Config (parseEnvConfigFile, EmulatorConfig(..))
 import Utils.Logger (plainLogger, Severity(..), logInfo)
+
 
 _DEFAULT_PARTITIONS_PER_TOPIC :: Int
 _DEFAULT_PARTITIONS_PER_TOPIC = 10
@@ -21,6 +29,7 @@ _VERSION = "v0.0.1 - alpha release"
 
 main :: IO ()
 main = do
+  handleInterrupts
   cmd <- O.execParser cliOptions
   case cmd of
     CmdRun{..} -> do
@@ -39,6 +48,16 @@ main = do
       emulate logger config env
     CmdVersion ->
       print _VERSION
+  where
+  handleInterrupts = do
+#if !defined(mingw32_HOST_OS)
+    tid <- myThreadId
+    let interrupt = Catch (throwTo tid UserInterrupt)
+    _ <- installHandler sigINT interrupt Nothing
+    _ <- installHandler sigTERM interrupt Nothing
+#endif
+    return ()
+
 
 defaultStatePath :: IO FilePath
 defaultStatePath = do
