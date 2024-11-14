@@ -30,6 +30,7 @@ executable emulator
         , prettyprinter
         , prettyprinter-ansi-terminal
         , optparse-applicative
+        , unix
 
 library emulator-lib
     import: common

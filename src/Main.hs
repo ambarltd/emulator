@@ -2,15 +2,20 @@
 module Main where
 
 import Control.Applicative (optional)
+import Control.Concurrent (myThreadId)
+import Control.Exception (throwTo, AsyncException(UserInterrupt))
+import Control.Monad (void)
 import Data.Maybe (fromMaybe)
 import qualified Options.Applicative as O
 import qualified Options.Applicative.Help.Pretty as OP
 import System.Directory (createDirectoryIfMissing, getXdgDirectory, XdgDirectory(..))
+import System.Posix.Signals (installHandler, sigINT, sigTERM, Handler(Catch))
 import Prettyprinter (pretty)
 
 import Ambar.Emulator (emulate)
 import Ambar.Emulator.Config (parseEnvConfigFile, EmulatorConfig(..))
 import Utils.Logger (plainLogger, Severity(..), logInfo)
+
 
 _DEFAULT_PARTITIONS_PER_TOPIC :: Int
 _DEFAULT_PARTITIONS_PER_TOPIC = 10
@@ -21,6 +26,7 @@ _VERSION = "v0.0.1 - alpha release"
 
 main :: IO ()
 main = do
+  handleInterrupts
   cmd <- O.execParser cliOptions
   case cmd of
     CmdRun{..} -> do
@@ -39,6 +45,13 @@ main = do
       emulate logger config env
     CmdVersion ->
       print _VERSION
+  where
+  handleInterrupts = do
+    tid <- myThreadId
+    let handler = Catch (throwTo tid UserInterrupt)
+    void $ installHandler sigINT handler Nothing
+    void $ installHandler sigTERM handler Nothing
+
 
 defaultStatePath :: IO FilePath
 defaultStatePath = do
