@@ -55,6 +55,7 @@ library emulator-lib
         Ambar.Transport.File
         Utils.Async
         Utils.Delay
+        Utils.Directory
         Utils.Logger
         Utils.Prettyprinter
         Utils.STM
