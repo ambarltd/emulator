@@ -34,6 +34,7 @@ import Ambar.Emulator.Config
   , Destination(..)
   )
 import Utils.Delay (every, seconds)
+import Utils.Directory (writeAtomically)
 import Utils.Logger (SimpleLogger, annotate, logInfo, logDebugAction)
 import Utils.Some (Some(..))
 import Utils.STM (atomicallyNamed)
@@ -87,7 +88,8 @@ emulate logger_ config env = do
     uninterruptibleMask_ $ do
       -- reading is non-blocking so should be fine to run under uninterruptibleMask
       states <- forM svars $ \(sid, svar) -> (sid,) <$> atomicallyNamed "emulator.save" svar
-      Aeson.encodeFile statePath $ EmulatorState (Map.fromList states)
+      writeAtomically statePath $ \path ->
+        Aeson.encodeFile path $ EmulatorState (Map.fromList states)
 
   connect queue (source, sstate) f = do
     let logger = annotate ("src: " <> unId (s_id source)) logger_

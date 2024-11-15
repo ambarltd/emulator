@@ -37,6 +37,7 @@ import qualified Ambar.Emulator.Queue.Partition.File as FilePartition
 import Ambar.Emulator.Queue.Partition.File (FilePartition)
 import Utils.Async (withAsyncThrow)
 import Utils.Delay (every, seconds)
+import Utils.Directory (writeAtomically)
 import Utils.Some (Some(..))
 import Utils.Warden (Warden)
 import qualified Utils.Warden as Warden
@@ -86,7 +87,7 @@ withQueue path count act =
     withAsyncThrow (saver queue) (act queue)
   where
   saver :: Queue -> IO Void
-  saver queue = every (seconds 5) (save queue)
+  saver queue = every (seconds 30) (save queue)
 
 open :: Warden -> Store -> PartitionCount -> IO Queue
 open warden store@(Store path) count = do
@@ -158,8 +159,9 @@ inventoryPath :: Store -> FilePath
 inventoryPath (Store path) = path </> "inventory.json"
 
 inventoryWrite :: Store -> Inventory -> IO ()
-inventoryWrite store inventory = do
-  LB.writeFile (inventoryPath store) (Aeson.encodePretty inventory)
+inventoryWrite store inventory =
+  writeAtomically (inventoryPath store) $ \path ->
+  LB.writeFile path (Aeson.encodePretty inventory)
 
 data InventoryReadError
   = Missing
