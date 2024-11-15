@@ -29,6 +29,7 @@ import qualified Data.Text as Text
 import Data.Void (Void)
 import Data.Word (Word64, Word16)
 import qualified Database.PostgreSQL.Simple as P
+import qualified Database.PostgreSQL.Simple.Transaction as P
 import qualified Database.PostgreSQL.Simple.FromField as P
 import qualified Database.PostgreSQL.Simple.FromRow as P
 import GHC.Generics (Generic)
@@ -172,10 +173,18 @@ withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..
 
      parser = mkParser (columns config) schema
 
+     opts = P.FoldOptions
+       { P.fetchQuantity = P.Automatic
+       , P.transactionMode = P.TransactionMode
+          { P.isolationLevel = P.ReadCommitted
+          , P.readWriteMode = P.ReadOnly
+          }
+       }
+
      run :: Boundaries -> Stream Row
      run (Boundaries bs) acc0 emit = do
        logDebug logger query
-       (acc, count) <- P.foldWith parser conn (fromString query) () (acc0, 0) $
+       (acc, count) <- P.foldWithOptionsAndParser opts parser conn (fromString query) () (acc0, 0) $
          \(acc, !count) row -> do
            logResult row
            acc' <- emit acc row
