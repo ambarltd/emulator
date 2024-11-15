@@ -8,7 +8,7 @@ on:
 
 # only one build per branch
 concurrency:
-  group: build-${{ github.ref }}
+  group: static-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
