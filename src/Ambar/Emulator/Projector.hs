@@ -2,7 +2,7 @@ module Ambar.Emulator.Projector
   ( Projection(..)
   , project
   , Message(..)
-  , Record(..)
+  , Payload(..)
   ) where
 
 {-| A projector reads messages from multiple queues, applies a filter to the
@@ -27,7 +27,6 @@ import Ambar.Emulator.Config (Id(..), DataDestination, DataSource(..), Source(..
 import Ambar.Emulator.Queue.Topic (Topic, ReadError(..), PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import qualified Ambar.Emulator.Connector.Postgres as Pg
-import Ambar.Record (Record(..))
 import Ambar.Transport (Transport)
 import qualified Ambar.Transport as Transport
 import Utils.Some (Some)
@@ -53,7 +52,7 @@ data Message = Message
   , payload :: Payload
   }
   deriving (Generic, Show)
-  deriving anyclass (ToJSON)
+  deriving anyclass (ToJSON, FromJSON)
 
 newtype Payload = Payload Json.Value
   deriving (Show)

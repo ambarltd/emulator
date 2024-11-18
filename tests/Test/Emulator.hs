@@ -27,7 +27,7 @@ import Ambar.Emulator.Config
   , Destination(..)
   , Source(..)
   )
-import Ambar.Emulator.Projector (Message(..), Record(..))
+import Ambar.Emulator.Projector (Message(..), Payload(..))
 
 import Test.Connector (PostgresCreds, Event(..), mocks)
 import qualified Test.Connector as C
@@ -72,7 +72,7 @@ testEmulator p = describe "emulator" $ do
         consumed <- consume out (length after)
         consumed `shouldBe` after
     where
-    msgToEvent (Message _ _ _ _ (Record r)) =
+    msgToEvent (Message _ _ _ _ (Payload r)) =
       case Json.fromJSON @Event r of
         Json.Error str -> Left str
         Json.Success e -> Right e

@@ -160,7 +160,7 @@ testPostgreSQL p = do
     withEventsTable creds $ \conn table ->                                  -- create events table
     withFileTopic partitions $ \topic ->                                    -- create topic
     let config = mkConfig creds table in
-    Topic.withProducer topic partitioner (encoder config) $ \producer -> do -- create topic producer
+    Topic.withProducer topic partitioner encoder $ \producer -> do -- create topic producer
     let logger = plainLogger Warn
         connected act = ConnectorPostgres.withConnector                     -- setup connector
             logger def producer config (const act)
