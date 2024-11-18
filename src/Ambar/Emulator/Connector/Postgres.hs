@@ -34,6 +34,7 @@ import Prettyprinter (pretty, (<+>))
 import qualified Prettyprinter as Pretty
 
 import qualified Ambar.Emulator.Connector.Poll as Poll
+import qualified Ambar.Emulator.Connector as C
 import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream)
 import Ambar.Emulator.Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
 import Ambar.Record (Record(..), Value(..), Bytes(..))
@@ -59,6 +60,14 @@ data ConnectorConfig = ConnectorConfig
   , c_partitioningColumn :: Text
   , c_serialColumn :: Text
   }
+
+instance C.Connector ConnectorConfig where
+  type ConnectorState ConnectorConfig = ConnectorState
+  type ConnectorRecord ConnectorConfig = Record
+  partitioner = partitioner
+  encoder = encoder
+  connect config logger state producer f =
+    withConnector logger state producer config f
 
 newtype TableSchema = TableSchema { unTableSchema :: Map Text PgType }
   deriving Show

@@ -101,8 +101,8 @@ emulate logger_ config env = do
           StatePostgres s -> return s
           _ -> throwIO $ ErrorCall $
             "Incompatible state for source: " <> show (s_id source)
-        Topic.withProducer topic Postgres.partitioner Postgres.encoder $ \producer ->
-          Postgres.withConnector logger state producer pconfig $ \stateVar -> do
+        Topic.withProducer topic partitioner Postgres.encoder $ \producer ->
+          connect pconfig logger state producer $ \stateVar -> do
           logInfo @String logger "connected"
           f (s_id source, StatePostgres <$> stateVar)
 
