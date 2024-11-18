@@ -12,8 +12,8 @@ class Connector a where
   partitioner :: Partitioner (ConnectorRecord a)
   encoder :: Encoder (ConnectorRecord a)
   connect
-    :: SimpleLogger
-    -> a
+    :: a
+    -> SimpleLogger
     -> ConnectorState a
     -> Producer (ConnectorRecord a)
     -> (STM (ConnectorState a) -> IO b)

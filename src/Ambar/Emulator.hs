@@ -108,7 +108,7 @@ emulate logger_ config env = do
 
       SourceFile path ->
         Topic.withProducer topic partitioner encoder $ \producer ->
-        connect logger (FileConnector path) () producer $ \s -> do
+        connect (FileConnector path) logger () producer $ \s -> do
         logInfo @String logger "connected"
         f (s_id source, StateFile <$> s)
 
