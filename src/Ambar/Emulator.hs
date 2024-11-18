@@ -1,6 +1,6 @@
 module Ambar.Emulator where
 
-import Control.Concurrent.Async (concurrently_, forConcurrently_, withAsync)
+import Control.Concurrent.Async (concurrently_, forConcurrently_)
 import Control.Exception (finally, uninterruptibleMask_, throwIO, ErrorCall(..))
 import Control.Monad (forM)
 import Data.Aeson (FromJSON, ToJSON)
@@ -15,7 +15,8 @@ import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
 import qualified Ambar.Emulator.Connector.Postgres as Postgres
-import qualified Ambar.Emulator.Connector.File as FileConnector
+import Ambar.Emulator.Connector.File (FileConnector(..))
+import Ambar.Emulator.Connector (connect, partitioner, encoder)
 
 import qualified Ambar.Emulator.Projector as Projector
 import Ambar.Emulator.Projector (Projection(..))
@@ -69,7 +70,7 @@ emulate logger_ config env = do
         sources =
           [ (source, getState source) | source <- Map.elems $ c_sources env ]
 
-    withMany (connect queue) sources $ \svars ->
+    withMany (connect_ queue) sources $ \svars ->
       every (seconds 30) (save svars) `finally` save svars
 
   load = do
@@ -91,7 +92,7 @@ emulate logger_ config env = do
       writeAtomically statePath $ \path ->
         Aeson.encodeFile path $ EmulatorState (Map.fromList states)
 
-  connect queue (source, sstate) f = do
+  connect_ queue (source, sstate) f = do
     let logger = annotate ("src: " <> unId (s_id source)) logger_
     topic <- Queue.openTopic queue $ topicName $ s_id source
     case s_source source of
@@ -106,10 +107,10 @@ emulate logger_ config env = do
           f (s_id source, StatePostgres <$> stateVar)
 
       SourceFile path ->
-        Topic.withProducer topic FileConnector.partitioner FileConnector.encoder $ \producer ->
-        withAsync (FileConnector.connect logger producer path) $ \_ -> do
+        Topic.withProducer topic partitioner encoder $ \producer ->
+        connect logger (FileConnector path) () producer $ \s -> do
         logInfo @String logger "connected"
-        f (s_id source, return $ StateFile ())
+        f (s_id source, StateFile <$> s)
 
   initialStateFor source =
     case s_source source of

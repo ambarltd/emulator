@@ -41,6 +41,7 @@ library emulator-lib
     exposed-modules:
         Ambar.Emulator
         Ambar.Emulator.Config
+        Ambar.Emulator.Connector
         Ambar.Emulator.Connector.File
         Ambar.Emulator.Connector.Poll
         Ambar.Emulator.Connector.Postgres
