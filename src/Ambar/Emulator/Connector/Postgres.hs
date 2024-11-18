@@ -37,7 +37,8 @@ import qualified Prettyprinter as Pretty
 import qualified Ambar.Emulator.Connector.Poll as Poll
 import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream)
 import Ambar.Emulator.Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
-import Ambar.Record (Value(..), Bytes(..))
+import Ambar.Record (Record(..), Value(..), Bytes(..))
+import qualified Ambar.Record.Encoding as Encoding
 import Utils.Async (withAsyncThrow)
 import Utils.Delay (Duration, millis, seconds)
 import Utils.Logger (SimpleLogger, logDebug, logInfo)
@@ -197,7 +198,10 @@ partitioner = hashPartitioner partitioningValue
 -- the columns specified in the config file as keys.
 encoder :: ConnectorConfig -> Encoder Row
 encoder config (Row row) =
-  LB.toStrict $ Aeson.encode $ Map.fromList $ zip (columns config) row
+  LB.toStrict $
+    Aeson.encode $
+    Encoding.encode @Aeson.Value $
+    Record $ zip (columns config) row
 
 -- | Columns in the order they will be queried.
 columns :: ConnectorConfig -> [Text]

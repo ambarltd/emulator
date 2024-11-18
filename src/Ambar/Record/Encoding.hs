@@ -9,6 +9,7 @@ module Ambar.Record.Encoding
 
 import qualified Data.Aeson as Json
 import Data.Aeson (ToJSON(..), FromJSON)
+import Data.Base64.Types (extractBase64)
 import Data.ByteString.Base64 (encodeBase64)
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -50,7 +51,7 @@ instance Encode Json.Value where
       UInt x -> toJSON x
       Real x -> toJSON x
       String x -> toJSON x
-      Binary (Bytes x) -> Json.String $ encodeBase64 x
+      Binary (Bytes x) -> Json.String $ extractBase64 $ encodeBase64 x
       Json txt _ -> toJSON txt
       DateTime x -> toJSON x
       Null -> Json.Null
