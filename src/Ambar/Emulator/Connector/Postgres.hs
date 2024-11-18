@@ -12,13 +12,8 @@ import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
 import Control.Exception (Exception, bracket, throwIO, ErrorCall(..))
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
-import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LB
-import Data.ByteString.Base64 (encodeBase64)
-import Data.Base64.Types (extractBase64)
 import Data.Default (Default(..))
-import Data.Hashable (Hashable)
-import Data.Int (Int64)
 import Data.List ((\\))
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe)
@@ -26,8 +21,10 @@ import qualified Data.Map.Strict as Map
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as Text
+import qualified Data.Text.Lazy as Text (toStrict)
+import qualified Data.Text.Lazy.Encoding as Text (decodeUtf8)
 import Data.Void (Void)
-import Data.Word (Word64, Word16)
+import Data.Word (Word16)
 import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.Transaction as P
 import qualified Database.PostgreSQL.Simple.FromField as P
@@ -40,6 +37,7 @@ import qualified Prettyprinter as Pretty
 import qualified Ambar.Emulator.Connector.Poll as Poll
 import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream)
 import Ambar.Emulator.Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
+import Ambar.Record (Value(..), Bytes(..))
 import Utils.Async (withAsyncThrow)
 import Utils.Delay (Duration, millis, seconds)
 import Utils.Logger (SimpleLogger, logDebug, logInfo)
@@ -102,30 +100,6 @@ instance P.FromField PgType where
 
 -- | One row retrieved from a PostgreSQL database.
 newtype Row = Row [Value]
-
-data Value
-  = Boolean Bool
-  | UInt Word64
-  | Int Int64
-  | Real Double
-  | String Text
-  | Bytes ByteString
-  | DateTime Text
-  | Json Aeson.Value
-  | Null
-  deriving (Generic, Show, Eq, Hashable, Ord)
-
-instance Aeson.ToJSON Value where
-  toJSON = \case
-    Boolean b -> Aeson.toJSON b
-    UInt b -> Aeson.toJSON b
-    Int b -> Aeson.toJSON b
-    Real b -> Aeson.toJSON b
-    String b -> Aeson.toJSON b
-    Bytes b -> Aeson.String $ extractBase64 $ encodeBase64 b
-    DateTime b -> Aeson.toJSON b
-    Json b -> b
-    Null -> Aeson.Null
 
 -- | Opaque serializable connector state
 newtype ConnectorState = ConnectorState BoundaryTracker
@@ -253,8 +227,12 @@ mkParser cols (TableSchema schema) = Row <$> traverse (parser . getType) cols
     PgFloat4 -> fmap Real <$> P.field
     PgFloat8 -> fmap Real <$> P.field
     PgBool -> fmap Boolean <$> P.field
-    PgJson -> fmap Json <$> P.field
-    PgBytea -> fmap Bytes <$> P.field
+    PgJson -> do
+      mvalue <- P.field
+      return $ flip fmap mvalue $ \value ->
+        let txt = Text.toStrict $ Text.decodeUtf8 $ (Aeson.encode value) in
+        Json txt value
+    PgBytea -> fmap (Binary . Bytes . P.fromBinary) <$> P.field
     PgTimestamp -> fmap DateTime <$> P.field
     PgTimestamptz -> fmap DateTime <$> P.field
     PgText -> fmap String <$> P.field

@@ -50,6 +50,8 @@ library emulator-lib
         Ambar.Emulator.Queue.Partition
         Ambar.Emulator.Queue.Partition.File
         Ambar.Emulator.Queue.Partition.STMReader
+        Ambar.Record
+        Ambar.Record.Encoding
         Ambar.Transport
         Ambar.Transport.Http
         Ambar.Transport.File
@@ -69,6 +71,7 @@ library emulator-lib
         , base64
         , bytestring
         , binary
+        , binary-instances
         , casing
         , containers
         , data-default
