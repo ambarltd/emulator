@@ -1,5 +1,5 @@
 module Ambar.Emulator.Connector.Postgres
-  ( ConnectorConfig(..)
+  ( PostgreSQL(..)
   , PostgreSQLState
   ) where
 
@@ -45,7 +45,7 @@ _POLLING_INTERVAL = millis 50
 _MAX_TRANSACTION_TIME :: Duration
 _MAX_TRANSACTION_TIME = seconds 120
 
-data ConnectorConfig = ConnectorConfig
+data PostgreSQL = PostgreSQL
   { c_host :: Text
   , c_port :: Word16
   , c_username :: Text
@@ -57,9 +57,9 @@ data ConnectorConfig = ConnectorConfig
   , c_serialColumn :: Text
   }
 
-instance C.Connector ConnectorConfig where
-  type ConnectorState ConnectorConfig = PostgreSQLState
-  type ConnectorRecord ConnectorConfig = Record
+instance C.Connector PostgreSQL where
+  type ConnectorState PostgreSQL = PostgreSQLState
+  type ConnectorRecord PostgreSQL = Record
 
   partitioner = hashPartitioner partitioningValue
 
@@ -114,13 +114,13 @@ newtype PostgreSQLState = PostgreSQLState BoundaryTracker
   deriving anyclass (FromJSON, ToJSON)
 
 connect
-  :: ConnectorConfig
+  :: PostgreSQL
   -> SimpleLogger
   -> PostgreSQLState
   -> Producer Record
   -> (STM PostgreSQLState -> IO a)
   -> IO a
-connect config@ConnectorConfig{..} logger (PostgreSQLState tracker) producer f =
+connect config@PostgreSQL{..} logger (PostgreSQLState tracker) producer f =
    bracket open P.close $ \conn -> do
    schema <- fetchSchema c_table conn
    validate config schema
@@ -197,8 +197,8 @@ connect config@ConnectorConfig{..} logger (PostgreSQLState tracker) producer f =
             ]
 
 -- | Columns in the order they will be queried.
-columns :: ConnectorConfig -> [Text]
-columns ConnectorConfig{..} =
+columns :: PostgreSQL -> [Text]
+columns PostgreSQL{..} =
   [c_serialColumn, c_partitioningColumn] <>
     ((c_columns \\ [c_serialColumn]) \\ [c_partitioningColumn])
 
@@ -239,7 +239,7 @@ entryId record = case serialValue record of
    Int n -> EntryId $ fromIntegral n
    val -> error "Invalid serial column value:" (show val)
 
-validate :: ConnectorConfig -> TableSchema -> IO ()
+validate :: PostgreSQL -> TableSchema -> IO ()
 validate config (TableSchema schema) = do
   missingCol
   invalidSerial
