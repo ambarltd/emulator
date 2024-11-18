@@ -1,10 +1,6 @@
 module Ambar.Emulator.Connector.Postgres
   ( ConnectorConfig(..)
-  , withConnector
-  , ConnectorState
-  , partitioner
-  , encoder
-  , Value(..)
+  , PostgreSQLState
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
@@ -36,7 +32,7 @@ import qualified Prettyprinter as Pretty
 import qualified Ambar.Emulator.Connector.Poll as Poll
 import qualified Ambar.Emulator.Connector as C
 import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream)
-import Ambar.Emulator.Queue.Topic (Producer, Partitioner, Encoder, hashPartitioner)
+import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
 import Ambar.Record (Record(..), Value(..), Bytes(..))
 import qualified Ambar.Record.Encoding as Encoding
 import Utils.Async (withAsyncThrow)
@@ -62,12 +58,16 @@ data ConnectorConfig = ConnectorConfig
   }
 
 instance C.Connector ConnectorConfig where
-  type ConnectorState ConnectorConfig = ConnectorState
+  type ConnectorState ConnectorConfig = PostgreSQLState
   type ConnectorRecord ConnectorConfig = Record
-  partitioner = partitioner
-  encoder = encoder
-  connect config logger state producer f =
-    withConnector logger state producer config f
+
+  partitioner = hashPartitioner partitioningValue
+
+  -- | A rows gets saved in the database as a JSON object with
+  -- the columns specified in the config file as keys.
+  encoder = LB.toStrict . Aeson.encode . Encoding.encode @Aeson.Value
+
+  connect = connect
 
 newtype TableSchema = TableSchema { unTableSchema :: Map Text PgType }
   deriving Show
@@ -108,24 +108,24 @@ instance P.FromField PgType where
       _ -> P.conversionError $ UnsupportedType str
 
 -- | Opaque serializable connector state
-newtype ConnectorState = ConnectorState BoundaryTracker
+newtype PostgreSQLState = PostgreSQLState BoundaryTracker
   deriving (Generic)
   deriving newtype (Default)
   deriving anyclass (FromJSON, ToJSON)
 
-withConnector
-  :: SimpleLogger
-  -> ConnectorState
+connect
+  :: ConnectorConfig
+  -> SimpleLogger
+  -> PostgreSQLState
   -> Producer Record
-  -> ConnectorConfig
-  -> (STM ConnectorState -> IO a)
+  -> (STM PostgreSQLState -> IO a)
   -> IO a
-withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..} f =
+connect config@ConnectorConfig{..} logger (PostgreSQLState tracker) producer f =
    bracket open P.close $ \conn -> do
    schema <- fetchSchema c_table conn
    validate config schema
    trackerVar <- newTVarIO tracker
-   let readState = ConnectorState <$> readTVar trackerVar
+   let readState = PostgreSQLState <$> readTVar trackerVar
    withAsyncThrow (consume conn schema trackerVar) (f readState)
    where
    open = P.connect P.ConnectInfo
@@ -195,14 +195,6 @@ withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..
             [ "serial_value:" <+> prettyJSON (serialValue row)
             , "partitioning_value:" <+> prettyJSON (partitioningValue row)
             ]
-
-partitioner :: Partitioner Record
-partitioner = hashPartitioner partitioningValue
-
--- | A rows gets saved in the database as a JSON object with
--- the columns specified in the config file as keys.
-encoder :: Encoder Record
-encoder = LB.toStrict . Aeson.encode . Encoding.encode @Aeson.Value
 
 -- | Columns in the order they will be queried.
 columns :: ConnectorConfig -> [Text]

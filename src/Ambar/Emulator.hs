@@ -14,7 +14,7 @@ import GHC.Generics (Generic)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
-import qualified Ambar.Emulator.Connector.Postgres as Postgres
+import Ambar.Emulator.Connector.Postgres (PostgreSQLState)
 import Ambar.Emulator.Connector.File (FileConnector(..))
 import Ambar.Emulator.Connector (connect, partitioner, encoder)
 
@@ -41,7 +41,7 @@ import Utils.Some (Some(..))
 import Utils.STM (atomicallyNamed)
 
 data ConnectorState
-  = StatePostgres Postgres.ConnectorState
+  = StatePostgres PostgreSQLState
   | StateFile ()
   deriving (Generic)
   deriving anyclass (ToJSON, FromJSON)
@@ -101,7 +101,7 @@ emulate logger_ config env = do
           StatePostgres s -> return s
           _ -> throwIO $ ErrorCall $
             "Incompatible state for source: " <> show (s_id source)
-        Topic.withProducer topic partitioner Postgres.encoder $ \producer ->
+        Topic.withProducer topic partitioner encoder $ \producer ->
           connect pconfig logger state producer $ \stateVar -> do
           logInfo @String logger "connected"
           f (s_id source, StatePostgres <$> stateVar)
