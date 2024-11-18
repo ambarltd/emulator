@@ -96,13 +96,11 @@ emulate logger_ config env = do
     topic <- Queue.openTopic queue $ topicName $ s_id source
     case s_source source of
       SourcePostgreSQL pconfig -> do
-        let partitioner = Postgres.partitioner
-            encoder = Postgres.encoder pconfig
         state <- case sstate of
           StatePostgres s -> return s
           _ -> throwIO $ ErrorCall $
             "Incompatible state for source: " <> show (s_id source)
-        Topic.withProducer topic partitioner encoder $ \producer ->
+        Topic.withProducer topic Postgres.partitioner Postgres.encoder $ \producer ->
           Postgres.withConnector logger state producer pconfig $ \stateVar -> do
           logInfo @String logger "connected"
           f (s_id source, StatePostgres <$> stateVar)

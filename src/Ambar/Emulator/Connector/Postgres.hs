@@ -5,7 +5,6 @@ module Ambar.Emulator.Connector.Postgres
   , partitioner
   , encoder
   , Value(..)
-  , Row
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
@@ -99,9 +98,6 @@ instance P.FromField PgType where
       "text" -> return PgText
       _ -> P.conversionError $ UnsupportedType str
 
--- | One row retrieved from a PostgreSQL database.
-newtype Row = Row [Value]
-
 -- | Opaque serializable connector state
 newtype ConnectorState = ConnectorState BoundaryTracker
   deriving (Generic)
@@ -111,7 +107,7 @@ newtype ConnectorState = ConnectorState BoundaryTracker
 withConnector
   :: SimpleLogger
   -> ConnectorState
-  -> Producer Row
+  -> Producer Record
   -> ConnectorConfig
   -> (STM ConnectorState -> IO a)
   -> IO a
@@ -156,13 +152,13 @@ withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..
           }
        }
 
-     run :: Boundaries -> Stream Row
+     run :: Boundaries -> Stream Record
      run (Boundaries bs) acc0 emit = do
        logDebug logger query
        (acc, count) <- P.foldWithOptionsAndParser opts parser conn (fromString query) () (acc0, 0) $
-         \(acc, !count) row -> do
-           logResult row
-           acc' <- emit acc row
+         \(acc, !count) record -> do
+           logResult record
+           acc' <- emit acc record
            return (acc', succ count)
        logDebug logger $ "results: " <> show @Int count
        return acc
@@ -191,17 +187,13 @@ withConnector logger (ConnectorState tracker) producer config@ConnectorConfig{..
             , "partitioning_value:" <+> prettyJSON (partitioningValue row)
             ]
 
-partitioner :: Partitioner Row
+partitioner :: Partitioner Record
 partitioner = hashPartitioner partitioningValue
 
 -- | A rows gets saved in the database as a JSON object with
 -- the columns specified in the config file as keys.
-encoder :: ConnectorConfig -> Encoder Row
-encoder config (Row row) =
-  LB.toStrict $
-    Aeson.encode $
-    Encoding.encode @Aeson.Value $
-    Record $ zip (columns config) row
+encoder :: Encoder Record
+encoder = LB.toStrict . Aeson.encode . Encoding.encode @Aeson.Value
 
 -- | Columns in the order they will be queried.
 columns :: ConnectorConfig -> [Text]
@@ -209,17 +201,17 @@ columns ConnectorConfig{..} =
   [c_serialColumn, c_partitioningColumn] <>
     ((c_columns \\ [c_serialColumn]) \\ [c_partitioningColumn])
 
-serialValue :: Row -> Value
-serialValue (Row row) =
+serialValue :: Record -> Value
+serialValue (Record row) =
   case row of
     [] -> error "serialValue: empty row"
-    x:_ -> x
+    (_,x):_ -> x
 
-partitioningValue :: Row -> Value
-partitioningValue (Row row) = row !! 1
+partitioningValue :: Record -> Value
+partitioningValue (Record row) = snd $ row !! 1
 
-mkParser :: [Text] -> TableSchema -> P.RowParser Row
-mkParser cols (TableSchema schema) = Row <$> traverse (parser . getType) cols
+mkParser :: [Text] -> TableSchema -> P.RowParser Record
+mkParser cols (TableSchema schema) = Record . zip cols <$> traverse (parser . getType) cols
   where
   getType col = schema Map.! col
 
@@ -241,8 +233,8 @@ mkParser cols (TableSchema schema) = Row <$> traverse (parser . getType) cols
     PgTimestamptz -> fmap DateTime <$> P.field
     PgText -> fmap String <$> P.field
 
-entryId :: Row -> EntryId
-entryId row = case serialValue row of
+entryId :: Record -> EntryId
+entryId record = case serialValue record of
    Int n -> EntryId $ fromIntegral n
    val -> error "Invalid serial column value:" (show val)
 
