@@ -117,17 +117,23 @@ options = Json.defaultOptions
 newtype Bytes = Bytes ByteString
   deriving newtype (Binary, Eq, Hashable)
 
+toBase64 :: Bytes -> Text
+toBase64 (Bytes bs) = extractBase64 $ encodeBase64 bs
+
 instance Show Bytes where
   show bytes = "Bytes " <> show (pretty bytes)
 
 instance Pretty Bytes where
-  pretty (Bytes bs) = pretty $ show (Text.unpack $ extractBase64 $ encodeBase64 bs)
+  pretty bytes = pretty $ show $ Text.unpack $ toBase64 bytes
 
 instance ToJSON Bytes where
-  toJSON (Bytes bs) = Json.String $ extractBase64 $ encodeBase64 bs
+  toJSON bytes = Json.String (toBase64 bytes)
 
 instance FromJSON Bytes where
   parseJSON = Json.withText "Bytes" $ \txt ->
-    case decodeBase64Untyped(Text.encodeUtf8 txt) of
-      Left err -> fail (Text.unpack err)
-      Right v -> return $ Bytes v
+    either fail return (fromBase64 txt)
+    where
+    fromBase64 txt =
+      case decodeBase64Untyped (Text.encodeUtf8 txt) of
+        Left err -> Left $ Text.unpack err
+        Right v -> Right $ Bytes v

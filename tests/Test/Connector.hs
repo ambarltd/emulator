@@ -7,6 +7,8 @@ module Test.Connector
   , mkPostgreSQL
   , Event(..)
   , Table(..)
+
+  , BytesRow(..)
   ) where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
@@ -14,11 +16,12 @@ import Control.Concurrent.Async (mapConcurrently)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LB
 import Data.Default (def)
-import Data.List (isInfixOf, sort, stripPrefix)
+import Data.List (isInfixOf, sort, stripPrefix, intersperse, (\\))
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import Data.Word (Word16)
 import Control.Exception (bracket, throwIO, ErrorCall(..))
 import Control.Monad (void, replicateM, forM_)
@@ -32,6 +35,7 @@ import Test.Hspec
   )
 import Test.Hspec.Expectations.Contrib (annotate)
 import qualified Database.PostgreSQL.Simple as P
+import qualified Database.PostgreSQL.Simple.ToField as P
 import GHC.Generics
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -41,6 +45,7 @@ import Ambar.Emulator.Connector.Poll (Boundaries(..), mark, boundaries, cleanup)
 import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
 import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
+import Ambar.Record (Bytes(..))
 import Test.Queue (withFileTopic)
 import Test.Utils.OnDemand (OnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
@@ -233,9 +238,6 @@ eventAesonOptions = Aeson.defaultOptions
 instance Aeson.FromJSON Event where
   parseJSON = Aeson.genericParseJSON eventAesonOptions
 
-instance Aeson.ToJSON Event where
-  toJSON = Aeson.genericToJSON eventAesonOptions
-
 class Table a where
   type Entry a = b | b -> a
   withTable :: PostgresCreds -> (P.Connection -> a -> IO b) -> IO b
@@ -315,9 +317,19 @@ data TypesRecord = TypesRecord
   -- , tr_char_5              :: String
   -- , tr_bpchar_5            :: String
   -- , tr_bpchar              :: String
-  , tr_text                :: String
+  , tr_text            :: String
+
+  -- Binary
+  , tr_bytea           :: BytesRow
   }
-  deriving (Eq, Show, Generic, P.FromRow)
+  deriving (Eq, Show, Generic)
+
+newtype BytesRow = BytesRow Bytes
+  deriving stock (Eq, Show)
+  deriving newtype (Aeson.FromJSON, Aeson.ToJSON)
+
+instance P.ToField BytesRow where
+  toField (BytesRow (Bytes bs)) = P.toField (P.Binary bs)
 
 trAesonOptions :: Aeson.Options
 trAesonOptions = Aeson.defaultOptions
@@ -327,9 +339,6 @@ trAesonOptions = Aeson.defaultOptions
 
 instance Aeson.FromJSON TypesRecord where
   parseJSON = Aeson.genericParseJSON trAesonOptions
-
-instance Aeson.ToJSON TypesRecord where
-  toJSON = Aeson.genericToJSON trAesonOptions
 
 instance Table TypesTable where
   type (Entry TypesTable) = TypesRecord
@@ -347,6 +356,7 @@ instance Table TypesTable where
     , "serial"
     , "bigserial"
     , "text"
+    , "bytea"
     ]
 
   mocks =
@@ -364,6 +374,8 @@ instance Table TypesTable where
         , tr_serial      = err "serial"
         , tr_bigserial   = err "bigserial"
         , tr_text        = take 5 $ str seq_id
+        , tr_bytea       =
+            BytesRow $ Bytes $ Text.encodeUtf8 $ Text.pack $ take 5 $ str seq_id
         }
       | seq_id <- [0..]
       ]
@@ -377,7 +389,7 @@ instance Table TypesTable where
         | n <- [1..]
         ]
 
-  insert conn (TypesTable table) events =
+  insert conn t@(TypesTable table) events =
     void $ P.executeMany conn query
     [ ( tr_aggregate_id
       , tr_sequence_number
@@ -387,23 +399,22 @@ instance Table TypesTable where
       , tr_real
       , tr_double
       , tr_text
+      , tr_bytea
       )
     | TypesRecord{..} <- events
     ]
     where
-    query = fromString $ unwords
-      [ "INSERT INTO", table
-      , "( aggregate_id"
-      , ", sequence_number"
-      , ", smallint"
-      , ", integer"
-      , ", bigint"
-      , ", real"
-      , ", double"
-      , ", text"
-      , ")"
-      ,"VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    query = fromString $ unwords $ concat $
+      [ [ "INSERT INTO", table ]
+      , tupled cols
+      , [ "VALUES"]
+      , tupled $ replicate (length cols) "?"
       ]
+      where
+      tupled xs = ["("] ++ intersperse ", " xs ++ [")"]
+      cols = fmap Text.unpack $ (tableCols t) \\ autoAssigned
+      autoAssigned = ["id", "smallserial", "serial", "bigserial" ]
+
 
   withTable :: PostgresCreds -> (P.Connection -> TypesTable -> IO a) -> IO a
   withTable creds f =
@@ -427,6 +438,7 @@ instance Table TypesTable where
         -- , ", char_5               CHAR(5)"
         -- , ", bpchar_5             BPCHAR(5)"
         , ", text                 TEXT"
+        , ", bytea                BYTEA"
         , ", PRIMARY KEY (id)"
         , ", UNIQUE (aggregate_id, sequence_number)"
         , ")"
