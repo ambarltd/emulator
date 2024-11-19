@@ -14,6 +14,7 @@ module Test.Connector
 import Control.Concurrent (MVar, newMVar, modifyMVar)
 import Control.Concurrent.Async (mapConcurrently)
 import qualified Data.Aeson as Aeson
+import Data.Aeson (FromJSON)
 import qualified Data.ByteString.Lazy as LB
 import Data.Default (def)
 import Data.List (isInfixOf, sort, stripPrefix, intersperse, (\\))
@@ -156,7 +157,7 @@ testPostgreSQL p = do
               annotate ("ordered (" <> show a_id <> ")") $
                 sort seqs `shouldBe` seqs
     it "decodes types" $
-      with_ @TypesTable (PartitionCount 1) $ \conn table topic connected -> do
+      with_ ((),()) (PartitionCount 1) $ \conn table topic connected -> do
       [record] <- return $ concat $ take 1 <$> take 1 mocks
       insert conn table [record]
       connected $ deadline (seconds 1) $
@@ -170,18 +171,32 @@ testPostgreSQL p = do
                 }
           entry `shouldBe` filledRecord
 
+    describe "decodes" $ do
+      roundTrip "BYTEA" (BytesRow (Bytes "AAAA"))
+
   where
   readEvent = readEntry @Event
-  with = with_ @EventsTable
+  with = with_ ()
+
+  roundTrip :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> Spec
+  roundTrip ty val = it ty $
+    with_ (TTableConfig ty) (PartitionCount 1) $ \conn table topic connected -> do
+    let record = TEntry 1 1 1 val
+    insert conn table [record]
+    connected $ deadline (seconds 1) $
+      Topic.withConsumer topic group $ \consumer -> do
+        (entry, _) <- readEntry consumer
+        entry `shouldBe` record
 
   with_
     :: Table t
-    => PartitionCount
+    => Config t
+    -> PartitionCount
     -> (P.Connection -> t -> Topic -> (IO b -> IO b) -> IO a)
     -> IO a
-  with_ partitions f =
+  with_ conf partitions f =
     OnDemand.with p $ \creds ->                                    -- load db
-    withTable creds $ \conn table ->                               -- create events table
+    withTable conf creds $ \conn table ->                          -- create events table
     withFileTopic partitions $ \topic ->                           -- create topic
     let config = mkPostgreSQL creds table in
     Topic.withProducer topic partitioner encoder $ \producer -> do -- create topic producer
@@ -229,18 +244,18 @@ data Event = Event
   }
   deriving (Eq, Show, Generic, P.FromRow)
 
-eventAesonOptions :: Aeson.Options
-eventAesonOptions = Aeson.defaultOptions
-  { Aeson.fieldLabelModifier = \label ->
-    fromMaybe label (stripPrefix "e_" label)
-  }
-
 instance Aeson.FromJSON Event where
-  parseJSON = Aeson.genericParseJSON eventAesonOptions
+  parseJSON = Aeson.genericParseJSON opt
+    where
+    opt = Aeson.defaultOptions
+      { Aeson.fieldLabelModifier = \label ->
+        fromMaybe label (stripPrefix "e_" label)
+      }
 
 class Table a where
   type Entry a = b | b -> a
-  withTable :: PostgresCreds -> (P.Connection -> a -> IO b) -> IO b
+  type Config a = b | b -> a
+  withTable :: Config a -> PostgresCreds -> (P.Connection -> a -> IO b) -> IO b
   tableCols :: a -> [Text.Text]
   tableName :: a -> String
   -- Mock events to be added to the database.
@@ -248,10 +263,63 @@ class Table a where
   mocks :: [[Entry a]]
   insert :: P.Connection -> a -> [Entry a] -> IO ()
 
+data TTable a = TTable
+  { tt_name :: String
+  , _tt_tyName :: String
+  }
+
+data TEntry a = TEntry
+  { te_id :: Int
+  , te_aggregate_id :: Int
+  , te_sequence_number :: Int
+  , te_value :: a
+  }
+  deriving (Eq, Show, Generic, Functor)
+
+instance FromJSON a => FromJSON (TEntry a) where
+  parseJSON = Aeson.genericParseJSON opt
+    where
+    opt = Aeson.defaultOptions
+      { Aeson.fieldLabelModifier = \label ->
+        fromMaybe label (stripPrefix "te_" label)
+      }
+
+data TTableConfig a = TTableConfig
+  { _ttc_typePostgres :: String
+  }
+
+instance P.ToField a => Table (TTable a) where
+  type Entry (TTable a) = (TEntry a)
+  type Config (TTable a) = TTableConfig a
+  tableName (TTable name _) = name
+  tableCols _ = ["id", "aggregate_id", "sequence_number", "value"]
+  mocks = error "no mocks for TTable"
+  insert conn t entries =
+    void $ P.executeMany conn query [(agg_id, seq_num, val) | TEntry _ agg_id seq_num val <- entries ]
+    where
+    query = fromString $ unwords
+      [ "INSERT INTO", tt_name t
+      ,"(aggregate_id, sequence_number, value)"
+      ,"VALUES (?, ?, ?)"
+      ]
+  withTable (TTableConfig ty) creds f =
+    withPgTable schema creds $ \conn name -> f conn (TTable name ty)
+    where
+    schema = unwords
+        [ "( id               SERIAL"
+        , ", aggregate_id     INTEGER NOT NULL"
+        , ", sequence_number  INTEGER NOT NULL"
+        , ", value            " <> ty
+        , ", PRIMARY KEY (id)"
+        , ", UNIQUE (aggregate_id, sequence_number)"
+        , ")"
+        ]
+
 newtype EventsTable = EventsTable String
 
 instance Table EventsTable where
   type (Entry EventsTable) = Event
+  type (Config EventsTable) = ()
   tableName (EventsTable name) = name
   tableCols _ = ["id", "aggregate_id", "sequence_number"]
   mocks =
@@ -270,8 +338,7 @@ instance Table EventsTable where
       ,"VALUES ( ?, ? )"
       ]
 
-  withTable :: PostgresCreds -> (P.Connection -> EventsTable -> IO a) -> IO a
-  withTable creds f =
+  withTable _ creds f =
     withPgTable schema creds $ \conn name -> f conn (EventsTable name)
     where
     schema = unwords
@@ -284,12 +351,11 @@ instance Table EventsTable where
         ]
 
 withEventsTable :: PostgresCreds -> (P.Connection -> EventsTable -> IO a) -> IO a
-withEventsTable = withTable
+withEventsTable = withTable ()
 
 {-# NOINLINE tableNumber #-}
 tableNumber :: MVar Int
 tableNumber = unsafePerformIO (newMVar 0)
-
 
 newtype TypesTable = TypesTable String
 
@@ -324,6 +390,8 @@ data TypesRecord = TypesRecord
   }
   deriving (Eq, Show, Generic)
 
+-- | Binary data saved in PostgreSQL.
+-- Use it to read and write binary data. Does not perform base64 conversion.
 newtype BytesRow = BytesRow Bytes
   deriving stock (Eq, Show)
   deriving newtype (Aeson.FromJSON, Aeson.ToJSON)
@@ -342,6 +410,7 @@ instance Aeson.FromJSON TypesRecord where
 
 instance Table TypesTable where
   type (Entry TypesTable) = TypesRecord
+  type (Config TypesTable) = ((),())
   tableName (TypesTable name) = name
   tableCols _ =
     [ "id"
@@ -416,8 +485,7 @@ instance Table TypesTable where
       autoAssigned = ["id", "smallserial", "serial", "bigserial" ]
 
 
-  withTable :: PostgresCreds -> (P.Connection -> TypesTable -> IO a) -> IO a
-  withTable creds f =
+  withTable _ creds f =
     withPgTable schema creds $ \conn name -> f conn (TypesTable name)
     where
     schema = unwords
