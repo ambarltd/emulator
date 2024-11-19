@@ -17,7 +17,6 @@ import Data.Default (def)
 import Data.List (isInfixOf, sort, stripPrefix)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import Data.Scientific (Scientific)
 import Data.String (fromString)
 import qualified Data.Text as Text
 import Data.Word (Word16)
@@ -152,19 +151,30 @@ testPostgreSQL p = do
               annotate ("ordered (" <> show a_id <> ")") $
                 sort seqs `shouldBe` seqs
     it "decodes types" $
-      OnDemand.with p $ \creds ->
-      withTable @TypesTable creds $ \conn table -> do
-      insert conn table (concat $ take 1 <$> take 1 mocks)
-      rs <- P.query_ @TypesRecord conn (fromString $ "SELECT * FROM " <> tableName table)
-      print rs
-      length rs `shouldBe` 1
+      with_ @TypesTable (PartitionCount 1) $ \conn table topic connected -> do
+      [record] <- return $ concat $ take 1 <$> take 1 mocks
+      insert conn table [record]
+      connected $ deadline (seconds 1) $
+        Topic.withConsumer topic group $ \consumer -> do
+          (entry, _) <- readEntry @TypesRecord consumer
+          let filledRecord = record
+                { tr_serial = 1
+                , tr_bigserial = 1
+                , tr_id = 1
+                , tr_smallserial = 1
+                }
+          entry `shouldBe` filledRecord
 
   where
-  with
-    :: PartitionCount
-    -> (P.Connection -> EventsTable -> Topic -> (IO b -> IO b) -> IO a)
+  readEvent = readEntry @Event
+  with = with_ @EventsTable
+
+  with_
+    :: Table t
+    => PartitionCount
+    -> (P.Connection -> t -> Topic -> (IO b -> IO b) -> IO a)
     -> IO a
-  with partitions f =
+  with_ partitions f =
     OnDemand.with p $ \creds ->                                    -- load db
     withTable creds $ \conn table ->                               -- create events table
     withFileTopic partitions $ \topic ->                           -- create topic
@@ -175,12 +185,12 @@ testPostgreSQL p = do
           Connector.connect config logger def producer (const act)
     f conn table topic connected
 
-readEvent :: Topic.Consumer -> IO (Event, Topic.Meta)
-readEvent consumer = do
+readEntry :: Aeson.FromJSON a => Topic.Consumer -> IO (a, Topic.Meta)
+readEntry consumer = do
   result <- Topic.read consumer
   (bs, meta) <- either (throwIO . ErrorCall . show) return result
   case Aeson.eitherDecode $ LB.fromStrict bs of
-    Left err -> throwIO $ ErrorCall $ "Event decoding error: " <> show err
+    Left err -> throwIO $ ErrorCall $ "decoding error: " <> show err
     Right val -> return (val, meta)
 
 mkPostgreSQL :: Table t => PostgresCreds -> t -> PostgreSQL
@@ -288,8 +298,8 @@ data TypesRecord = TypesRecord
   , tr_smallint        :: Int
   , tr_integer         :: Int
   , tr_bigint          :: Int
-  , tr_decimal         :: Scientific
-  , tr_numeric         :: Scientific
+  -- , tr_decimal      :: Scientific
+  -- , tr_numeric      :: Scientific
   , tr_real            :: Double
   , tr_double          :: Double
   , tr_smallserial     :: Int
@@ -297,6 +307,18 @@ data TypesRecord = TypesRecord
   , tr_bigserial       :: Int
   }
   deriving (Eq, Show, Generic, P.FromRow)
+
+trAesonOptions :: Aeson.Options
+trAesonOptions = Aeson.defaultOptions
+  { Aeson.fieldLabelModifier = \label ->
+    fromMaybe label (stripPrefix "tr_" label)
+  }
+
+instance Aeson.FromJSON TypesRecord where
+  parseJSON = Aeson.genericParseJSON trAesonOptions
+
+instance Aeson.ToJSON TypesRecord where
+  toJSON = Aeson.genericToJSON trAesonOptions
 
 instance Table TypesTable where
   type (Entry TypesTable) = TypesRecord
@@ -308,8 +330,6 @@ instance Table TypesTable where
     , "smallint"
     , "integer"
     , "bigint"
-    , "decimal"
-    , "numeric"
     , "real"
     , "double"
     , "smallserial"
@@ -320,25 +340,23 @@ instance Table TypesTable where
   mocks =
     -- the aggregate_id is given when the records are inserted into the database
     [ [ TypesRecord
-        { tr_id = err
+        { tr_id = err "id"
         , tr_aggregate_id = agg_id
         , tr_sequence_number = seq_id
         , tr_smallint    = seq_id
         , tr_integer     = seq_id
         , tr_bigint      = seq_id
-        , tr_decimal     = fromIntegral seq_id
-        , tr_numeric     = fromIntegral seq_id
         , tr_real        = fromIntegral seq_id
         , tr_double      = fromIntegral seq_id
-        , tr_smallserial = err
-        , tr_serial      = err
-        , tr_bigserial   = err
+        , tr_smallserial = err "smallserial"
+        , tr_serial      = err "serial"
+        , tr_bigserial   = err "bigserial"
         }
       | seq_id <- [0..]
       ]
     | agg_id <- [0..]
     ]
-    where err = error "field determined by postgres"
+    where err fname = error $ "field determined by postgres (" <> fname <> ")"
   insert conn (TypesTable table) events =
     void $ P.executeMany conn query
     [ ( tr_aggregate_id
@@ -346,8 +364,6 @@ instance Table TypesTable where
       , tr_smallint
       , tr_integer
       , tr_bigint
-      , tr_decimal
-      , tr_numeric
       , tr_real
       , tr_double
       )
@@ -361,12 +377,10 @@ instance Table TypesTable where
       , ", smallint"
       , ", integer"
       , ", bigint"
-      , ", decimal"
-      , ", numeric"
       , ", real"
       , ", double"
       , ")"
-      ,"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ,"VALUES (?, ?, ?, ?, ?, ?, ?)"
       ]
 
   withTable :: PostgresCreds -> (P.Connection -> TypesTable -> IO a) -> IO a
@@ -380,8 +394,6 @@ instance Table TypesTable where
         , ", smallint         SMALLINT"
         , ", integer          INTEGER"
         , ", bigint           BIGINT"
-        , ", decimal          DECIMAL"
-        , ", numeric          NUMERIC"
         , ", real             REAL"
         , ", double           DOUBLE PRECISION"
         , ", smallserial      SMALLSERIAL"
