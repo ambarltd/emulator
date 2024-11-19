@@ -4,10 +4,9 @@ module Test.Connector
   , PostgresCreds
   , withPostgresSQL
   , withEventsTable
-  , insert
-  , mocks
   , mkPostgreSQL
   , Event(..)
+  , Table(..)
   ) where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
@@ -100,7 +99,7 @@ testPostgreSQL p = do
     it "connects" $
       with (PartitionCount 1) $ \conn table _ _ -> do
         insert conn table (take 10 $ head mocks)
-        rs <- P.query_ @Event conn (fromString $ "SELECT * FROM " <> table)
+        rs <- P.query_ @Event conn (fromString $ "SELECT * FROM " <> tableName table)
         length rs `shouldBe` 10
 
     it "retrieves all events already in the db" $
@@ -154,7 +153,7 @@ testPostgreSQL p = do
   where
   with
     :: PartitionCount
-    -> (P.Connection -> TableName -> Topic -> (IO b -> IO b) -> IO a)
+    -> (P.Connection -> EventsTable -> Topic -> (IO b -> IO b) -> IO a)
     -> IO a
   with partitions f =
     OnDemand.with p $ \creds ->                                    -- load db
@@ -175,14 +174,14 @@ readEvent consumer = do
     Left err -> throwIO $ ErrorCall $ "Event decoding error: " <> show err
     Right val -> return (val, meta)
 
-mkPostgreSQL :: PostgresCreds -> TableName -> PostgreSQL
+mkPostgreSQL :: PostgresCreds -> EventsTable -> PostgreSQL
 mkPostgreSQL PostgresCreds{..} table = PostgreSQL
   { c_host = Text.pack p_host
   , c_port = p_port
   , c_username = Text.pack p_username
   , c_password = Text.pack p_password
   , c_database = Text.pack p_database
-  , c_table = Text.pack table
+  , c_table = Text.pack (tableName table)
   , c_columns = ["id", "aggregate_id", "sequence_number"]
   , c_partitioningColumn = "aggregate_id"
   , c_serialColumn = "id"
@@ -218,34 +217,41 @@ instance Aeson.FromJSON Event where
 instance Aeson.ToJSON Event where
   toJSON = Aeson.genericToJSON eventAesonOptions
 
--- Mock events to be added to the database.
--- Each sublist is an infinite list of events for the same aggregate.
-mocks :: [[Event]]
-mocks =
-  -- the aggregate_id is given when the records are inserted into the database
-  [ [ Event err agg_id seq_id | seq_id <- [0..] ]
-    | agg_id <- [0..]
-  ]
-  where err = error "aggregate id is determined by postgres"
+class Table a where
+  type Entry a = b | b -> a
+  tableName :: a -> String
+  -- Mock events to be added to the database.
+  -- Each sublist is an infinite list of events for the same aggregate.
+  mocks :: [[Entry a]]
+  insert :: P.Connection -> a -> [Entry a] -> IO ()
 
-insert :: P.Connection -> TableName -> [Event] -> IO ()
-insert conn table events =
-  void $ P.executeMany conn query [(agg_id, seq_num) | Event _ agg_id seq_num <- events ]
-  where
-  query = fromString $ unwords
-    [ "INSERT INTO", table
-    ,"(aggregate_id, sequence_number)"
-    ,"VALUES ( ?, ? )"
+newtype EventsTable = EventsTable String
+
+instance Table EventsTable where
+  type (Entry EventsTable) = Event
+  tableName (EventsTable name) = name
+  mocks =
+    -- the aggregate_id is given when the records are inserted into the database
+    [ [ Event err agg_id seq_id | seq_id <- [0..] ]
+      | agg_id <- [0..]
     ]
+    where err = error "aggregate id is determined by postgres"
+
+  insert conn (EventsTable table) events =
+    void $ P.executeMany conn query [(agg_id, seq_num) | Event _ agg_id seq_num <- events ]
+    where
+    query = fromString $ unwords
+      [ "INSERT INTO", table
+      ,"(aggregate_id, sequence_number)"
+      ,"VALUES ( ?, ? )"
+      ]
 
 {-# NOINLINE tableNumber #-}
 tableNumber :: MVar Int
 tableNumber = unsafePerformIO (newMVar 0)
 
-type TableName = String
-
 -- | Creates a new events table on every invocation.
-withEventsTable :: PostgresCreds -> (P.Connection -> TableName -> IO a) -> IO a
+withEventsTable :: PostgresCreds -> (P.Connection -> EventsTable -> IO a) -> IO a
 withEventsTable creds f = bracket create destroy $ uncurry f
   where
   execute conn q = void $ P.execute_ conn (fromString q)
@@ -261,9 +267,9 @@ withEventsTable creds f = bracket create destroy $ uncurry f
       , ", UNIQUE (aggregate_id, sequence_number)"
       , ")"
       ]
-    return (conn, name)
+    return (conn, EventsTable name)
 
-  destroy (conn, name) =
+  destroy (conn, EventsTable name) =
     execute conn $ "DROP TABLE " <> name
 
   takeName = do
