@@ -17,12 +17,12 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson (FromJSON)
 import qualified Data.ByteString.Lazy as LB
 import Data.Default (def)
-import Data.List (isInfixOf, sort, stripPrefix, intersperse, (\\))
+import Data.List (isInfixOf, sort, stripPrefix)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Data.Scientific (Scientific)
 import Data.String (fromString)
 import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
 import Data.Word (Word16)
 import Control.Exception (bracket, throwIO, ErrorCall(..))
 import Control.Monad (void, replicateM, forM_)
@@ -33,6 +33,8 @@ import Test.Hspec
   , it
   , describe
   , shouldBe
+  , shouldThrow
+  , anyException
   )
 import Test.Hspec.Expectations.Contrib (annotate)
 import qualified Database.PostgreSQL.Simple as P
@@ -115,7 +117,7 @@ testPostgreSQL p = do
         connected $
           deadline (seconds 2) $
           Topic.withConsumer topic group $ \consumer -> do
-          es <- replicateM count $ readEvent consumer
+          es <- replicateM count $ readEntry @Event consumer
           length es `shouldBe` count
 
     it "can retrieve a large number of events" $
@@ -124,7 +126,7 @@ testPostgreSQL p = do
         insert conn table (take count $ head mocks)
         connected $ deadline (seconds 2) $
           Topic.withConsumer topic group $ \consumer -> do
-          es <- replicateM count $ readEvent consumer
+          es <- replicateM count $ readEntry @Event consumer
           length es `shouldBe` count
 
     it "retrieves events added after initial snapshot" $
@@ -134,7 +136,7 @@ testPostgreSQL p = do
         connected $ deadline (seconds 1) $
           Topic.withConsumer topic group $ \consumer ->
           withAsyncThrow write $ do
-          es <- replicateM count $ readEvent consumer
+          es <- replicateM count $ readEntry @Event consumer
           length es `shouldBe` count
 
     it "maintains ordering through parallel writes" $ do
@@ -148,7 +150,7 @@ testPostgreSQL p = do
           Topic.withConsumer topic group $ \consumer -> do
           -- write and consume concurrently
           withAsyncThrow write $ do
-            es <- replicateM (count * partitions) $ readEvent consumer
+            es <- replicateM (count * partitions) $ readEntry consumer
             let byAggregateId = Map.toList $ Map.fromListWith (flip (++))
                     [ (e_aggregate_id, [e_sequence_number])
                     | (Event{..}, _) <- es
@@ -156,31 +158,48 @@ testPostgreSQL p = do
             forM_ byAggregateId $ \(a_id, seqs) ->
               annotate ("ordered (" <> show a_id <> ")") $
                 sort seqs `shouldBe` seqs
-    it "decodes types" $
-      with_ ((),()) (PartitionCount 1) $ \conn table topic connected -> do
-      [record] <- return $ concat $ take 1 <$> take 1 mocks
-      insert conn table [record]
-      connected $ deadline (seconds 1) $
-        Topic.withConsumer topic group $ \consumer -> do
-          (entry, _) <- readEntry @TypesRecord consumer
-          let filledRecord = record
-                { tr_serial = 1
-                , tr_bigserial = 1
-                , tr_id = 1
-                , tr_smallserial = 1
-                }
-          entry `shouldBe` filledRecord
-
     describe "decodes" $ do
-      roundTrip "BYTEA" (BytesRow (Bytes "AAAA"))
+      -- Numeric
+      supported "SMALLINT"         (1 :: Int)
+      supported "INTEGER"          (1 :: Int)
+      supported "BIGINT"           (1 :: Int)
+      supported "REAL"             (1 :: Int)
+      supported "DOUBLE PRECISION" (1.5 :: Double)
+      supported "SMALLSERIAL"      (1 :: Int)
+      supported "SERIAL"           (1 :: Int)
+      supported "BIGSERIAL"        (1 :: Int)
+      unsupported "DECIMAL"        (1.5 :: Scientific)
+      unsupported "NUMERIC"        (1.5 :: Scientific)
+
+      -- Monetary
+      unsupported "MONEY" (1.5 :: Double)
+
+      -- Strings
+      supported "TEXT"                   ("tryme" :: String)
+      unsupported "CHARACTER VARYING(5)" ("tryme" :: String)
+      unsupported "VARCHAR(5)"           ("tryme" :: String)
+      unsupported "CHARACTER(5)"         ("tryme" :: String)
+      unsupported "CHAR(5)"              ("tryme" :: String)
+      unsupported "BPCHAR(5)"            ("tryme" :: String)
+      unsupported "BPCHAR"               ("tryme" :: String)
+
+      -- Binary
+      supported "BYTEA"            (BytesRow (Bytes "AAAA"))
 
   where
-  readEvent = readEntry @Event
   with = with_ ()
 
-  roundTrip :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> Spec
-  roundTrip ty val = it ty $
-    with_ (TTableConfig ty) (PartitionCount 1) $ \conn table topic connected -> do
+  unsupported :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> Spec
+  unsupported ty val =
+    it ("unsupported " <> ty) $
+      roundTrip ty val `shouldThrow` anyException
+
+  supported :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> Spec
+  supported ty val = it ty $ roundTrip ty val
+
+  roundTrip :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> IO ()
+  roundTrip ty val =
+    with_ (PostgresType ty) (PartitionCount 1) $ \conn table topic connected -> do
     let record = TEntry 1 1 1 val
     insert conn table [record]
     connected $ deadline (seconds 1) $
@@ -284,13 +303,11 @@ instance FromJSON a => FromJSON (TEntry a) where
         fromMaybe label (stripPrefix "te_" label)
       }
 
-data TTableConfig a = TTableConfig
-  { _ttc_typePostgres :: String
-  }
+newtype PostgresType a = PostgresType String
 
 instance P.ToField a => Table (TTable a) where
-  type Entry (TTable a) = (TEntry a)
-  type Config (TTable a) = TTableConfig a
+  type Entry (TTable a) = TEntry a
+  type Config (TTable a) = PostgresType a
   tableName (TTable name _) = name
   tableCols _ = ["id", "aggregate_id", "sequence_number", "value"]
   mocks = error "no mocks for TTable"
@@ -302,7 +319,7 @@ instance P.ToField a => Table (TTable a) where
       ,"(aggregate_id, sequence_number, value)"
       ,"VALUES (?, ?, ?)"
       ]
-  withTable (TTableConfig ty) creds f =
+  withTable (PostgresType ty) creds f =
     withPgTable schema creds $ \conn name -> f conn (TTable name ty)
     where
     schema = unwords
@@ -357,39 +374,6 @@ withEventsTable = withTable ()
 tableNumber :: MVar Int
 tableNumber = unsafePerformIO (newMVar 0)
 
-newtype TypesTable = TypesTable String
-
-data TypesRecord = TypesRecord
-  { tr_id              :: Int
-  , tr_aggregate_id    :: Int
-  , tr_sequence_number :: Int
-
-  -- Numeric
-  , tr_smallint        :: Int
-  , tr_integer         :: Int
-  , tr_bigint          :: Int
-  , tr_real            :: Double
-  , tr_double          :: Double
-  , tr_smallserial     :: Int
-  , tr_serial          :: Int
-  , tr_bigserial       :: Int
-  -- , tr_decimal      :: Scientific
-  -- , tr_numeric      :: Scientific
-
-  -- Strings
-  -- , tr_character_varying_5 :: String
-  -- , tr_varchar_5           :: String
-  -- , tr_character_5         :: String
-  -- , tr_char_5              :: String
-  -- , tr_bpchar_5            :: String
-  -- , tr_bpchar              :: String
-  , tr_text            :: String
-
-  -- Binary
-  , tr_bytea           :: BytesRow
-  }
-  deriving (Eq, Show, Generic)
-
 -- | Binary data saved in PostgreSQL.
 -- Use it to read and write binary data. Does not perform base64 conversion.
 newtype BytesRow = BytesRow Bytes
@@ -398,119 +382,6 @@ newtype BytesRow = BytesRow Bytes
 
 instance P.ToField BytesRow where
   toField (BytesRow (Bytes bs)) = P.toField (P.Binary bs)
-
-trAesonOptions :: Aeson.Options
-trAesonOptions = Aeson.defaultOptions
-  { Aeson.fieldLabelModifier = \label ->
-    fromMaybe label (stripPrefix "tr_" label)
-  }
-
-instance Aeson.FromJSON TypesRecord where
-  parseJSON = Aeson.genericParseJSON trAesonOptions
-
-instance Table TypesTable where
-  type (Entry TypesTable) = TypesRecord
-  type (Config TypesTable) = ((),())
-  tableName (TypesTable name) = name
-  tableCols _ =
-    [ "id"
-    , "aggregate_id"
-    , "sequence_number"
-    , "smallint"
-    , "integer"
-    , "bigint"
-    , "real"
-    , "double"
-    , "smallserial"
-    , "serial"
-    , "bigserial"
-    , "text"
-    , "bytea"
-    ]
-
-  mocks =
-    -- the aggregate_id is given when the records are inserted into the database
-    [ [ TypesRecord
-        { tr_id = err "id"
-        , tr_aggregate_id = agg_id
-        , tr_sequence_number = seq_id
-        , tr_smallint    = seq_id
-        , tr_integer     = seq_id
-        , tr_bigint      = seq_id
-        , tr_real        = fromIntegral seq_id
-        , tr_double      = fromIntegral seq_id
-        , tr_smallserial = err "smallserial"
-        , tr_serial      = err "serial"
-        , tr_bigserial   = err "bigserial"
-        , tr_text        = take 5 $ str seq_id
-        , tr_bytea       =
-            BytesRow $ Bytes $ Text.encodeUtf8 $ Text.pack $ take 5 $ str seq_id
-        }
-      | seq_id <- [0..]
-      ]
-    | agg_id <- [0..]
-    ]
-    where
-      err fname = error $ "field determined by postgres (" <> fname <> ")"
-      chars = toEnum <$> [65..122] :: String
-      str seed =
-        [ head $ drop (seed * n) $ cycle chars
-        | n <- [1..]
-        ]
-
-  insert conn t@(TypesTable table) events =
-    void $ P.executeMany conn query
-    [ ( tr_aggregate_id
-      , tr_sequence_number
-      , tr_smallint
-      , tr_integer
-      , tr_bigint
-      , tr_real
-      , tr_double
-      , tr_text
-      , tr_bytea
-      )
-    | TypesRecord{..} <- events
-    ]
-    where
-    query = fromString $ unwords $ concat $
-      [ [ "INSERT INTO", table ]
-      , tupled cols
-      , [ "VALUES"]
-      , tupled $ replicate (length cols) "?"
-      ]
-      where
-      tupled xs = ["("] ++ intersperse ", " xs ++ [")"]
-      cols = fmap Text.unpack $ (tableCols t) \\ autoAssigned
-      autoAssigned = ["id", "smallserial", "serial", "bigserial" ]
-
-
-  withTable _ creds f =
-    withPgTable schema creds $ \conn name -> f conn (TypesTable name)
-    where
-    schema = unwords
-        [ "( id                   SERIAL"
-        , ", aggregate_id         INTEGER NOT NULL"
-        , ", sequence_number      INTEGER NOT NULL"
-        , ", smallint             SMALLINT"
-        , ", integer              INTEGER"
-        , ", bigint               BIGINT"
-        , ", real                 REAL"
-        , ", double               DOUBLE PRECISION"
-        , ", smallserial          SMALLSERIAL"
-        , ", serial               SERIAL"
-        , ", bigserial            BIGSERIAL"
-        -- , ", character_varying_5  CHAR VARYING(5)"
-        -- , ", varchar_5            VARCHAR(5)"
-        -- , ", character_5          CHARACTER(5)"
-        -- , ", char_5               CHAR(5)"
-        -- , ", bpchar_5             BPCHAR(5)"
-        , ", text                 TEXT"
-        , ", bytea                BYTEA"
-        , ", PRIMARY KEY (id)"
-        , ", UNIQUE (aggregate_id, sequence_number)"
-        , ")"
-        ]
 
 type Schema = String
 
