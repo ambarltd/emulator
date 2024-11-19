@@ -28,6 +28,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Yaml as Yaml
 
 import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
+import Ambar.Emulator.Connector.File (FileConnector(..))
 import Ambar.Transport (SubmissionError)
 import Ambar.Transport.Http (Endpoint, User, Password)
 
@@ -56,7 +57,7 @@ data DataSource = DataSource
 
 data Source
   = SourcePostgreSQL PostgreSQL
-  | SourceFile FilePath
+  | SourceFile FileConnector
 
 data DataDestination = DataDestination
   { d_id :: Id DataDestination
@@ -119,7 +120,7 @@ instance FromJSON DataSource where
       c_serialColumn <- o .: "serialColumn"
       return $ SourcePostgreSQL PostgreSQL{..}
 
-    parseFile o = SourceFile <$> (o .: "path")
+    parseFile o = SourceFile . FileConnector <$> (o .: "path")
 
 parseDataDestination
   :: Map (Id DataSource) DataSource
