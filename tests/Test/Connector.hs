@@ -17,6 +17,7 @@ import Data.Default (def)
 import Data.List (isInfixOf, sort, stripPrefix)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Data.Scientific (Scientific)
 import Data.String (fromString)
 import qualified Data.Text as Text
 import Data.Word (Word16)
@@ -150,6 +151,14 @@ testPostgreSQL p = do
             forM_ byAggregateId $ \(a_id, seqs) ->
               annotate ("ordered (" <> show a_id <> ")") $
                 sort seqs `shouldBe` seqs
+    it "decodes types" $
+      OnDemand.with p $ \creds ->
+      withTable @TypesTable creds $ \conn table -> do
+      insert conn table (concat $ take 1 <$> take 1 mocks)
+      rs <- P.query_ @TypesRecord conn (fromString $ "SELECT * FROM " <> tableName table)
+      print rs
+      length rs `shouldBe` 1
+
   where
   with
     :: PartitionCount
@@ -157,7 +166,7 @@ testPostgreSQL p = do
     -> IO a
   with partitions f =
     OnDemand.with p $ \creds ->                                    -- load db
-    withEventsTable creds $ \conn table ->                         -- create events table
+    withTable creds $ \conn table ->                               -- create events table
     withFileTopic partitions $ \topic ->                           -- create topic
     let config = mkPostgreSQL creds table in
     Topic.withProducer topic partitioner encoder $ \producer -> do -- create topic producer
@@ -174,7 +183,7 @@ readEvent consumer = do
     Left err -> throwIO $ ErrorCall $ "Event decoding error: " <> show err
     Right val -> return (val, meta)
 
-mkPostgreSQL :: PostgresCreds -> EventsTable -> PostgreSQL
+mkPostgreSQL :: Table t => PostgresCreds -> t -> PostgreSQL
 mkPostgreSQL PostgresCreds{..} table = PostgreSQL
   { c_host = Text.pack p_host
   , c_port = p_port
@@ -182,7 +191,7 @@ mkPostgreSQL PostgresCreds{..} table = PostgreSQL
   , c_password = Text.pack p_password
   , c_database = Text.pack p_database
   , c_table = Text.pack (tableName table)
-  , c_columns = ["id", "aggregate_id", "sequence_number"]
+  , c_columns = tableCols table
   , c_partitioningColumn = "aggregate_id"
   , c_serialColumn = "id"
   }
@@ -219,6 +228,8 @@ instance Aeson.ToJSON Event where
 
 class Table a where
   type Entry a = b | b -> a
+  withTable :: PostgresCreds -> (P.Connection -> a -> IO b) -> IO b
+  tableCols :: a -> [Text.Text]
   tableName :: a -> String
   -- Mock events to be added to the database.
   -- Each sublist is an infinite list of events for the same aggregate.
@@ -230,6 +241,7 @@ newtype EventsTable = EventsTable String
 instance Table EventsTable where
   type (Entry EventsTable) = Event
   tableName (EventsTable name) = name
+  tableCols _ = ["id", "aggregate_id", "sequence_number"]
   mocks =
     -- the aggregate_id is given when the records are inserted into the database
     [ [ Event err agg_id seq_id | seq_id <- [0..] ]
@@ -246,30 +258,154 @@ instance Table EventsTable where
       ,"VALUES ( ?, ? )"
       ]
 
+  withTable :: PostgresCreds -> (P.Connection -> EventsTable -> IO a) -> IO a
+  withTable creds f =
+    withPgTable schema creds $ \conn name -> f conn (EventsTable name)
+    where
+    schema = unwords
+        [ "( id               SERIAL"
+        , ", aggregate_id     INTEGER NOT NULL"
+        , ", sequence_number  INTEGER NOT NULL"
+        , ", PRIMARY KEY (id)"
+        , ", UNIQUE (aggregate_id, sequence_number)"
+        , ")"
+        ]
+
+withEventsTable :: PostgresCreds -> (P.Connection -> EventsTable -> IO a) -> IO a
+withEventsTable = withTable
+
 {-# NOINLINE tableNumber #-}
 tableNumber :: MVar Int
 tableNumber = unsafePerformIO (newMVar 0)
 
--- | Creates a new events table on every invocation.
-withEventsTable :: PostgresCreds -> (P.Connection -> EventsTable -> IO a) -> IO a
-withEventsTable creds f = bracket create destroy $ uncurry f
+
+newtype TypesTable = TypesTable String
+
+data TypesRecord = TypesRecord
+  { tr_id              :: Int
+  , tr_aggregate_id    :: Int
+  , tr_sequence_number :: Int
+  , tr_smallint        :: Int
+  , tr_integer         :: Int
+  , tr_bigint          :: Int
+  , tr_decimal         :: Scientific
+  , tr_numeric         :: Scientific
+  , tr_real            :: Double
+  , tr_double          :: Double
+  , tr_smallserial     :: Int
+  , tr_serial          :: Int
+  , tr_bigserial       :: Int
+  }
+  deriving (Eq, Show, Generic, P.FromRow)
+
+instance Table TypesTable where
+  type (Entry TypesTable) = TypesRecord
+  tableName (TypesTable name) = name
+  tableCols _ =
+    [ "id"
+    , "aggregate_id"
+    , "sequence_number"
+    , "smallint"
+    , "integer"
+    , "bigint"
+    , "decimal"
+    , "numeric"
+    , "real"
+    , "double"
+    , "smallserial"
+    , "serial"
+    , "bigserial"
+    ]
+
+  mocks =
+    -- the aggregate_id is given when the records are inserted into the database
+    [ [ TypesRecord
+        { tr_id = err
+        , tr_aggregate_id = agg_id
+        , tr_sequence_number = seq_id
+        , tr_smallint    = seq_id
+        , tr_integer     = seq_id
+        , tr_bigint      = seq_id
+        , tr_decimal     = fromIntegral seq_id
+        , tr_numeric     = fromIntegral seq_id
+        , tr_real        = fromIntegral seq_id
+        , tr_double      = fromIntegral seq_id
+        , tr_smallserial = err
+        , tr_serial      = err
+        , tr_bigserial   = err
+        }
+      | seq_id <- [0..]
+      ]
+    | agg_id <- [0..]
+    ]
+    where err = error "field determined by postgres"
+  insert conn (TypesTable table) events =
+    void $ P.executeMany conn query
+    [ ( tr_aggregate_id
+      , tr_sequence_number
+      , tr_smallint
+      , tr_integer
+      , tr_bigint
+      , tr_decimal
+      , tr_numeric
+      , tr_real
+      , tr_double
+      )
+    | TypesRecord{..} <- events
+    ]
+    where
+    query = fromString $ unwords
+      [ "INSERT INTO", table
+      , "( aggregate_id"
+      , ", sequence_number"
+      , ", smallint"
+      , ", integer"
+      , ", bigint"
+      , ", decimal"
+      , ", numeric"
+      , ", real"
+      , ", double"
+      , ")"
+      ,"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ]
+
+  withTable :: PostgresCreds -> (P.Connection -> TypesTable -> IO a) -> IO a
+  withTable creds f =
+    withPgTable schema creds $ \conn name -> f conn (TypesTable name)
+    where
+    schema = unwords
+        [ "( id               SERIAL"
+        , ", aggregate_id     INTEGER NOT NULL"
+        , ", sequence_number  INTEGER NOT NULL"
+        , ", smallint         SMALLINT"
+        , ", integer          INTEGER"
+        , ", bigint           BIGINT"
+        , ", decimal          DECIMAL"
+        , ", numeric          NUMERIC"
+        , ", real             REAL"
+        , ", double           DOUBLE PRECISION"
+        , ", smallserial      SMALLSERIAL"
+        , ", serial           SERIAL"
+        , ", bigserial        BIGSERIAL"
+        , ", PRIMARY KEY (id)"
+        , ", UNIQUE (aggregate_id, sequence_number)"
+        , ")"
+        ]
+
+type Schema = String
+
+-- | Creates a new table on every invocation.
+withPgTable :: Schema -> PostgresCreds -> (P.Connection -> String -> IO a) -> IO a
+withPgTable schema creds f = bracket create destroy $ uncurry f
   where
   execute conn q = void $ P.execute_ conn (fromString q)
   create = do
     name <- takeName
     conn <- connect
-    execute conn $ unwords
-      [ "CREATE TABLE IF NOT EXISTS " <> name <> " "
-      , "( id               SERIAL"
-      , ", aggregate_id     INTEGER NOT NULL"
-      , ", sequence_number  INTEGER NOT NULL"
-      , ", PRIMARY KEY (id)"
-      , ", UNIQUE (aggregate_id, sequence_number)"
-      , ")"
-      ]
-    return (conn, EventsTable name)
+    execute conn $ unwords [ "CREATE TABLE IF NOT EXISTS", name, schema ]
+    return (conn, name)
 
-  destroy (conn, EventsTable name) =
+  destroy (conn, name) =
     execute conn $ "DROP TABLE " <> name
 
   takeName = do
