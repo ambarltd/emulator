@@ -27,7 +27,7 @@ import Ambar.Emulator.Config
   , Destination(..)
   , Source(..)
   )
-import Ambar.Emulator.Projector (Message(..), Record(..))
+import Ambar.Emulator.Projector (Message(..), Payload(..))
 
 import Test.Connector (PostgresCreds, Event(..), mocks)
 import qualified Test.Connector as C
@@ -72,7 +72,7 @@ testEmulator p = describe "emulator" $ do
         consumed <- consume out (length after)
         consumed `shouldBe` after
     where
-    msgToEvent (Message _ _ _ _ (Record r)) =
+    msgToEvent (Message _ _ _ _ (Payload r)) =
       case Json.fromJSON @Event r of
         Json.Error str -> Left str
         Json.Success e -> Right e
@@ -122,7 +122,7 @@ testEmulator p = describe "emulator" $ do
     withPostgresSource f =
       OnDemand.with p $ \creds ->
       C.withEventsTable creds $ \conn table -> do
-      let config = C.mkConfig creds table
+      let config = C.mkPostgreSQL creds table
           source = DataSource
             { s_id = Id "postgres_source"
             , s_description = "PostgreSQL source"

@@ -1,6 +1,7 @@
 module Ambar.Emulator where
 
-import Control.Concurrent.Async (concurrently_, forConcurrently_, withAsync)
+import Control.Concurrent.Async (concurrently_, forConcurrently_)
+import Control.Concurrent.STM (STM)
 import Control.Exception (finally, uninterruptibleMask_, throwIO, ErrorCall(..))
 import Control.Monad (forM)
 import Data.Aeson (FromJSON, ToJSON)
@@ -14,15 +15,15 @@ import GHC.Generics (Generic)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
-import qualified Ambar.Emulator.Connector.Postgres as Postgres
-import qualified Ambar.Emulator.Connector.File as FileConnector
+import Ambar.Emulator.Connector.Postgres (PostgreSQLState)
+import Ambar.Emulator.Connector (Connector(..), connect, partitioner, encoder)
 
 import qualified Ambar.Emulator.Projector as Projector
 import Ambar.Emulator.Projector (Projection(..))
 import qualified Ambar.Transport.File as FileTransport
 import qualified Ambar.Transport.Http as HttpTransport
 import qualified Ambar.Emulator.Queue.Topic as Topic
-import Ambar.Emulator.Queue (TopicName(..))
+import Ambar.Emulator.Queue (Queue, TopicName(..))
 import qualified Ambar.Emulator.Queue as Queue
 import Ambar.Emulator.Config
   ( EmulatorConfig(..)
@@ -39,18 +40,6 @@ import Utils.Logger (SimpleLogger, annotate, logInfo, logDebugAction)
 import Utils.Some (Some(..))
 import Utils.STM (atomicallyNamed)
 
-data ConnectorState
-  = StatePostgres Postgres.ConnectorState
-  | StateFile ()
-  deriving (Generic)
-  deriving anyclass (ToJSON, FromJSON)
-
-newtype EmulatorState = EmulatorState
-  { connectors :: Map (Id DataSource) ConnectorState
-  }
-  deriving (Generic)
-  deriving anyclass (ToJSON, FromJSON)
-
 emulate :: SimpleLogger -> EmulatorConfig -> EnvironmentConfig -> IO ()
 emulate logger_ config env = do
   Queue.withQueue queuePath pcount $ \queue ->
@@ -66,10 +55,12 @@ emulate logger_ config env = do
           fromMaybe (initialStateFor source) $
           Map.lookup (s_id source) connectorStates
 
-        sources =
-          [ (source, getState source) | source <- Map.elems $ c_sources env ]
+    configs <- sequence
+      [ toConnectorConfig source (getState source)
+      | source <- Map.elems $ c_sources env
+      ]
 
-    withMany (connect queue) sources $ \svars ->
+    withMany (connect_ queue) configs $ \svars ->
       every (seconds 30) (save svars) `finally` save svars
 
   load = do
@@ -91,27 +82,14 @@ emulate logger_ config env = do
       writeAtomically statePath $ \path ->
         Aeson.encodeFile path $ EmulatorState (Map.fromList states)
 
-  connect queue (source, sstate) f = do
+  connect_ :: Queue -> ConnectorConfig -> ((Id DataSource, STM SavedState) -> IO a) -> IO a
+  connect_ queue (ConnectorConfig source connector state asSaved) f = do
     let logger = annotate ("src: " <> unId (s_id source)) logger_
     topic <- Queue.openTopic queue $ topicName $ s_id source
-    case s_source source of
-      SourcePostgreSQL pconfig -> do
-        let partitioner = Postgres.partitioner
-            encoder = Postgres.encoder pconfig
-        state <- case sstate of
-          StatePostgres s -> return s
-          _ -> throwIO $ ErrorCall $
-            "Incompatible state for source: " <> show (s_id source)
-        Topic.withProducer topic partitioner encoder $ \producer ->
-          Postgres.withConnector logger state producer pconfig $ \stateVar -> do
-          logInfo @String logger "connected"
-          f (s_id source, StatePostgres <$> stateVar)
-
-      SourceFile path ->
-        Topic.withProducer topic FileConnector.partitioner FileConnector.encoder $ \producer ->
-        withAsync (FileConnector.connect logger producer path) $ \_ -> do
-        logInfo @String logger "connected"
-        f (s_id source, return $ StateFile ())
+    Topic.withProducer topic partitioner encoder $ \producer ->
+      connect connector logger state producer $ \stateVar -> do
+      logInfo @String logger "connected"
+      f (s_id source, asSaved <$> stateVar)
 
   initialStateFor source =
     case s_source source of
@@ -143,6 +121,45 @@ emulate logger_ config env = do
         act (Some transport)
       DestinationFun f -> do
         act (Some f)
+
+-- | This is what gets persisted across sessions.
+newtype EmulatorState = EmulatorState
+  { connectors :: Map (Id DataSource) SavedState
+  }
+  deriving (Generic)
+  deriving anyclass (ToJSON, FromJSON)
+
+data SavedState
+  = StatePostgres PostgreSQLState
+  | StateFile ()
+  deriving (Generic)
+  deriving anyclass (ToJSON, FromJSON)
+
+data ConnectorConfig =
+  forall c. (Connector c) =>
+  ConnectorConfig
+    { cc_source :: DataSource
+    , cc_connector :: c
+    , cc_connstate :: ConnectorState c
+    , cc_asSavedState :: ConnectorState c -> SavedState
+    }
+
+toConnectorConfig :: DataSource -> SavedState -> IO ConnectorConfig
+toConnectorConfig source sstate =
+  case s_source source of
+    SourcePostgreSQL psql ->
+      case sstate of
+        StatePostgres state ->
+          return $ ConnectorConfig source psql state StatePostgres
+        _ -> incompatible
+    SourceFile path ->
+      case sstate of
+        StateFile () ->
+          return $ ConnectorConfig source path () StateFile
+        _ -> incompatible
+    where
+    incompatible = throwIO $ ErrorCall $
+      "Incompatible state for source: " <> show (s_id source)
 
 topicName :: Id DataSource -> TopicName
 topicName sid = TopicName $ "t-" <> unId sid

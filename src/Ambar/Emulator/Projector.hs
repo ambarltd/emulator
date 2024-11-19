@@ -2,7 +2,7 @@ module Ambar.Emulator.Projector
   ( Projection(..)
   , project
   , Message(..)
-  , Record(..)
+  , Payload(..)
   ) where
 
 {-| A projector reads messages from multiple queues, applies a filter to the
@@ -26,7 +26,7 @@ import GHC.Generics (Generic)
 import Ambar.Emulator.Config (Id(..), DataDestination, DataSource(..), Source(..))
 import Ambar.Emulator.Queue.Topic (Topic, ReadError(..), PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
-import qualified Ambar.Emulator.Connector.Postgres as Pg
+import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
 import Ambar.Transport (Transport)
 import qualified Ambar.Transport as Transport
 import Utils.Some (Some)
@@ -49,14 +49,14 @@ data Message = Message
   , data_source_description :: Text
   , data_destination_id :: Text
   , data_destination_description :: Text
-  , payload :: Record
+  , payload :: Payload
   }
   deriving (Generic, Show)
   deriving anyclass (ToJSON, FromJSON)
 
-newtype Record = Record Json.Value
+newtype Payload = Payload Json.Value
+  deriving (Show)
   deriving newtype (ToJSON, FromJSON)
-  deriving Show
 
 project :: SimpleLogger -> Projection -> IO ()
 project logger_ Projection{..} =
@@ -101,16 +101,15 @@ project logger_ Projection{..} =
     Right v -> return v
 
 -- | Fields to print when a record is sent.
-relevantFields :: Source -> Record -> Text
-relevantFields source (Record value) = renderPretty $
+relevantFields :: Source -> Payload -> Text
+relevantFields source (Payload value) = renderPretty $
   withObject $ \o ->
   case source of
     SourceFile _ -> prettyJSON value
-    SourcePostgreSQL Pg.ConnectorConfig{..} ->
-      let fields = [c_serialColumn, c_partitioningColumn] in
+    SourcePostgreSQL PostgreSQL{..} ->
       fillSep $
         [ pretty field <> ":" <+> prettyJSON v
-        | field <- fields
+        | field <- [c_serialColumn, c_partitioningColumn]
         , Just v <- [KeyMap.lookup (fromString $ Text.unpack field) o]
         ]
   where
