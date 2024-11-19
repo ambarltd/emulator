@@ -6,7 +6,7 @@ module Test.Connector
   , withEventsTable
   , insert
   , mocks
-  , mkConfig
+  , mkPostgreSQL
   , Event(..)
   ) where
 
@@ -36,9 +36,10 @@ import qualified Database.PostgreSQL.Simple as P
 import GHC.Generics
 import System.IO.Unsafe (unsafePerformIO)
 
+import qualified Ambar.Emulator.Connector as Connector
+import Ambar.Emulator.Connector (partitioner, encoder)
 import Ambar.Emulator.Connector.Poll (Boundaries(..), mark, boundaries, cleanup)
-import Ambar.Emulator.Connector.Postgres (ConnectorConfig(..), partitioner, encoder)
-import qualified Ambar.Emulator.Connector.Postgres as ConnectorPostgres
+import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
 import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Test.Queue (withFileTopic)
@@ -156,14 +157,14 @@ testPostgreSQL p = do
     -> (P.Connection -> TableName -> Topic -> (IO b -> IO b) -> IO a)
     -> IO a
   with partitions f =
-    OnDemand.with p $ \creds ->                                             -- load db
-    withEventsTable creds $ \conn table ->                                  -- create events table
-    withFileTopic partitions $ \topic ->                                    -- create topic
-    let config = mkConfig creds table in
+    OnDemand.with p $ \creds ->                                    -- load db
+    withEventsTable creds $ \conn table ->                         -- create events table
+    withFileTopic partitions $ \topic ->                           -- create topic
+    let config = mkPostgreSQL creds table in
     Topic.withProducer topic partitioner encoder $ \producer -> do -- create topic producer
     let logger = plainLogger Warn
-        connected act = ConnectorPostgres.withConnector                     -- setup connector
-            logger def producer config (const act)
+        connected act = -- setup connector
+          Connector.connect config logger def producer (const act)
     f conn table topic connected
 
 readEvent :: Topic.Consumer -> IO (Event, Topic.Meta)
@@ -174,8 +175,8 @@ readEvent consumer = do
     Left err -> throwIO $ ErrorCall $ "Event decoding error: " <> show err
     Right val -> return (val, meta)
 
-mkConfig :: PostgresCreds -> TableName -> ConnectorPostgres.ConnectorConfig
-mkConfig PostgresCreds{..} table = ConnectorConfig
+mkPostgreSQL :: PostgresCreds -> TableName -> PostgreSQL
+mkPostgreSQL PostgresCreds{..} table = PostgreSQL
   { c_host = Text.pack p_host
   , c_port = p_port
   , c_username = Text.pack p_username

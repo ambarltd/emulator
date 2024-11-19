@@ -122,7 +122,7 @@ testEmulator p = describe "emulator" $ do
     withPostgresSource f =
       OnDemand.with p $ \creds ->
       C.withEventsTable creds $ \conn table -> do
-      let config = C.mkConfig creds table
+      let config = C.mkPostgreSQL creds table
           source = DataSource
             { s_id = Id "postgres_source"
             , s_description = "PostgreSQL source"
