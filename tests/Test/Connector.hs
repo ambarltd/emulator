@@ -295,16 +295,27 @@ data TypesRecord = TypesRecord
   { tr_id              :: Int
   , tr_aggregate_id    :: Int
   , tr_sequence_number :: Int
+
+  -- Numeric
   , tr_smallint        :: Int
   , tr_integer         :: Int
   , tr_bigint          :: Int
-  -- , tr_decimal      :: Scientific
-  -- , tr_numeric      :: Scientific
   , tr_real            :: Double
   , tr_double          :: Double
   , tr_smallserial     :: Int
   , tr_serial          :: Int
   , tr_bigserial       :: Int
+  -- , tr_decimal      :: Scientific
+  -- , tr_numeric      :: Scientific
+
+  -- Strings
+  -- , tr_character_varying_5 :: String
+  -- , tr_varchar_5           :: String
+  -- , tr_character_5         :: String
+  -- , tr_char_5              :: String
+  -- , tr_bpchar_5            :: String
+  -- , tr_bpchar              :: String
+  , tr_text                :: String
   }
   deriving (Eq, Show, Generic, P.FromRow)
 
@@ -335,6 +346,7 @@ instance Table TypesTable where
     , "smallserial"
     , "serial"
     , "bigserial"
+    , "text"
     ]
 
   mocks =
@@ -351,12 +363,20 @@ instance Table TypesTable where
         , tr_smallserial = err "smallserial"
         , tr_serial      = err "serial"
         , tr_bigserial   = err "bigserial"
+        , tr_text        = take 5 $ str seq_id
         }
       | seq_id <- [0..]
       ]
     | agg_id <- [0..]
     ]
-    where err fname = error $ "field determined by postgres (" <> fname <> ")"
+    where
+      err fname = error $ "field determined by postgres (" <> fname <> ")"
+      chars = toEnum <$> [65..122] :: String
+      str seed =
+        [ head $ drop (seed * n) $ cycle chars
+        | n <- [1..]
+        ]
+
   insert conn (TypesTable table) events =
     void $ P.executeMany conn query
     [ ( tr_aggregate_id
@@ -366,6 +386,7 @@ instance Table TypesTable where
       , tr_bigint
       , tr_real
       , tr_double
+      , tr_text
       )
     | TypesRecord{..} <- events
     ]
@@ -379,8 +400,9 @@ instance Table TypesTable where
       , ", bigint"
       , ", real"
       , ", double"
+      , ", text"
       , ")"
-      ,"VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ,"VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
       ]
 
   withTable :: PostgresCreds -> (P.Connection -> TypesTable -> IO a) -> IO a
@@ -388,17 +410,23 @@ instance Table TypesTable where
     withPgTable schema creds $ \conn name -> f conn (TypesTable name)
     where
     schema = unwords
-        [ "( id               SERIAL"
-        , ", aggregate_id     INTEGER NOT NULL"
-        , ", sequence_number  INTEGER NOT NULL"
-        , ", smallint         SMALLINT"
-        , ", integer          INTEGER"
-        , ", bigint           BIGINT"
-        , ", real             REAL"
-        , ", double           DOUBLE PRECISION"
-        , ", smallserial      SMALLSERIAL"
-        , ", serial           SERIAL"
-        , ", bigserial        BIGSERIAL"
+        [ "( id                   SERIAL"
+        , ", aggregate_id         INTEGER NOT NULL"
+        , ", sequence_number      INTEGER NOT NULL"
+        , ", smallint             SMALLINT"
+        , ", integer              INTEGER"
+        , ", bigint               BIGINT"
+        , ", real                 REAL"
+        , ", double               DOUBLE PRECISION"
+        , ", smallserial          SMALLSERIAL"
+        , ", serial               SERIAL"
+        , ", bigserial            BIGSERIAL"
+        -- , ", character_varying_5  CHAR VARYING(5)"
+        -- , ", varchar_5            VARCHAR(5)"
+        -- , ", character_5          CHARACTER(5)"
+        -- , ", char_5               CHAR(5)"
+        -- , ", bpchar_5             BPCHAR(5)"
+        , ", text                 TEXT"
         , ", PRIMARY KEY (id)"
         , ", UNIQUE (aggregate_id, sequence_number)"
         , ")"
