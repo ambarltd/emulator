@@ -158,6 +158,10 @@ testPostgreSQL p = do
             forM_ byAggregateId $ \(a_id, seqs) ->
               annotate ("ordered (" <> show a_id <> ")") $
                 sort seqs `shouldBe` seqs
+
+    -- Test that column types are supported/unsupported by
+    -- creating database entries with the value and reporting
+    -- on the emulator's behaviour when trying to decode them.
     describe "decodes" $ do
       describe "Numeric" $ do
         supported "SMALLINT"         (1 :: Int)
@@ -227,9 +231,13 @@ testPostgreSQL p = do
           roundTrip "MOOD" ("ok" :: String) `shouldThrow` unsupportedType
 
         -- composite types are not supported.
-        it "unsupported COMPOSITE" $
+        it "unsupported - composit types" $
           withType "complex" "CREATE TYPE complex AS ( r DOUBLE PRECISION, i DOUBLE PRECISION )" $
           roundTrip "COMPLEX" ("( 1.0 , 1.0 )" :: String) `shouldThrow` unsupportedType
+
+        it "unsupported - domain types" $
+          withType "positive_int" "CREATE DOMAIN positive_int AS integer CHECK (VALUE > 0)" $
+          roundTrip "POSITIVE_INT" (10 :: Int) `shouldThrow` unsupportedType
 
       describe "Geometric" $ do
         unsupported "POINT"                      ("( 1,2 )" :: String)
@@ -287,6 +295,20 @@ testPostgreSQL p = do
         unsupported "TSTZMULTIRANGE"             ("{ [1999-01-08 12:05:06+00, 2000-01-08 12:05:06+00) }" :: String)
         unsupported "DATERANGE"                  ("[1999-01-08, 2000-01-08)" :: String)
         unsupported "DATEMULTIRANGE"             ("{ [1999-01-08, 2000-01-08) }" :: String)
+
+      describe "Object Identifier" $ do
+        unsupported "OID"                       (564182 :: Int)
+        unsupported "REGCLASS"                  ("pg_type" :: String)
+        unsupported "REGCOLLATION"              ("\"POSIX\"" :: String)
+        unsupported "REGCONFIG"                 ("english" :: String)
+        unsupported "REGDICTIONARY"             ("simple" :: String)
+        unsupported "REGNAMESPACE"              ("pg_catalog" :: String)
+        unsupported "REGOPERATOR"               ("*(integer,integer)" :: String)
+        unsupported "REGPROC"                   ("xml" :: String)
+        unsupported "REGPROCEDURE"              ("sum(int4)" :: String)
+        unsupported "REGROLE"                   ("postgres" :: String)
+        unsupported "REGTYPE"                   ("integer" :: String)
+        unsupported "PG_LSN"                    ("AAA/AAA" :: String)
   where
   with = with_ ()
 
