@@ -245,9 +245,21 @@ testPostgreSQL p = do
         unsupported "MACADDR8"                   ("08002b0102030405" :: String)
 
       describe "Bit String" $ do
-        unsupported "BIT"                          ("0" :: String)
-        unsupported "BIT(3)"                       ("111" :: String)
-        unsupported "BIT VARYING(5)"               ("111" :: String)
+        unsupported "BIT"                        ("0" :: String)
+        unsupported "BIT(3)"                     ("111" :: String)
+        unsupported "BIT VARYING(5)"             ("111" :: String)
+
+      describe "UUID Type" $ do
+        unsupported "UUID"                       ("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11" :: String)
+
+      describe "XML Type" $ do
+        unsupported "XML"                        ("<?xml version=\"1.0\"?><book><title>Manual</title></book>" :: String)
+
+      describe "JSON" $ do
+        -- JSON values are delivered to the client as a string.
+        supported "JSON"                         ("{\"one\":1}" :: String)
+        unsupported "JSONB"                      ("{ \"one\": 1 }" :: String)
+
   where
   with = with_ ()
 
