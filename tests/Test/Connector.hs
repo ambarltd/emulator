@@ -24,7 +24,7 @@ import Data.Scientific (Scientific)
 import Data.String (fromString)
 import qualified Data.Text as Text
 import Data.Word (Word16)
-import Control.Exception (bracket, throwIO, ErrorCall(..))
+import Control.Exception (bracket, throwIO, ErrorCall(..), fromException)
 import Control.Monad (void, replicateM, forM_)
 import System.Exit (ExitCode(..))
 import System.Process (readProcessWithExitCode)
@@ -34,7 +34,6 @@ import Test.Hspec
   , describe
   , shouldBe
   , shouldThrow
-  , anyException
   )
 import Test.Hspec.Expectations.Contrib (annotate)
 import qualified Database.PostgreSQL.Simple as P
@@ -45,7 +44,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import qualified Ambar.Emulator.Connector as Connector
 import Ambar.Emulator.Connector (partitioner, encoder)
 import Ambar.Emulator.Connector.Poll (Boundaries(..), mark, boundaries, cleanup)
-import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
+import Ambar.Emulator.Connector.Postgres (PostgreSQL(..), UnsupportedType(..))
 import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Record (Bytes(..))
@@ -192,7 +191,11 @@ testPostgreSQL p = do
   unsupported :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> Spec
   unsupported ty val =
     it ("unsupported " <> ty) $
-      roundTrip ty val `shouldThrow` anyException
+      roundTrip ty val `shouldThrow` unsupportedType
+    where
+    unsupportedType e
+      | Just (UnsupportedType _) <- fromException e = True
+      | otherwise = False
 
   supported :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> Spec
   supported ty val = it ty $ roundTrip ty val

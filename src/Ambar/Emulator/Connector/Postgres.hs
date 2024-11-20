@@ -1,6 +1,7 @@
 module Ambar.Emulator.Connector.Postgres
   ( PostgreSQL(..)
   , PostgreSQLState
+  , UnsupportedType(..)
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
