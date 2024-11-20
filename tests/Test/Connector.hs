@@ -226,6 +226,11 @@ testPostgreSQL p = do
           withType "MOOD" "CREATE TYPE MOOD AS ENUM ('sad', 'ok', 'happy')" $
           roundTrip "MOOD" ("ok" :: String) `shouldThrow` unsupportedType
 
+        -- composite types are not supported.
+        it "unsupported COMPOSITE" $
+          withType "complex" "CREATE TYPE complex AS ( r DOUBLE PRECISION, i DOUBLE PRECISION )" $
+          roundTrip "COMPLEX" ("( 1.0 , 1.0 )" :: String) `shouldThrow` unsupportedType
+
       describe "Geometric" $ do
         unsupported "POINT"                      ("( 1,2 )" :: String)
         unsupported "LINE"                       ("{ 1,2,3 }" :: String)
@@ -260,14 +265,13 @@ testPostgreSQL p = do
         supported "JSON"                         ("{\"one\":1}" :: String)
         unsupported "JSONB"                      ("{ \"one\": 1 }" :: String)
 
-      describe "ARRAY" $ do
+      describe "Arrays" $ do
         unsupported "INTEGER[]"                  ("{1,2,3}" :: String)
         unsupported "INTEGER ARRAY"              ("{1,2,3}" :: String)
         unsupported "INTEGER[3]"                 ("{1,2,3}" :: String)
         unsupported "INTEGER ARRAY[3]"           ("{1,2,3}" :: String)
         unsupported "INTEGER[][]"                ("{ {1,2,3}, {4,5,6} }" :: String)
         unsupported "INTEGER[3][3]"              ("{ {1,2,3}, {4,5,6} }" :: String)
-
   where
   with = with_ ()
 
