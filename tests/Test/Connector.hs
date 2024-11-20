@@ -226,6 +226,20 @@ testPostgreSQL p = do
       it "unsupported ENUM" $
         withType "MOOD" "CREATE TYPE MOOD AS ENUM ('sad', 'ok', 'happy')" $
         roundTrip "MOOD" ("ok" :: String) `shouldThrow` unsupportedType
+
+      -- Paths
+      unsupported "POINT"       ("( 1,2 )" :: String)
+      unsupported "LINE"        ("{ 1,2,3 }" :: String)
+      unsupported "LSEG"        ("[ (1,2), (3,4) ]" :: String)
+      unsupported "BOX"         ("(1,2), (3,4)" :: String)
+      unsupported "PATH"        ("[ (1,2), (3,4) ]" :: String)
+      unsupported "POLYGON"     ("( (1,2), (3,4) )" :: String)
+      unsupported "CIRCLE"      ("<(1,2), 3>" :: String)
+
+
+
+
+
   where
   with = with_ ()
 
@@ -248,6 +262,7 @@ testPostgreSQL p = do
   supported :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> Spec
   supported ty val = it ty $ roundTrip ty val
 
+  -- Write a value of a given type to a database table, then read it from the Topic.
   roundTrip :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> IO ()
   roundTrip ty val =
     with_ (PostgresType ty) (PartitionCount 1) $ \conn table topic connected -> do
