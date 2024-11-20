@@ -227,22 +227,27 @@ testPostgreSQL p = do
           roundTrip "MOOD" ("ok" :: String) `shouldThrow` unsupportedType
 
       describe "Geometric" $ do
-        unsupported "POINT"       ("( 1,2 )" :: String)
-        unsupported "LINE"        ("{ 1,2,3 }" :: String)
-        unsupported "LSEG"        ("[ (1,2), (3,4) ]" :: String)
-        unsupported "BOX"         ("(1,2), (3,4)" :: String)
-        unsupported "PATH"        ("[ (1,2), (3,4) ]" :: String)
-        unsupported "POLYGON"     ("( (1,2), (3,4) )" :: String)
-        unsupported "CIRCLE"      ("<(1,2), 3>" :: String)
+        unsupported "POINT"                      ("( 1,2 )" :: String)
+        unsupported "LINE"                       ("{ 1,2,3 }" :: String)
+        unsupported "LSEG"                       ("[ (1,2), (3,4) ]" :: String)
+        unsupported "BOX"                        ("(1,2), (3,4)" :: String)
+        unsupported "PATH"                       ("[ (1,2), (3,4) ]" :: String)
+        unsupported "POLYGON"                    ("( (1,2), (3,4) )" :: String)
+        unsupported "CIRCLE"                     ("<(1,2), 3>" :: String)
 
       describe "Network" $ do
-        unsupported "INET"       ("127.0.0.1" :: String)
-        unsupported "INET"       ("2001:0000:130F:0000:0000:09C0:876A:130B" :: String)
-        unsupported "CIDR"       ("::ffff:1.2.3.0/120" :: String)
-        unsupported "MACADDR"    ("08:00:2b:01:02:03" :: String)
-        unsupported "MACADDR"    ("08002b010203" :: String)
-        unsupported "MACADDR8"   ("08:00:2b:01:02:03:04:05" :: String)
-        unsupported "MACADDR8"   ("08002b0102030405" :: String)
+        unsupported "INET"                       ("127.0.0.1" :: String)
+        unsupported "INET"                       ("2001:0000:130F:0000:0000:09C0:876A:130B" :: String)
+        unsupported "CIDR"                       ("::ffff:1.2.3.0/120" :: String)
+        unsupported "MACADDR"                    ("08:00:2b:01:02:03" :: String)
+        unsupported "MACADDR"                    ("08002b010203" :: String)
+        unsupported "MACADDR8"                   ("08:00:2b:01:02:03:04:05" :: String)
+        unsupported "MACADDR8"                   ("08002b0102030405" :: String)
+
+      describe "Bit String" $ do
+        unsupported "BIT"                          ("0" :: String)
+        unsupported "BIT(3)"                       ("111" :: String)
+        unsupported "BIT VARYING(5)"               ("111" :: String)
   where
   with = with_ ()
 
