@@ -7,6 +7,7 @@ import qualified Data.Aeson as Json
 import qualified Data.Aeson.Types as Json
 import Data.Base64.Types (extractBase64)
 import Data.Binary (Binary)
+import qualified Data.Binary as Binary
 import Data.Binary.Instances.Aeson ()
 import Data.ByteString.Base64 (decodeBase64Untyped, encodeBase64)
 import Data.ByteString (ByteString)
@@ -18,6 +19,8 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
+import Data.Time (UTCTime)
+import Data.Time.Format.ISO8601 (iso8601ParseM)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Prettyprinter
@@ -97,9 +100,28 @@ data Value
   | Binary Bytes
   | Json Text Json.Value
     -- ^ a Json value contains the original text provided by the client.
-  | DateTime Text
+  | DateTime TimeStamp
   | Null
   deriving (Show, Generic, Eq, Hashable)
+
+-- | A timestamp value with the original timestamp string value.
+data TimeStamp = TimeStamp Text UTCTime
+  deriving (Eq, Hashable)
+  deriving stock (Show, Generic)
+
+instance Binary TimeStamp where
+  put (TimeStamp txt _) = Binary.put txt
+  get = do
+    txt <- Binary.get
+    time <- iso8601ParseM (Text.unpack txt)
+    return $ TimeStamp txt time
+
+instance ToJSON TimeStamp where
+  toJSON (TimeStamp txt _) = toJSON txt
+
+instance FromJSON TimeStamp where
+  parseJSON = Json.withText "TimeStamp" $ \txt ->
+    TimeStamp txt <$> iso8601ParseM (Text.unpack txt)
 
 instance Binary Value
 

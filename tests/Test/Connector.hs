@@ -185,6 +185,41 @@ testPostgreSQL p = do
       -- Binary
       supported "BYTEA"            (BytesRow (Bytes "AAAA"))
 
+      -- Dates
+      unsupported "DATE"                         ("1999-01-08" :: String)
+      unsupported "DATE"                         ("January 8, 1999" :: String)
+
+      -- Time
+      unsupported "TIME"                         ("04:05:06.789" :: String)
+      unsupported "TIME"                         ("04:05:06.789" :: String)
+      unsupported "TIME"                         ("04:05 PM" :: String)
+      unsupported "TIME"                         ("04:05:06 PST" :: String)
+      -- time zone ignored
+      unsupported "TIME"                         ("04:05:06 PST" :: String)
+      -- date is taken into account for daylight savings rules.
+      unsupported "TIME"                         ("2003-04-12 04:05:06 America/New_York" :: String)
+      unsupported "TIME(0)"                      ("04:05" :: String)
+      unsupported "TIME WITHOUT TIME ZONE"       ("04:05 PM" :: String)
+      unsupported "TIMETZ"                       ("04:05:06 PST" :: String)
+      unsupported "TIME WITH TIME ZONE"          ("04:05:06 PST" :: String)
+      unsupported "TIME(0) WITH TIME ZONE"       ("04:05:06 PST" :: String)
+
+      -- Timestamps
+      supported "TIMESTAMP"                    ("1999-01-08 04:05:06" :: String)
+      supported "TIMESTAMP"                    ("1999-01-08 04:05:06" :: String)
+      supported "TIMESTAMP(0)"                 ("1999-01-08 04:05:06" :: String)
+      supported "TIMESTAMP WITHOUT TIME ZONE"  ("1999-01-08 04:05:06" :: String)
+      supported "TIMESTAMPTZ"                  ("1999-01-08 12:05:06+00" :: String)
+      supported "TIMESTAMPTZ(0)"               ("1999-01-08 04:05:06+00" :: String)
+      supported "TIMESTAMP WITH TIME ZONE"     ("1999-01-08 04:05:06+00" :: String)
+
+      -- supported "INTERVAL"                     ()
+      -- supported "INTERVAL(0)"                  ()
+      -- supported "INTERVAL YEAR"                ()
+
+
+
+
   where
   with = with_ ()
 
