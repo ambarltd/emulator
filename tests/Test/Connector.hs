@@ -167,7 +167,7 @@ testPostgreSQL p = do
         supported "SMALLINT"         (1 :: Int)
         supported "INTEGER"          (1 :: Int)
         supported "BIGINT"           (1 :: Int)
-        supported "REAL"             (1 :: Int)
+        supported "REAL"             (1.0 :: Double)
         supported "DOUBLE PRECISION" (1.5 :: Double)
         supported "SMALLSERIAL"      (1 :: Int)
         supported "SERIAL"           (1 :: Int)
