@@ -272,6 +272,21 @@ testPostgreSQL p = do
         unsupported "INTEGER ARRAY[3]"           ("{1,2,3}" :: String)
         unsupported "INTEGER[][]"                ("{ {1,2,3}, {4,5,6} }" :: String)
         unsupported "INTEGER[3][3]"              ("{ {1,2,3}, {4,5,6} }" :: String)
+
+      describe "Ranges" $ do
+        unsupported "INT4RANGE"                  ("[1,3)" :: String)
+        unsupported "INT4RANGE"                  ("empty" :: String)
+        unsupported "INT4MULTIRANGE"             ("{ [1,3) }" :: String)
+        unsupported "INT8RANGE"                  ("[1,3)" :: String)
+        unsupported "INT8MULTIRANGE"             ("{ [1,3) }" :: String)
+        unsupported "NUMRANGE"                   ("[ 1.0, 3.0 )" :: String)
+        unsupported "NUMMULTIRANGE"              ("{ [1.0, 3.0 ) }" :: String)
+        unsupported "TSRANGE"                    ("[1999-01-08 04:05:06, 2000-01-08 04:05:06)" :: String)
+        unsupported "TSMULTIRANGE"               ("{ [1999-01-08 04:05:06, 2000-01-08 04:05:06) }" :: String)
+        unsupported "TSTZRANGE"                  ("[1999-01-08 12:05:06+00, 2000-01-08 12:05:06+00)" :: String)
+        unsupported "TSTZMULTIRANGE"             ("{ [1999-01-08 12:05:06+00, 2000-01-08 12:05:06+00) }" :: String)
+        unsupported "DATERANGE"                  ("[1999-01-08, 2000-01-08)" :: String)
+        unsupported "DATEMULTIRANGE"             ("{ [1999-01-08, 2000-01-08) }" :: String)
   where
   with = with_ ()
 
