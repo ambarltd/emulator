@@ -4,6 +4,7 @@ module Test.Connector
   , PostgresCreds
   , withPostgresSQL
   , withEventsTable
+  , withConnection
   , mkPostgreSQL
   , Event(..)
   , Table(..)
@@ -174,35 +175,35 @@ testPostgreSQL p = do
       unsupported "MONEY" (1.5 :: Double)
 
       -- Strings
-      supported "TEXT"                   ("tryme" :: String)
-      unsupported "CHARACTER VARYING(5)" ("tryme" :: String)
-      unsupported "VARCHAR(5)"           ("tryme" :: String)
-      unsupported "CHARACTER(5)"         ("tryme" :: String)
-      unsupported "CHAR(5)"              ("tryme" :: String)
-      unsupported "BPCHAR(5)"            ("tryme" :: String)
-      unsupported "BPCHAR"               ("tryme" :: String)
+      supported "TEXT"                         ("tryme" :: String)
+      unsupported "CHARACTER VARYING(5)"       ("tryme" :: String)
+      unsupported "VARCHAR(5)"                 ("tryme" :: String)
+      unsupported "CHARACTER(5)"               ("tryme" :: String)
+      unsupported "CHAR(5)"                    ("tryme" :: String)
+      unsupported "BPCHAR(5)"                  ("tryme" :: String)
+      unsupported "BPCHAR"                     ("tryme" :: String)
 
       -- Binary
-      supported "BYTEA"            (BytesRow (Bytes "AAAA"))
+      supported "BYTEA"                        (BytesRow (Bytes "AAAA"))
 
       -- Dates
-      unsupported "DATE"                         ("1999-01-08" :: String)
-      unsupported "DATE"                         ("January 8, 1999" :: String)
+      unsupported "DATE"                       ("1999-01-08" :: String)
+      unsupported "DATE"                       ("January 8, 1999" :: String)
 
       -- Time
-      unsupported "TIME"                         ("04:05:06.789" :: String)
-      unsupported "TIME"                         ("04:05:06.789" :: String)
-      unsupported "TIME"                         ("04:05 PM" :: String)
-      unsupported "TIME"                         ("04:05:06 PST" :: String)
+      unsupported "TIME"                       ("04:05:06.789" :: String)
+      unsupported "TIME"                       ("04:05:06.789" :: String)
+      unsupported "TIME"                       ("04:05 PM" :: String)
+      unsupported "TIME"                       ("04:05:06 PST" :: String)
       -- time zone ignored
-      unsupported "TIME"                         ("04:05:06 PST" :: String)
+      unsupported "TIME"                       ("04:05:06 PST" :: String)
       -- date is taken into account for daylight savings rules.
-      unsupported "TIME"                         ("2003-04-12 04:05:06 America/New_York" :: String)
-      unsupported "TIME(0)"                      ("04:05" :: String)
-      unsupported "TIME WITHOUT TIME ZONE"       ("04:05 PM" :: String)
-      unsupported "TIMETZ"                       ("04:05:06 PST" :: String)
-      unsupported "TIME WITH TIME ZONE"          ("04:05:06 PST" :: String)
-      unsupported "TIME(0) WITH TIME ZONE"       ("04:05:06 PST" :: String)
+      unsupported "TIME"                       ("2003-04-12 04:05:06 America/New_York" :: String)
+      unsupported "TIME(0)"                    ("04:05" :: String)
+      unsupported "TIME WITHOUT TIME ZONE"     ("04:05 PM" :: String)
+      unsupported "TIMETZ"                     ("04:05:06 PST" :: String)
+      unsupported "TIME WITH TIME ZONE"        ("04:05:06 PST" :: String)
+      unsupported "TIME(0) WITH TIME ZONE"     ("04:05:06 PST" :: String)
 
       -- Timestamps
       supported "TIMESTAMP"                    ("1999-01-08 04:05:06" :: String)
@@ -213,24 +214,36 @@ testPostgreSQL p = do
       supported "TIMESTAMPTZ(0)"               ("1999-01-08 04:05:06+00" :: String)
       supported "TIMESTAMP WITH TIME ZONE"     ("1999-01-08 04:05:06+00" :: String)
 
-      -- supported "INTERVAL"                     ()
-      -- supported "INTERVAL(0)"                  ()
-      -- supported "INTERVAL YEAR"                ()
+      unsupported "INTERVAL"                   ("3 years 3 mons 700 days 133:17:36.789" :: String)
+      unsupported "INTERVAL(0)"                ("3 years 3 mons 700 days 133:17:36.789" :: String)
+      unsupported "INTERVAL YEAR"              ("3 years" :: String)
 
+      -- Boolean
+      supported "BOOLEAN"                      True
 
-
-
+      -- Enumerations
+      -- Custom types are not supported.
+      it "unsupported ENUM" $
+        withType "MOOD" "CREATE TYPE MOOD AS ENUM ('sad', 'ok', 'happy')" $
+        roundTrip "MOOD" ("ok" :: String) `shouldThrow` unsupportedType
   where
   with = with_ ()
+
+  withType ty definition act =
+    OnDemand.with p $ \creds ->
+    withConnection creds $ \conn -> do
+      let create = P.execute_ conn definition
+          destroy _ = P.execute_ conn $ "DROP TYPE " <> ty
+      bracket create destroy (const act)
 
   unsupported :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> Spec
   unsupported ty val =
     it ("unsupported " <> ty) $
       roundTrip ty val `shouldThrow` unsupportedType
-    where
-    unsupportedType e
-      | Just (UnsupportedType _) <- fromException e = True
-      | otherwise = False
+
+  unsupportedType e
+    | Just (UnsupportedType _) <- fromException e = True
+    | otherwise = False
 
   supported :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> Spec
   supported ty val = it ty $ roundTrip ty val
@@ -240,7 +253,7 @@ testPostgreSQL p = do
     with_ (PostgresType ty) (PartitionCount 1) $ \conn table topic connected -> do
     let record = TEntry 1 1 1 val
     insert conn table [record]
-    connected $ deadline (seconds 1) $
+    connected $ deadline (seconds 1) $ do
       Topic.withConsumer topic group $ \consumer -> do
         (entry, _) <- readEntry consumer
         entry `shouldBe` record
@@ -253,7 +266,8 @@ testPostgreSQL p = do
     -> IO a
   with_ conf partitions f =
     OnDemand.with p $ \creds ->                                    -- load db
-    withTable conf creds $ \conn table ->                          -- create events table
+    withConnection creds $ \conn ->
+    withTable conf conn $ \table ->                                -- create events table
     withFileTopic partitions $ \topic ->                           -- create topic
     let config = mkPostgreSQL creds table in
     Topic.withProducer topic partitioner encoder $ \producer -> do -- create topic producer
@@ -312,7 +326,7 @@ instance Aeson.FromJSON Event where
 class Table a where
   type Entry a = b | b -> a
   type Config a = b | b -> a
-  withTable :: Config a -> PostgresCreds -> (P.Connection -> a -> IO b) -> IO b
+  withTable :: Config a -> P.Connection -> (a -> IO b) -> IO b
   tableCols :: a -> [Text.Text]
   tableName :: a -> String
   -- Mock events to be added to the database.
@@ -357,8 +371,8 @@ instance P.ToField a => Table (TTable a) where
       ,"(aggregate_id, sequence_number, value)"
       ,"VALUES (?, ?, ?)"
       ]
-  withTable (PostgresType ty) creds f =
-    withPgTable schema creds $ \conn name -> f conn (TTable name ty)
+  withTable (PostgresType ty) conn f =
+    withPgTable conn schema $ \name -> f (TTable name ty)
     where
     schema = unwords
         [ "( id               SERIAL"
@@ -393,8 +407,8 @@ instance Table EventsTable where
       ,"VALUES ( ?, ? )"
       ]
 
-  withTable _ creds f =
-    withPgTable schema creds $ \conn name -> f conn (EventsTable name)
+  withTable _ conn f =
+    withPgTable conn schema $ \name -> f (EventsTable name)
     where
     schema = unwords
         [ "( id               SERIAL"
@@ -405,7 +419,7 @@ instance Table EventsTable where
         , ")"
         ]
 
-withEventsTable :: PostgresCreds -> (P.Connection -> EventsTable -> IO a) -> IO a
+withEventsTable :: P.Connection -> (EventsTable -> IO a) -> IO a
 withEventsTable = withTable ()
 
 {-# NOINLINE tableNumber #-}
@@ -423,31 +437,34 @@ instance P.ToField BytesRow where
 
 type Schema = String
 
--- | Creates a new table on every invocation.
-withPgTable :: Schema -> PostgresCreds -> (P.Connection -> String -> IO a) -> IO a
-withPgTable schema creds f = bracket create destroy $ uncurry f
-  where
-  execute conn q = void $ P.execute_ conn (fromString q)
-  create = do
-    name <- takeName
-    conn <- connect
-    execute conn $ unwords [ "CREATE TABLE IF NOT EXISTS", name, schema ]
-    return (conn, name)
-
-  destroy (conn, name) =
-    execute conn $ "DROP TABLE " <> name
-
-  takeName = do
-    number <- modifyMVar tableNumber $ \n -> return (n + 1, n)
-    return $ "table_" <> show number
-
-  connect = P.connect P.ConnectInfo
+withConnection :: PostgresCreds -> (P.Connection -> IO a) -> IO a
+withConnection creds act = do
+  conn <- P.connect P.ConnectInfo
     { P.connectUser = p_username creds
     , P.connectPassword = p_password creds
     , P.connectDatabase = p_database creds
     , P.connectHost = p_host creds
     , P.connectPort = p_port creds
     }
+  act conn
+
+
+-- | Creates a new table on every invocation.
+withPgTable :: P.Connection -> Schema -> (String -> IO a) -> IO a
+withPgTable conn schema f = bracket create destroy f
+  where
+  execute q = void $ P.execute_ conn (fromString q)
+  create = do
+    name <- takeName
+    execute $ unwords [ "CREATE TABLE IF NOT EXISTS", name, schema ]
+    return name
+
+  destroy name =
+    execute $ "DROP TABLE " <> name
+
+  takeName = do
+    number <- modifyMVar tableNumber $ \n -> return (n + 1, n)
+    return $ "table_" <> show number
 
 -- | Create a PostgreSQL database and delete it upon completion.
 withPostgresSQL :: (PostgresCreds -> IO a) -> IO a
