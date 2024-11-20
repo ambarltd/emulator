@@ -159,87 +159,90 @@ testPostgreSQL p = do
               annotate ("ordered (" <> show a_id <> ")") $
                 sort seqs `shouldBe` seqs
     describe "decodes" $ do
-      -- Numeric
-      supported "SMALLINT"         (1 :: Int)
-      supported "INTEGER"          (1 :: Int)
-      supported "BIGINT"           (1 :: Int)
-      supported "REAL"             (1 :: Int)
-      supported "DOUBLE PRECISION" (1.5 :: Double)
-      supported "SMALLSERIAL"      (1 :: Int)
-      supported "SERIAL"           (1 :: Int)
-      supported "BIGSERIAL"        (1 :: Int)
-      unsupported "DECIMAL"        (1.5 :: Scientific)
-      unsupported "NUMERIC"        (1.5 :: Scientific)
+      describe "Numeric" $ do
+        supported "SMALLINT"         (1 :: Int)
+        supported "INTEGER"          (1 :: Int)
+        supported "BIGINT"           (1 :: Int)
+        supported "REAL"             (1 :: Int)
+        supported "DOUBLE PRECISION" (1.5 :: Double)
+        supported "SMALLSERIAL"      (1 :: Int)
+        supported "SERIAL"           (1 :: Int)
+        supported "BIGSERIAL"        (1 :: Int)
+        unsupported "DECIMAL"        (1.5 :: Scientific)
+        unsupported "NUMERIC"        (1.5 :: Scientific)
 
-      -- Monetary
-      unsupported "MONEY" (1.5 :: Double)
+      describe "Monetary" $ do
+        unsupported "MONEY" (1.5 :: Double)
 
-      -- Strings
-      supported "TEXT"                         ("tryme" :: String)
-      unsupported "CHARACTER VARYING(5)"       ("tryme" :: String)
-      unsupported "VARCHAR(5)"                 ("tryme" :: String)
-      unsupported "CHARACTER(5)"               ("tryme" :: String)
-      unsupported "CHAR(5)"                    ("tryme" :: String)
-      unsupported "BPCHAR(5)"                  ("tryme" :: String)
-      unsupported "BPCHAR"                     ("tryme" :: String)
+      describe "Strings" $ do
+        supported "TEXT"                         ("tryme" :: String)
+        unsupported "CHARACTER VARYING(5)"       ("tryme" :: String)
+        unsupported "VARCHAR(5)"                 ("tryme" :: String)
+        unsupported "CHARACTER(5)"               ("tryme" :: String)
+        unsupported "CHAR(5)"                    ("tryme" :: String)
+        unsupported "BPCHAR(5)"                  ("tryme" :: String)
+        unsupported "BPCHAR"                     ("tryme" :: String)
 
-      -- Binary
-      supported "BYTEA"                        (BytesRow (Bytes "AAAA"))
+      describe "Binary" $ do
+        supported "BYTEA"                        (BytesRow (Bytes "AAAA"))
 
-      -- Dates
-      unsupported "DATE"                       ("1999-01-08" :: String)
-      unsupported "DATE"                       ("January 8, 1999" :: String)
+      describe "Time" $ do
+        unsupported "DATE"                       ("1999-01-08" :: String)
+        unsupported "DATE"                       ("January 8, 1999" :: String)
 
-      -- Time
-      unsupported "TIME"                       ("04:05:06.789" :: String)
-      unsupported "TIME"                       ("04:05:06.789" :: String)
-      unsupported "TIME"                       ("04:05 PM" :: String)
-      unsupported "TIME"                       ("04:05:06 PST" :: String)
-      -- time zone ignored
-      unsupported "TIME"                       ("04:05:06 PST" :: String)
-      -- date is taken into account for daylight savings rules.
-      unsupported "TIME"                       ("2003-04-12 04:05:06 America/New_York" :: String)
-      unsupported "TIME(0)"                    ("04:05" :: String)
-      unsupported "TIME WITHOUT TIME ZONE"     ("04:05 PM" :: String)
-      unsupported "TIMETZ"                     ("04:05:06 PST" :: String)
-      unsupported "TIME WITH TIME ZONE"        ("04:05:06 PST" :: String)
-      unsupported "TIME(0) WITH TIME ZONE"     ("04:05:06 PST" :: String)
+        -- Time
+        unsupported "TIME"                       ("04:05:06.789" :: String)
+        unsupported "TIME"                       ("04:05:06.789" :: String)
+        unsupported "TIME"                       ("04:05 PM" :: String)
+        unsupported "TIME"                       ("04:05:06 PST" :: String)
+        -- time zone ignored
+        unsupported "TIME"                       ("04:05:06 PST" :: String)
+        -- date is taken into account for daylight savings rules.
+        unsupported "TIME"                       ("2003-04-12 04:05:06 America/New_York" :: String)
+        unsupported "TIME(0)"                    ("04:05" :: String)
+        unsupported "TIME WITHOUT TIME ZONE"     ("04:05 PM" :: String)
+        unsupported "TIMETZ"                     ("04:05:06 PST" :: String)
+        unsupported "TIME WITH TIME ZONE"        ("04:05:06 PST" :: String)
+        unsupported "TIME(0) WITH TIME ZONE"     ("04:05:06 PST" :: String)
 
-      -- Timestamps
-      supported "TIMESTAMP"                    ("1999-01-08 04:05:06" :: String)
-      supported "TIMESTAMP"                    ("1999-01-08 04:05:06" :: String)
-      supported "TIMESTAMP(0)"                 ("1999-01-08 04:05:06" :: String)
-      supported "TIMESTAMP WITHOUT TIME ZONE"  ("1999-01-08 04:05:06" :: String)
-      supported "TIMESTAMPTZ"                  ("1999-01-08 12:05:06+00" :: String)
-      supported "TIMESTAMPTZ(0)"               ("1999-01-08 04:05:06+00" :: String)
-      supported "TIMESTAMP WITH TIME ZONE"     ("1999-01-08 04:05:06+00" :: String)
+        -- Timestamps
+        supported "TIMESTAMP"                    ("1999-01-08 04:05:06" :: String)
+        supported "TIMESTAMP"                    ("1999-01-08 04:05:06" :: String)
+        supported "TIMESTAMP(0)"                 ("1999-01-08 04:05:06" :: String)
+        supported "TIMESTAMP WITHOUT TIME ZONE"  ("1999-01-08 04:05:06" :: String)
+        supported "TIMESTAMPTZ"                  ("1999-01-08 12:05:06+00" :: String)
+        supported "TIMESTAMPTZ(0)"               ("1999-01-08 04:05:06+00" :: String)
+        supported "TIMESTAMP WITH TIME ZONE"     ("1999-01-08 04:05:06+00" :: String)
 
-      unsupported "INTERVAL"                   ("3 years 3 mons 700 days 133:17:36.789" :: String)
-      unsupported "INTERVAL(0)"                ("3 years 3 mons 700 days 133:17:36.789" :: String)
-      unsupported "INTERVAL YEAR"              ("3 years" :: String)
+        unsupported "INTERVAL"                   ("3 years 3 mons 700 days 133:17:36.789" :: String)
+        unsupported "INTERVAL(0)"                ("3 years 3 mons 700 days 133:17:36.789" :: String)
+        unsupported "INTERVAL YEAR"              ("3 years" :: String)
 
-      -- Boolean
-      supported "BOOLEAN"                      True
+      describe "Boolean" $ do
+        supported "BOOLEAN"                      True
 
-      -- Enumerations
-      -- Custom types are not supported.
-      it "unsupported ENUM" $
-        withType "MOOD" "CREATE TYPE MOOD AS ENUM ('sad', 'ok', 'happy')" $
-        roundTrip "MOOD" ("ok" :: String) `shouldThrow` unsupportedType
+      describe "Custom" $ do -- Custom types are not supported.
+        it "unsupported ENUM" $
+          withType "MOOD" "CREATE TYPE MOOD AS ENUM ('sad', 'ok', 'happy')" $
+          roundTrip "MOOD" ("ok" :: String) `shouldThrow` unsupportedType
 
-      -- Paths
-      unsupported "POINT"       ("( 1,2 )" :: String)
-      unsupported "LINE"        ("{ 1,2,3 }" :: String)
-      unsupported "LSEG"        ("[ (1,2), (3,4) ]" :: String)
-      unsupported "BOX"         ("(1,2), (3,4)" :: String)
-      unsupported "PATH"        ("[ (1,2), (3,4) ]" :: String)
-      unsupported "POLYGON"     ("( (1,2), (3,4) )" :: String)
-      unsupported "CIRCLE"      ("<(1,2), 3>" :: String)
+      describe "Geometric" $ do
+        unsupported "POINT"       ("( 1,2 )" :: String)
+        unsupported "LINE"        ("{ 1,2,3 }" :: String)
+        unsupported "LSEG"        ("[ (1,2), (3,4) ]" :: String)
+        unsupported "BOX"         ("(1,2), (3,4)" :: String)
+        unsupported "PATH"        ("[ (1,2), (3,4) ]" :: String)
+        unsupported "POLYGON"     ("( (1,2), (3,4) )" :: String)
+        unsupported "CIRCLE"      ("<(1,2), 3>" :: String)
 
-
-
-
-
+      describe "Network" $ do
+        unsupported "INET"       ("127.0.0.1" :: String)
+        unsupported "INET"       ("2001:0000:130F:0000:0000:09C0:876A:130B" :: String)
+        unsupported "CIDR"       ("::ffff:1.2.3.0/120" :: String)
+        unsupported "MACADDR"    ("08:00:2b:01:02:03" :: String)
+        unsupported "MACADDR"    ("08002b010203" :: String)
+        unsupported "MACADDR8"   ("08:00:2b:01:02:03:04:05" :: String)
+        unsupported "MACADDR8"   ("08002b0102030405" :: String)
   where
   with = with_ ()
 
