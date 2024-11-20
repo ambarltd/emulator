@@ -1,12 +1,14 @@
 module Ambar.Emulator.Connector.Postgres
   ( PostgreSQL(..)
   , PostgreSQLState
+  , UnsupportedType(..)
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
 import Control.Exception (Exception, bracket, throwIO, ErrorCall(..))
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
+import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LB
 import Data.Default (Default(..))
 import Data.List ((\\))
@@ -14,10 +16,10 @@ import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
 import Data.String (fromString)
+import Data.Time.LocalTime (localTimeToUTC, utc)
 import Data.Text (Text)
 import qualified Data.Text as Text
-import qualified Data.Text.Lazy as Text (toStrict)
-import qualified Data.Text.Lazy.Encoding as Text (decodeUtf8)
+import qualified Data.Text.Encoding as Text (decodeUtf8)
 import Data.Void (Void)
 import Data.Word (Word16)
 import qualified Database.PostgreSQL.Simple as P
@@ -33,7 +35,7 @@ import qualified Ambar.Emulator.Connector.Poll as Poll
 import qualified Ambar.Emulator.Connector as C
 import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream)
 import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
-import Ambar.Record (Record(..), Value(..), Bytes(..))
+import Ambar.Record (Record(..), Value(..), Bytes(..), TimeStamp(..))
 import qualified Ambar.Record.Encoding as Encoding
 import Utils.Async (withAsyncThrow)
 import Utils.Delay (Duration, millis, seconds)
@@ -227,12 +229,36 @@ mkParser cols (TableSchema schema) = Record . zip cols <$> traverse (parser . ge
     PgJson -> do
       mvalue <- P.field
       return $ flip fmap mvalue $ \value ->
-        let txt = Text.toStrict $ Text.decodeUtf8 $ (Aeson.encode value) in
+        let txt = Text.decodeUtf8 $ LB.toStrict $ Aeson.encode value in
         Json txt value
     PgBytea -> fmap (Binary . Bytes . P.fromBinary) <$> P.field
-    PgTimestamp -> fmap DateTime <$> P.field
-    PgTimestamptz -> fmap DateTime <$> P.field
+    PgTimestamp -> fmap DateTime <$> P.fieldWith (P.optionalField parserTimeStamp)
+    PgTimestamptz -> fmap DateTime <$> P.fieldWith (P.optionalField parserTimeStampTZ)
     PgText -> fmap String <$> P.field
+
+parserTimeStampTZ :: P.FieldParser TimeStamp
+parserTimeStampTZ = parser
+  where
+  parser :: P.Field -> Maybe ByteString -> P.Conversion TimeStamp
+  parser field mbs =
+    case mbs of
+      Nothing -> P.returnError P.UnexpectedNull field ""
+      Just bs -> do
+        let txt = Text.decodeUtf8 bs
+        utcTime <- P.fromField field mbs
+        return $ TimeStamp txt utcTime
+
+parserTimeStamp :: P.FieldParser TimeStamp
+parserTimeStamp = parser
+  where
+  parser :: P.Field -> Maybe ByteString -> P.Conversion TimeStamp
+  parser field mbs =
+    case mbs of
+      Nothing -> P.returnError P.UnexpectedNull field ""
+      Just bs -> do
+        let txt = Text.decodeUtf8 bs
+        localTime <- P.fromField field mbs
+        return $ TimeStamp txt (localTimeToUTC utc localTime)
 
 entryId :: Record -> EntryId
 entryId record = case serialValue record of

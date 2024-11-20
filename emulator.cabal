@@ -124,7 +124,9 @@ test-suite emulator-tests
         , QuickCheck
         , stm
         , string-interpolate
+        , scientific
         , temporary
+        , time
         , text
         , unordered-containers
 
