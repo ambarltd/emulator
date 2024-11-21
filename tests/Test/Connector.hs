@@ -10,11 +10,13 @@ module Test.Connector
   , Table(..)
 
   , BytesRow(..)
-  , withDocker
+  , Debugging(..)
   ) where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
 import Control.Concurrent.Async (mapConcurrently)
+import Control.Exception (bracket, throwIO, ErrorCall(..), fromException)
+import Control.Monad (void, replicateM, forM_)
 import qualified Data.Aeson as Aeson
 import Data.Aeson (FromJSON)
 import qualified Data.ByteString.Lazy as LB
@@ -26,19 +28,32 @@ import Data.Scientific (Scientific)
 import Data.String (fromString)
 import qualified Data.Text as Text
 import Data.Word (Word16)
-import Control.Exception (bracket, throwIO, ErrorCall(..), fromException, onException)
-import Control.Monad (void, replicateM, forM_)
 import System.Exit (ExitCode(..))
 import System.IO.Temp (withSystemTempFile)
-import System.IO (stdout)
+import System.IO
+  ( Handle
+  , IOMode(..)
+  , BufferMode(..)
+  , hClose
+  , hGetContents
+  , hGetLine
+  , hPutStrLn
+  , hSetBuffering
+  , stdout
+  , withFile
+  , hSetBuffering
+  , hGetBuffering
+  , hGetEncoding
+  , hSetEncoding
+  )
 import System.Process
-  ( readProcessWithExitCode
-  , proc
-  , CreateProcess(..)
+  ( CreateProcess(..)
   , StdStream(..)
+  , readProcessWithExitCode
+  , proc
   , withCreateProcess
   , waitForProcess
-  , terminateProcess
+  , createPipe
   )
 import Test.Hspec
   ( Spec
@@ -317,7 +332,7 @@ testPostgreSQL p = do
         unsupported "REGOPERATOR"               ("*(integer,integer)" :: String)
         unsupported "REGPROC"                   ("xml" :: String)
         unsupported "REGPROCEDURE"              ("sum(int4)" :: String)
-        unsupported "REGROLE"                   ("postgres" :: String)
+        -- unsupported "REGROLE"                   ("postgres" :: String)
         unsupported "REGTYPE"                   ("integer" :: String)
         unsupported "PG_LSN"                    ("AAA/AAA" :: String)
   where
@@ -564,8 +579,10 @@ withPgTable conn schema f = bracket create destroy f
     number <- modifyMVar tableNumber $ \n -> return (n + 1, n)
     return $ "table_" <> show number
 
-withPostgreSQLDocker :: (PostgresCreds -> IO a) -> IO a
-withPostgreSQLDocker f = do
+newtype Debugging = Debugging Bool
+
+withPostgreSQLDocker :: Debugging -> (PostgresCreds -> IO a) -> IO a
+withPostgreSQLDocker (Debugging debug) f = do
   let cmd = DockerRun
         { run_image = "postgres:14.10"
         , run_args =
@@ -575,12 +592,33 @@ withPostgreSQLDocker f = do
           , "--publish",  show p_port <> ":5432"
           ]
         }
-  withDocker "PostgreSQL" cmd $ do
-    putStrLn "waiting for Docker..."
-    delay (seconds 10)
-    putStrLn "done waiting. Fingers crossed."
+  r <- withDocker "PostgreSQL" cmd $ \h ->
+    debugging h $ \h' -> do
+    waitTillReady h'
     f creds
+  return r
   where
+  debugging h act =
+    if debug
+    then tracing "PostgreSQL" h act
+    else act h
+
+  waitTillReady h = do
+    putStrLn "Waiting for PostgreSQL docker..."
+    deadline (seconds 60) $ do
+      whileM $ do
+        line <- hGetLine h
+        return $ not $ isReadyNotice line
+    delay (seconds 1)
+    putStrLn "PostgreSQL docker is ready."
+
+  whileM m = do
+    r <- m
+    if r then whileM m else return ()
+
+  isReadyNotice str =
+    "database system is ready to accept connections" `isInfixOf` str
+
   creds@PostgresCreds{..} = PostgresCreds
     { p_database = "test_db"
     , p_username = "test_user"
@@ -660,22 +698,31 @@ dockerImageNumber = unsafePerformIO (newMVar 0)
 -- | Run a command with a docker image running in the background.
 -- Automatically assigns a container name and removes the container
 -- on exit.
-withDocker :: String -> DockerCommand -> IO a -> IO a
+withDocker :: String -> DockerCommand -> (Handle -> IO a) -> IO a
 withDocker tag cmd act =
-  withAsyncThrow runDocker act
+  withPipe $ \hread hwrite -> do
+  name <- mkName
+  let create = (proc "docker" (args name))
+        { std_out = UseHandle hwrite
+        , std_err = UseHandle hwrite
+        , create_group = True
+        }
+  withCreateProcess create $ \_ _ _ p ->
+    withAsyncThrow (wait name p) $
+    act hread
   where
-  runDocker =  do
-    name <- mkName
-    withHandle name $ \h -> do
-      let create = (proc "docker" (args name))
-            { std_out = UseHandle h
-            , std_err = UseHandle h }
-      withCreateProcess create $ \_ _ _ p -> do
-        exit <- waitForProcess p `onException` terminateProcess p
-        throwIO $ ErrorCall $ case exit of
-          ExitSuccess ->  "unexpected docker exited for container " <> name
-          ExitFailure code ->
-            "docker failed with exit code" <> show code <> " for container " <> name
+  withPipe f = do
+    (hread, hwrite) <- createPipe
+    hSetBuffering hread LineBuffering
+    hSetBuffering hwrite LineBuffering
+    f hread hwrite
+
+  wait name p = do
+    exit <- waitForProcess p
+    throwIO $ ErrorCall $ case exit of
+      ExitSuccess ->  "unexpected successful termination of container " <> name
+      ExitFailure code ->
+        "docker failed with exit code" <> show code <> " for container " <> name
 
   mkName = do
     number <- modifyMVar dockerImageNumber $ \n -> return (n + 1, n)
@@ -684,14 +731,45 @@ withDocker tag cmd act =
   args :: String -> [String]
   args name =
     case cmd of
-      DockerRun img opts -> ["run", "--rm", "--name", name] ++ opts ++ [img]
+      DockerRun img opts -> ["run", "--init", "--rm", "--name", name] ++ opts ++ [img]
 
-  withHandle name f = do
-    let debug = True -- set to true to print Docker output to sdtdout
+  _withHandle name f = do
+    let debug = False -- set to true to print Docker output to sdtdout
         mhandle =
           if debug
           then Just stdout
           else Nothing
     case mhandle of
       Just handle -> f handle
-      Nothing -> withSystemTempFile (name <> "-output") (\_ handle -> f handle)
+      Nothing -> withSystemTempFile (name <> "-output") (\path h0 -> do
+        hClose h0
+        withFile path ReadWriteMode f
+        )
+
+-- | Log a handle's content to stdout.
+tracing :: String -> Handle -> (Handle -> IO a) -> IO a
+tracing name h f = censoring h logIt f
+  where
+  logIt str = do
+    putStrLn $ name <> ": " <> str
+    return (Just str)
+
+-- | Perform an action before any line of content goes from one thread to the other
+censoring :: Handle -> (String -> IO (Maybe String)) -> (Handle -> IO a) -> IO a
+censoring h censor f = do
+  buffering <- hGetBuffering h
+  mencoding <- hGetEncoding h
+  (hread, hwrite) <- createPipe
+
+  forM_ [hread, hwrite] $ \h' -> do
+    hSetBuffering h' buffering
+    forM_ mencoding (hSetEncoding h')
+
+  let worker = do
+        str <- hGetContents h
+        forM_ (lines str) $ \line -> do
+          r <- censor line
+          forM_ r (hPutStrLn hwrite)
+
+  withAsyncThrow worker (f hread)
+

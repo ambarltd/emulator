@@ -5,7 +5,7 @@ import Test.Hspec (hspec, parallel)
 import Test.Config (testConfig)
 import Test.Emulator (testEmulator)
 import Test.Queue (testQueues)
-import Test.Connector (testConnectors, withPostgreSQLDocker)
+import Test.Connector (testConnectors, withPostgreSQLDocker, Debugging(..))
 import Test.OnDemand (testOnDemand)
 import Test.Warden (testWarden)
 import qualified Test.Utils.OnDemand as OnDemand
@@ -22,7 +22,7 @@ Example: match on test description
  -}
 main :: IO ()
 main =
-  OnDemand.withLazy withPostgreSQLDocker $ \pcreds ->
+  OnDemand.withLazy (withPostgreSQLDocker (Debugging False)) $ \pcreds ->
   hspec $ parallel $ do
     -- unit tests use the projector library
     testOnDemand
