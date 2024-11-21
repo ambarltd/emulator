@@ -2,7 +2,8 @@
 module Test.Connector
   ( testConnectors
   , PostgresCreds
-  , withPostgresSQL
+  , withPostgreSQL
+  , withPostgreSQLDocker
   , withEventsTable
   , mkPostgreSQL
   , Event(..)
@@ -25,16 +26,19 @@ import Data.Scientific (Scientific)
 import Data.String (fromString)
 import qualified Data.Text as Text
 import Data.Word (Word16)
-import Control.Exception (bracket, throwIO, ErrorCall(..), fromException)
+import Control.Exception (bracket, throwIO, ErrorCall(..), fromException, onException)
 import Control.Monad (void, replicateM, forM_)
 import System.Exit (ExitCode(..))
 import System.IO.Temp (withSystemTempFile)
+import System.IO (stdout)
 import System.Process
   ( readProcessWithExitCode
   , proc
   , CreateProcess(..)
   , StdStream(..)
-  , readCreateProcessWithExitCode
+  , withCreateProcess
+  , waitForProcess
+  , terminateProcess
   )
 import Test.Hspec
   ( Spec
@@ -61,7 +65,7 @@ import Test.Utils.OnDemand (OnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
 
 import Utils.Async (withAsyncThrow)
-import Utils.Delay (deadline, seconds)
+import Utils.Delay (deadline, seconds, delay)
 import Utils.Logger (plainLogger, Severity(..))
 
 testConnectors :: OnDemand PostgresCreds -> Spec
@@ -560,9 +564,34 @@ withPgTable conn schema f = bracket create destroy f
     number <- modifyMVar tableNumber $ \n -> return (n + 1, n)
     return $ "table_" <> show number
 
+withPostgreSQLDocker :: (PostgresCreds -> IO a) -> IO a
+withPostgreSQLDocker f = do
+  let cmd = DockerRun
+        { run_image = "postgres:14.10"
+        , run_args =
+          [ "--env", "POSTGRES_PASSWORD=" <> p_password
+          , "--env", "POSTGRES_USER=" <> p_username
+          , "--env", "POSTGRES_DB=" <> p_database
+          , "--publish",  show p_port <> ":5432"
+          ]
+        }
+  withDocker "PostgreSQL" cmd $ do
+    putStrLn "waiting for Docker..."
+    delay (seconds 10)
+    putStrLn "done waiting. Fingers crossed."
+    f creds
+  where
+  creds@PostgresCreds{..} = PostgresCreds
+    { p_database = "test_db"
+    , p_username = "test_user"
+    , p_password = "test_pass"
+    , p_host =  P.connectHost P.defaultConnectInfo
+    , p_port = 5555
+    }
+
 -- | Create a PostgreSQL database and delete it upon completion.
-withPostgresSQL :: (PostgresCreds -> IO a) -> IO a
-withPostgresSQL f = bracket setup teardown f
+withPostgreSQL :: (PostgresCreds -> IO a) -> IO a
+withPostgreSQL f = bracket setup teardown f
   where
   setup = do
     let creds@PostgresCreds{..} = PostgresCreds
@@ -620,8 +649,8 @@ withPostgresSQL f = bracket setup teardown f
 
 data DockerCommand
   = DockerRun
-    { _run_image :: String
-    , _run_args :: [(String, String)]
+    { run_image :: String
+    , run_args :: [String]
     }
 
 {-# NOINLINE dockerImageNumber #-}
@@ -629,6 +658,8 @@ dockerImageNumber :: MVar Int
 dockerImageNumber = unsafePerformIO (newMVar 0)
 
 -- | Run a command with a docker image running in the background.
+-- Automatically assigns a container name and removes the container
+-- on exit.
 withDocker :: String -> DockerCommand -> IO a -> IO a
 withDocker tag cmd act =
   withAsyncThrow runDocker act
@@ -636,14 +667,15 @@ withDocker tag cmd act =
   runDocker =  do
     name <- mkName
     withHandle name $ \h -> do
-      let command = (proc "docker" (args name))
+      let create = (proc "docker" (args name))
             { std_out = UseHandle h
             , std_err = UseHandle h }
-      (exit, _, _) <- readCreateProcessWithExitCode command ""
-      throwIO $ ErrorCall $ case exit of
-        ExitSuccess ->  "unexpected docker exited for " <> name
-        ExitFailure code -> unwords
-             [ "docker failed with exit code" <> show code <> " for " <> name]
+      withCreateProcess create $ \_ _ _ p -> do
+        exit <- waitForProcess p `onException` terminateProcess p
+        throwIO $ ErrorCall $ case exit of
+          ExitSuccess ->  "unexpected docker exited for container " <> name
+          ExitFailure code ->
+            "docker failed with exit code" <> show code <> " for container " <> name
 
   mkName = do
     number <- modifyMVar dockerImageNumber $ \n -> return (n + 1, n)
@@ -652,15 +684,14 @@ withDocker tag cmd act =
   args :: String -> [String]
   args name =
     case cmd of
-      DockerRun img opts ->
-        let fromTuple (x,y) = [x,y]
-            allOpts = concatMap fromTuple $ ("--name", name) : opts
-        in
-        ["run"] ++ allOpts ++ [img]
+      DockerRun img opts -> ["run", "--rm", "--name", name] ++ opts ++ [img]
 
   withHandle name f = do
-    let mhandle = Nothing -- set this to (Just stdout) for debugging.
+    let debug = True -- set to true to print Docker output to sdtdout
+        mhandle =
+          if debug
+          then Just stdout
+          else Nothing
     case mhandle of
       Just handle -> f handle
-      Nothing ->
-        withSystemTempFile (name <> "-output") (\_ handle -> f handle)
+      Nothing -> withSystemTempFile (name <> "-output") (\_ handle -> f handle)
