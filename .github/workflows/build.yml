@@ -29,6 +29,15 @@ jobs:
           brew install docker
           docker --version
 
+      - name: Setup - PostgreSQL
+        id: postgres-setup
+        uses: ikalnytskyi/action-setup-postgres@v7
+        with:
+          postgres-version: "16"
+          database: 'postgres'
+          username: 'postgres'
+          password: 'postgres'
+
       - name: Setup - GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
         id: setup
