@@ -27,32 +27,18 @@ import Data.Scientific (Scientific)
 import Data.String (fromString)
 import qualified Data.Text as Text
 import Data.Word (Word16)
-import System.Exit (ExitCode(..))
-import System.IO.Temp (withSystemTempFile)
 import System.IO
   ( Handle
-  , IOMode(..)
-  , BufferMode(..)
-  , hClose
   , hGetContents
   , hGetLine
   , hPutStrLn
   , hSetBuffering
-  , stdout
-  , withFile
   , hSetBuffering
   , hGetBuffering
   , hGetEncoding
   , hSetEncoding
   )
-import System.Process
-  ( CreateProcess(..)
-  , StdStream(..)
-  , proc
-  , withCreateProcess
-  , waitForProcess
-  , createPipe
-  )
+import System.Process (createPipe)
 import Test.Hspec
   ( Spec
   , it
@@ -74,6 +60,7 @@ import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Record (Bytes(..))
 import Test.Queue (withFileTopic)
+import Test.Utils.Docker (DockerCommand(..), withDocker)
 import Test.Utils.OnDemand (OnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
 
@@ -624,67 +611,6 @@ withPostgreSQL (Debugging debug) f = do
     , p_host =  P.connectHost P.defaultConnectInfo
     , p_port = 5555
     }
-
-data DockerCommand
-  = DockerRun
-    { run_image :: String
-    , run_args :: [String]
-    }
-
-{-# NOINLINE dockerImageNumber #-}
-dockerImageNumber :: MVar Int
-dockerImageNumber = unsafePerformIO (newMVar 0)
-
--- | Run a command with a docker image running in the background.
--- Automatically assigns a container name and removes the container
--- on exit.
-withDocker :: String -> DockerCommand -> (Handle -> IO a) -> IO a
-withDocker tag cmd act =
-  withPipe $ \hread hwrite -> do
-  name <- mkName
-  let create = (proc "docker" (args name))
-        { std_out = UseHandle hwrite
-        , std_err = UseHandle hwrite
-        , create_group = True
-        }
-  withCreateProcess create $ \_ _ _ p ->
-    withAsyncThrow (wait name p) $
-    act hread
-  where
-  withPipe f = do
-    (hread, hwrite) <- createPipe
-    hSetBuffering hread LineBuffering
-    hSetBuffering hwrite LineBuffering
-    f hread hwrite
-
-  wait name p = do
-    exit <- waitForProcess p
-    throwIO $ ErrorCall $ case exit of
-      ExitSuccess ->  "unexpected successful termination of container " <> name
-      ExitFailure code ->
-        "docker failed with exit code" <> show code <> " for container " <> name
-
-  mkName = do
-    number <- modifyMVar dockerImageNumber $ \n -> return (n + 1, n)
-    return $ tag <> "_" <> show number
-
-  args :: String -> [String]
-  args name =
-    case cmd of
-      DockerRun img opts -> ["run", "--init", "--rm", "--name", name] ++ opts ++ [img]
-
-  _withHandle name f = do
-    let debug = False -- set to true to print Docker output to sdtdout
-        mhandle =
-          if debug
-          then Just stdout
-          else Nothing
-    case mhandle of
-      Just handle -> f handle
-      Nothing -> withSystemTempFile (name <> "-output") (\path h0 -> do
-        hClose h0
-        withFile path ReadWriteMode f
-        )
 
 -- | Log a handle's content to stdout.
 tracing :: String -> Handle -> (Handle -> IO a) -> IO a
