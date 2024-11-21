@@ -25,17 +25,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        if: matrix.os == 'macos-latest'
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        if: matrix.os == 'macos-latest'
-        uses: docker/setup-buildx-action@v3
-
       - name: Check Docker installation
         if: matrix.os == 'macos-latest'
         run: |
+          brew install docker
           docker --version
 
       - name: Setup - PostgreSQL
