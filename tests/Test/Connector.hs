@@ -9,6 +9,7 @@ module Test.Connector
   , Table(..)
 
   , BytesRow(..)
+  , withDocker
   ) where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
@@ -27,7 +28,14 @@ import Data.Word (Word16)
 import Control.Exception (bracket, throwIO, ErrorCall(..), fromException)
 import Control.Monad (void, replicateM, forM_)
 import System.Exit (ExitCode(..))
-import System.Process (readProcessWithExitCode)
+import System.IO.Temp (withSystemTempFile)
+import System.Process
+  ( readProcessWithExitCode
+  , proc
+  , CreateProcess(..)
+  , StdStream(..)
+  , readCreateProcessWithExitCode
+  )
 import Test.Hspec
   ( Spec
   , it
@@ -609,3 +617,50 @@ withPostgresSQL f = bracket setup teardown f
     case code of
       ExitSuccess -> return ()
       _ -> throwIO $ ErrorCall $ "Unable to delete PostgreSQL database: " <> err
+
+data DockerCommand
+  = DockerRun
+    { _run_image :: String
+    , _run_args :: [(String, String)]
+    }
+
+{-# NOINLINE dockerImageNumber #-}
+dockerImageNumber :: MVar Int
+dockerImageNumber = unsafePerformIO (newMVar 0)
+
+-- | Run a command with a docker image running in the background.
+withDocker :: String -> DockerCommand -> IO a -> IO a
+withDocker tag cmd act =
+  withAsyncThrow runDocker act
+  where
+  runDocker =  do
+    name <- mkName
+    withHandle name $ \h -> do
+      let command = (proc "docker" (args name))
+            { std_out = UseHandle h
+            , std_err = UseHandle h }
+      (exit, _, _) <- readCreateProcessWithExitCode command ""
+      throwIO $ ErrorCall $ case exit of
+        ExitSuccess ->  "unexpected docker exited for " <> name
+        ExitFailure code -> unwords
+             [ "docker failed with exit code" <> show code <> " for " <> name]
+
+  mkName = do
+    number <- modifyMVar dockerImageNumber $ \n -> return (n + 1, n)
+    return $ tag <> "_" <> show number
+
+  args :: String -> [String]
+  args name =
+    case cmd of
+      DockerRun img opts ->
+        let fromTuple (x,y) = [x,y]
+            allOpts = concatMap fromTuple $ ("--name", name) : opts
+        in
+        ["run"] ++ allOpts ++ [img]
+
+  withHandle name f = do
+    let mhandle = Nothing -- set this to (Just stdout) for debugging.
+    case mhandle of
+      Just handle -> f handle
+      Nothing ->
+        withSystemTempFile (name <> "-output") (\_ handle -> f handle)
