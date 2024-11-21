@@ -121,8 +121,7 @@ testEmulator p = describe "emulator" $ do
     withPostgresSource :: (([Event] -> IO ()) -> DataSource -> IO a) -> IO a
     withPostgresSource f =
       OnDemand.with p $ \creds ->
-      C.withConnection creds $ \conn ->
-      C.withEventsTable conn $ \table -> do
+      C.withEventsTable creds $ \conn table -> do
       let config = C.mkPostgreSQL creds table
           source = DataSource
             { s_id = Id "postgres_source"

@@ -4,7 +4,6 @@ module Test.Connector
   , PostgresCreds
   , withPostgresSQL
   , withEventsTable
-  , withConnection
   , mkPostgreSQL
   , Event(..)
   , Table(..)
@@ -503,8 +502,11 @@ instance Table EventsTable where
         , ")"
         ]
 
-withEventsTable :: P.Connection -> (EventsTable -> IO a) -> IO a
-withEventsTable = withTable ()
+withEventsTable :: PostgresCreds -> (P.Connection -> EventsTable -> IO a) -> IO a
+withEventsTable creds f =
+  withConnection creds $ \conn ->
+  withTable () conn $ \table ->
+  f conn table
 
 {-# NOINLINE tableNumber #-}
 tableNumber :: MVar Int
