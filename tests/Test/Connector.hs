@@ -3,7 +3,6 @@ module Test.Connector
   ( testConnectors
   , PostgresCreds
   , withPostgreSQL
-  , withPostgreSQLDocker
   , withEventsTable
   , mkPostgreSQL
   , Event(..)
@@ -49,7 +48,6 @@ import System.IO
 import System.Process
   ( CreateProcess(..)
   , StdStream(..)
-  , readProcessWithExitCode
   , proc
   , withCreateProcess
   , waitForProcess
@@ -581,8 +579,8 @@ withPgTable conn schema f = bracket create destroy f
 
 newtype Debugging = Debugging Bool
 
-withPostgreSQLDocker :: Debugging -> (PostgresCreds -> IO a) -> IO a
-withPostgreSQLDocker (Debugging debug) f = do
+withPostgreSQL :: Debugging -> (PostgresCreds -> IO a) -> IO a
+withPostgreSQL (Debugging debug) f = do
   let cmd = DockerRun
         { run_image = "postgres:14.10"
         , run_args =
@@ -626,64 +624,6 @@ withPostgreSQLDocker (Debugging debug) f = do
     , p_host =  P.connectHost P.defaultConnectInfo
     , p_port = 5555
     }
-
--- | Create a PostgreSQL database and delete it upon completion.
-withPostgreSQL :: (PostgresCreds -> IO a) -> IO a
-withPostgreSQL f = bracket setup teardown f
-  where
-  setup = do
-    let creds@PostgresCreds{..} = PostgresCreds
-          { p_database = "db_test"
-          , p_username = "test_user"
-          , p_password = "test_pass"
-          , p_host =  P.connectHost P.defaultConnectInfo
-          , p_port = P.connectPort P.defaultConnectInfo
-          }
-    putStrLn "creating user..."
-    createUser p_username p_password
-    putStrLn "creating database..."
-    createDatabase p_username p_database
-    putStrLn "database ready."
-    return creds
-
-  teardown PostgresCreds{..} = do
-    deleteDatabase p_database
-    dropUser p_username
-
-  psql cmd = do
-    (code, _, err) <- readProcessWithExitCode "psql"
-      [ "--dbname", "postgres"
-      , "--command", cmd
-      ] ""
-    case code of
-      ExitSuccess -> return Nothing
-      ExitFailure _ -> return (Just err)
-
-  createUser name pass = do
-    r <- psql $ unwords [ "CREATE USER", name, "WITH SUPERUSER PASSWORD '" <> pass <> "'"]
-    forM_ r $ \err ->
-      if "already exists" `isInfixOf` err
-      then return ()
-      else throwIO $ ErrorCall $ "Unable to create PostgreSQL user: " <> err
-
-  createDatabase user name = do
-    r <- psql $ unwords ["CREATE DATABASE", name, "WITH OWNER '" <> user <> "'"]
-    forM_ r $ \err ->
-      if "already exists" `isInfixOf` err
-      then return ()
-      else throwIO $ ErrorCall $ "Unable to create PostgreSQL database: " <> err
-
-  dropUser name = do
-    (code, _, err) <- readProcessWithExitCode "dropuser" [name] ""
-    case code of
-      ExitSuccess -> return ()
-      _ -> throwIO $ ErrorCall $ "Unable to delete PostgreSQL user: " <> err
-
-  deleteDatabase name = do
-    (code, _, err) <- readProcessWithExitCode "dropdb" [name] ""
-    case code of
-      ExitSuccess -> return ()
-      _ -> throwIO $ ErrorCall $ "Unable to delete PostgreSQL database: " <> err
 
 data DockerCommand
   = DockerRun
