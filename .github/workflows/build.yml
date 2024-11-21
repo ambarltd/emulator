@@ -24,6 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check Docker
+        run: docker --version
+
       - name: Setup - PostgreSQL
         id: postgres-setup
         uses: ikalnytskyi/action-setup-postgres@v7
