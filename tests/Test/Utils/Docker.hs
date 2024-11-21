@@ -6,16 +6,7 @@ module Test.Utils.Docker
 import Control.Concurrent (MVar, newMVar, modifyMVar)
 import Control.Exception (throwIO, ErrorCall(..))
 import System.Exit (ExitCode(..))
-import System.IO.Temp (withSystemTempFile)
-import System.IO
-  ( Handle
-  , IOMode(..)
-  , BufferMode(..)
-  , hClose
-  , hSetBuffering
-  , stdout
-  , withFile
-  )
+import System.IO (Handle, BufferMode(..), hSetBuffering)
 import System.Process
   ( CreateProcess(..)
   , StdStream(..)
@@ -81,16 +72,3 @@ withDocker tag cmd act =
         , "--rm"   -- remove container on exit
         , "--name", name -- name this run
         ] ++ opts ++ [img]
-
-  _withHandle name f = do
-    let debug = False -- set to true to print Docker output to sdtdout
-        mhandle =
-          if debug
-          then Just stdout
-          else Nothing
-    case mhandle of
-      Just handle -> f handle
-      Nothing -> withSystemTempFile (name <> "-output") (\path h0 -> do
-        hClose h0
-        withFile path ReadWriteMode f
-        )
