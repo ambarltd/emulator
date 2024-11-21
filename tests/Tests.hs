@@ -22,7 +22,7 @@ Example: match on test description
  -}
 main :: IO ()
 main =
-  OnDemand.withLazy (withPostgreSQL (Debugging False)) $ \pcreds ->
+  OnDemand.withLazy (withPostgreSQL (Debugging True)) $ \pcreds ->
   hspec $ parallel $ do
     -- unit tests use the projector library
     testOnDemand
