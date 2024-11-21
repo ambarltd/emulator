@@ -1,15 +1,15 @@
 {-# OPTIONS_GHC -Wno-x-partial #-}
 module Test.Connector
   ( testConnectors
+
   , PostgresCreds
   , withPostgreSQL
-  , withEventsTable
   , mkPostgreSQL
+  , Debugging(..)
+
   , Event(..)
   , Table(..)
-
-  , BytesRow(..)
-  , Debugging(..)
+  , withEventsTable
   ) where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
@@ -545,7 +545,6 @@ withConnection creds act = do
     , P.connectPort = p_port creds
     }
   act conn
-
 
 -- | Creates a new table on every invocation.
 withPgTable :: P.Connection -> Schema -> (String -> IO a) -> IO a
