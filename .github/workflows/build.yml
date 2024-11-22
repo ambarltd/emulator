@@ -43,7 +43,7 @@ jobs:
           set -x
           brew reinstall -f --force-bottle qemu
           brew install colima
-          colima start
+          colima start --vm-type vz
           sudo ln -s ~/.colima/default/docker.sock /var/run/docker.sock
           docker run hello-world
 
