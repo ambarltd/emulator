@@ -45,6 +45,7 @@ library emulator-lib
         Ambar.Emulator.Connector.File
         Ambar.Emulator.Connector.Poll
         Ambar.Emulator.Connector.Postgres
+        Ambar.Emulator.Connector.MySQL
         Ambar.Emulator.Projector
         Ambar.Emulator.Queue
         Ambar.Emulator.Queue.Topic
@@ -83,6 +84,7 @@ library emulator-lib
         , http-client
         , http-client-tls
         , http-types
+        , mysql-simple
         , postgresql-simple
         , prettyprinter
         , random

@@ -1,4 +1,3 @@
-{-# OPTIONS_GHC -Wno-x-partial #-}
 module Ambar.Emulator.Config
   ( parseEnvConfigFile
   , Id(..)

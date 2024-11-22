@@ -1,0 +1,11 @@
+ignore-project: False
+
+package pcre-light
+  extra-include-dirs: /opt/homebrew/include
+  extra-lib-dirs: /opt/homebrew/lib
+  extra-prog-path: /opt/homebrew/lib
+
+package mysql
+  extra-include-dirs: /opt/homebrew/include
+  extra-lib-dirs: /opt/homebrew/lib
+  extra-prog-path: /opt/homebrew/lib
