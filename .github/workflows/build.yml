@@ -23,6 +23,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Docker
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -x
+          brew install docker
+          docker --version
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -34,10 +41,8 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           set -x
-          brew install docker
           brew install colima
           colima start --cpu 3 --memory 6 --disk 100 --vm-type=qemu --mount-type=sshfs --dns=1.1.1.1
-          docker --version
           docker run hello-world
 
       - name: Setup - PostgreSQL
