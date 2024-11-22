@@ -25,7 +25,7 @@ jobs:
 
       - name: Install Docker
         if: matrix.os == 'macos-latest'
-        uses: douglascamata/setup-docker-macos-action
+        uses: douglascamata/setup-docker-macos-action@v1-alpha
 
       - name: Setup - PostgreSQL
         id: postgres-setup
