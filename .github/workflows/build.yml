@@ -41,6 +41,7 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           set -x
+          brew reinstall -f --force-bottle qemu
           brew install colima
           colima start
           sudo ln -s ~/.colima/default/docker.sock /var/run/docker.sock
