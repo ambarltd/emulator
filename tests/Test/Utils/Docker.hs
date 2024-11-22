@@ -44,7 +44,11 @@ dockerImageNumber = unsafePerformIO (newMVar 0)
 -- on exit.
 --
 -- The handle provided contains both stdout and stderr
-withDocker :: Bool -> String -> DockerCommand -> (Handle -> IO a) -> IO a
+withDocker
+  :: Bool  -- whether to print docker output to stdout.
+  -> String
+  -> DockerCommand
+  -> (Handle -> IO a) -> IO a
 withDocker debug tag cmd act =
   withPipe $ \hread hwrite -> do
   name <- mkName

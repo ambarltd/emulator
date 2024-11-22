@@ -39,6 +39,8 @@ import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.ToField as P
 import GHC.Generics
 import System.IO.Unsafe (unsafePerformIO)
+import System.Exit (ExitCode(..))
+import System.Process (readProcessWithExitCode)
 
 import qualified Ambar.Emulator.Connector as Connector
 import Ambar.Emulator.Connector (partitioner, encoder)
@@ -551,8 +553,67 @@ withPgTable conn schema f = bracket create destroy f
     number <- modifyMVar tableNumber $ \n -> return (n + 1, n)
     return $ "table_" <> show number
 
+-- | Create a PostgreSQL database and delete it upon completion.
 withPostgreSQL :: (PostgresCreds -> IO a) -> IO a
-withPostgreSQL f = do
+withPostgreSQL f = bracket setup teardown f
+  where
+  setup = do
+    let creds@PostgresCreds{..} = PostgresCreds
+          { p_database = "db_test"
+          , p_username = "test_user"
+          , p_password = "test_pass"
+          , p_host =  P.connectHost P.defaultConnectInfo
+          , p_port = P.connectPort P.defaultConnectInfo
+          }
+    putStrLn "creating user..."
+    createUser p_username p_password
+    putStrLn "creating database..."
+    createDatabase p_username p_database
+    putStrLn "database ready."
+    return creds
+
+  teardown PostgresCreds{..} = do
+    deleteDatabase p_database
+    dropUser p_username
+
+  psql cmd = do
+    (code, _, err) <- readProcessWithExitCode "psql"
+      [ "--dbname", "postgres"
+      , "--command", cmd
+      ] ""
+    case code of
+      ExitSuccess -> return Nothing
+      ExitFailure _ -> return (Just err)
+
+  createUser name pass = do
+    r <- psql $ unwords [ "CREATE USER", name, "WITH SUPERUSER PASSWORD '" <> pass <> "'"]
+    forM_ r $ \err ->
+      if "already exists" `isInfixOf` err
+      then return ()
+      else throwIO $ ErrorCall $ "Unable to create PostgreSQL user: " <> err
+
+  createDatabase user name = do
+    r <- psql $ unwords ["CREATE DATABASE", name, "WITH OWNER '" <> user <> "'"]
+    forM_ r $ \err ->
+      if "already exists" `isInfixOf` err
+      then return ()
+      else throwIO $ ErrorCall $ "Unable to create PostgreSQL database: " <> err
+
+  dropUser name = do
+    (code, _, err) <- readProcessWithExitCode "dropuser" [name] ""
+    case code of
+      ExitSuccess -> return ()
+      _ -> throwIO $ ErrorCall $ "Unable to delete PostgreSQL user: " <> err
+
+  deleteDatabase name = do
+    (code, _, err) <- readProcessWithExitCode "dropdb" [name] ""
+    case code of
+      ExitSuccess -> return ()
+      _ -> throwIO $ ErrorCall $ "Unable to delete PostgreSQL database: " <> err
+
+-- | Use PostgreSQL from Docker. Not used for now.
+_withPostgreSQLDocker :: (PostgresCreds -> IO a) -> IO a
+_withPostgreSQLDocker f = do
   let cmd = DockerRun
         { run_image = "postgres:14.10"
         , run_args =
