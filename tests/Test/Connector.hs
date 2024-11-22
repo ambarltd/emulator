@@ -5,7 +5,6 @@ module Test.Connector
   , PostgresCreds
   , withPostgreSQL
   , mkPostgreSQL
-  , Debugging(..)
 
   , Event(..)
   , Table(..)
@@ -27,18 +26,7 @@ import Data.Scientific (Scientific)
 import Data.String (fromString)
 import qualified Data.Text as Text
 import Data.Word (Word16)
-import System.IO
-  ( Handle
-  , hGetContents
-  , hGetLine
-  , hPutStrLn
-  , hSetBuffering
-  , hSetBuffering
-  , hGetBuffering
-  , hGetEncoding
-  , hSetEncoding
-  )
-import System.Process (createPipe)
+import System.IO (hGetLine)
 import Test.Hspec
   ( Spec
   , it
@@ -563,10 +551,8 @@ withPgTable conn schema f = bracket create destroy f
     number <- modifyMVar tableNumber $ \n -> return (n + 1, n)
     return $ "table_" <> show number
 
-newtype Debugging = Debugging Bool
-
-withPostgreSQL :: Debugging -> (PostgresCreds -> IO a) -> IO a
-withPostgreSQL (Debugging debug) f = do
+withPostgreSQL :: (PostgresCreds -> IO a) -> IO a
+withPostgreSQL f = do
   let cmd = DockerRun
         { run_image = "postgres:14.10"
         , run_args =
@@ -576,17 +562,11 @@ withPostgreSQL (Debugging debug) f = do
           , "--publish",  show p_port <> ":5432"
           ]
         }
-  r <- withDocker "PostgreSQL" cmd $ \h ->
-    debugging h $ \h' -> do
-    waitTillReady h'
+  r <- withDocker False "PostgreSQL" cmd $ \h -> do
+    waitTillReady h
     f creds
   return r
   where
-  debugging h act =
-    if debug
-    then tracing "PostgreSQL" h act
-    else act h
-
   waitTillReady h = do
     putStrLn "Waiting for PostgreSQL docker..."
     deadline (seconds 60) $ do
@@ -610,31 +590,4 @@ withPostgreSQL (Debugging debug) f = do
     , p_host =  P.connectHost P.defaultConnectInfo
     , p_port = 5555
     }
-
--- | Log a handle's content to stdout.
-tracing :: String -> Handle -> (Handle -> IO a) -> IO a
-tracing name h f = censoring h logIt f
-  where
-  logIt str = do
-    putStrLn $ name <> ": " <> str
-    return (Just str)
-
--- | Perform an action before any line of content goes from one thread to the other
-censoring :: Handle -> (String -> IO (Maybe String)) -> (Handle -> IO a) -> IO a
-censoring h censor f = do
-  buffering <- hGetBuffering h
-  mencoding <- hGetEncoding h
-  (hread, hwrite) <- createPipe
-
-  forM_ [hread, hwrite] $ \h' -> do
-    hSetBuffering h' buffering
-    forM_ mencoding (hSetEncoding h')
-
-  let worker = do
-        str <- hGetContents h
-        forM_ (lines str) $ \line -> do
-          r <- censor line
-          forM_ r (hPutStrLn hwrite)
-
-  withAsyncThrow worker (f hread)
 

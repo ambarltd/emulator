@@ -17,19 +17,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # os: [ubuntu-latest, windows-latest, macos-latest]
-        os: [macos-13]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         ghc-version: ['9.10.1']
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Docker
-        if: runner.os == 'macOS'
-        uses: douglascamata/setup-docker-macos-action@v1-alpha
-
-      - name: Test Docker
-        if: runner.os == 'macOS'
-        run: docker run hello-world
 
       - name: Setup - PostgreSQL
         id: postgres-setup

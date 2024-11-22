@@ -5,8 +5,19 @@ module Test.Utils.Docker
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
 import Control.Exception (throwIO, ErrorCall(..))
+import Control.Monad (forM_)
 import System.Exit (ExitCode(..))
-import System.IO (Handle, BufferMode(..), hSetBuffering)
+import System.IO
+  ( Handle
+  , BufferMode(..)
+  , hGetContents
+  , hPutStrLn
+  , hSetBuffering
+  , hSetBuffering
+  , hGetBuffering
+  , hGetEncoding
+  , hSetEncoding
+  )
 import System.Process
   ( CreateProcess(..)
   , StdStream(..)
@@ -33,8 +44,8 @@ dockerImageNumber = unsafePerformIO (newMVar 0)
 -- on exit.
 --
 -- The handle provided contains both stdout and stderr
-withDocker :: String -> DockerCommand -> (Handle -> IO a) -> IO a
-withDocker tag cmd act =
+withDocker :: Bool -> String -> DockerCommand -> (Handle -> IO a) -> IO a
+withDocker debug tag cmd act =
   withPipe $ \hread hwrite -> do
   name <- mkName
   let create = (proc "docker" (args name))
@@ -44,7 +55,9 @@ withDocker tag cmd act =
         }
   withCreateProcess create $ \_ _ _ p ->
     withAsyncThrow (wait name p) $
-    act hread
+    if debug
+      then tracing name hread act
+      else act hread
   where
   withPipe f = do
     (hread, hwrite) <- createPipe
@@ -72,3 +85,31 @@ withDocker tag cmd act =
         , "--rm"   -- remove container on exit
         , "--name", name -- name this run
         ] ++ opts ++ [img]
+
+-- | Log a handle's content to stdout.
+tracing :: String -> Handle -> (Handle -> IO a) -> IO a
+tracing name h f = censoring h logIt f
+  where
+  logIt str = do
+    putStrLn $ name <> ": " <> str
+    return (Just str)
+
+-- | Perform an action before any line of content goes from one thread to the other
+censoring :: Handle -> (String -> IO (Maybe String)) -> (Handle -> IO a) -> IO a
+censoring h censor f = do
+  buffering <- hGetBuffering h
+  mencoding <- hGetEncoding h
+  (hread, hwrite) <- createPipe
+
+  forM_ [hread, hwrite] $ \h' -> do
+    hSetBuffering h' buffering
+    forM_ mencoding (hSetEncoding h')
+
+  let worker = do
+        str <- hGetContents h
+        forM_ (lines str) $ \line -> do
+          r <- censor line
+          forM_ r (hPutStrLn hwrite)
+
+  withAsyncThrow worker (f hread)
+
