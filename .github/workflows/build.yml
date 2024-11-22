@@ -18,34 +18,14 @@ jobs:
       fail-fast: false
       matrix:
         # os: [ubuntu-latest, windows-latest, macos-latest]
-        os: [macos-latest]
+        os: [macos-13]
         ghc-version: ['9.10.1']
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Docker
         if: matrix.os == 'macos-latest'
-        run: |
-          set -x
-          brew install docker
-          docker --version
-
-      # - name: Set up QEMU
-      #   uses: docker/setup-qemu-action@v3
-
-      # - name: Set up Docker Buildx
-      #   if: matrix.os == 'macos-latest'
-      #   uses: docker/setup-buildx-action@v3
-
-      - name: Install colima
-        if: matrix.os == 'macos-latest'
-        run: |
-          set -x
-          brew reinstall -f --force-bottle qemu
-          brew install colima
-          colima start --vm-type vz
-          sudo ln -s ~/.colima/default/docker.sock /var/run/docker.sock
-          docker run hello-world
+        uses: douglascamata/setup-docker-macos-action
 
       - name: Setup - PostgreSQL
         id: postgres-setup
