@@ -28,7 +28,7 @@ jobs:
         run: |
           set -x
           brew install docker
-          ln -s ~/.docker/run/docker.sock /var/run/docker.sock
+          sudo ln -s ~/.docker/run/docker.sock /var/run/docker.sock
           docker --version
           docker run hello-world
 
