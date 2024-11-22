@@ -1,19 +1,20 @@
 {-# OPTIONS_GHC -Wno-x-partial #-}
 module Test.Connector
   ( testConnectors
+
   , PostgresCreds
-  , withPostgresSQL
-  , withEventsTable
-  , withConnection
+  , withPostgreSQL
   , mkPostgreSQL
+
   , Event(..)
   , Table(..)
-
-  , BytesRow(..)
+  , withEventsTable
   ) where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
 import Control.Concurrent.Async (mapConcurrently)
+import Control.Exception (bracket, throwIO, ErrorCall(..), fromException)
+import Control.Monad (void, replicateM, forM_)
 import qualified Data.Aeson as Aeson
 import Data.Aeson (FromJSON)
 import qualified Data.ByteString.Lazy as LB
@@ -25,10 +26,7 @@ import Data.Scientific (Scientific)
 import Data.String (fromString)
 import qualified Data.Text as Text
 import Data.Word (Word16)
-import Control.Exception (bracket, throwIO, ErrorCall(..), fromException)
-import Control.Monad (void, replicateM, forM_)
-import System.Exit (ExitCode(..))
-import System.Process (readProcessWithExitCode)
+import System.IO (hGetLine)
 import Test.Hspec
   ( Spec
   , it
@@ -41,6 +39,8 @@ import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.ToField as P
 import GHC.Generics
 import System.IO.Unsafe (unsafePerformIO)
+import System.Exit (ExitCode(..))
+import System.Process (readProcessWithExitCode)
 
 import qualified Ambar.Emulator.Connector as Connector
 import Ambar.Emulator.Connector (partitioner, encoder)
@@ -50,11 +50,12 @@ import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Record (Bytes(..))
 import Test.Queue (withFileTopic)
+import Test.Utils.Docker (DockerCommand(..), withDocker)
 import Test.Utils.OnDemand (OnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
 
 import Utils.Async (withAsyncThrow)
-import Utils.Delay (deadline, seconds)
+import Utils.Delay (deadline, seconds, delay)
 import Utils.Logger (plainLogger, Severity(..))
 
 testConnectors :: OnDemand PostgresCreds -> Spec
@@ -306,7 +307,7 @@ testPostgreSQL p = do
         unsupported "REGOPERATOR"               ("*(integer,integer)" :: String)
         unsupported "REGPROC"                   ("xml" :: String)
         unsupported "REGPROCEDURE"              ("sum(int4)" :: String)
-        unsupported "REGROLE"                   ("postgres" :: String)
+        -- unsupported "REGROLE"                   ("postgres" :: String)
         unsupported "REGTYPE"                   ("integer" :: String)
         unsupported "PG_LSN"                    ("AAA/AAA" :: String)
   where
@@ -503,8 +504,11 @@ instance Table EventsTable where
         , ")"
         ]
 
-withEventsTable :: P.Connection -> (EventsTable -> IO a) -> IO a
-withEventsTable = withTable ()
+withEventsTable :: PostgresCreds -> (P.Connection -> EventsTable -> IO a) -> IO a
+withEventsTable creds f =
+  withConnection creds $ \conn ->
+  withTable () conn $ \table ->
+  f conn table
 
 {-# NOINLINE tableNumber #-}
 tableNumber :: MVar Int
@@ -532,7 +536,6 @@ withConnection creds act = do
     }
   act conn
 
-
 -- | Creates a new table on every invocation.
 withPgTable :: P.Connection -> Schema -> (String -> IO a) -> IO a
 withPgTable conn schema f = bracket create destroy f
@@ -551,8 +554,8 @@ withPgTable conn schema f = bracket create destroy f
     return $ "table_" <> show number
 
 -- | Create a PostgreSQL database and delete it upon completion.
-withPostgresSQL :: (PostgresCreds -> IO a) -> IO a
-withPostgresSQL f = bracket setup teardown f
+withPostgreSQL :: (PostgresCreds -> IO a) -> IO a
+withPostgreSQL f = bracket setup teardown f
   where
   setup = do
     let creds@PostgresCreds{..} = PostgresCreds
@@ -607,3 +610,45 @@ withPostgresSQL f = bracket setup teardown f
     case code of
       ExitSuccess -> return ()
       _ -> throwIO $ ErrorCall $ "Unable to delete PostgreSQL database: " <> err
+
+-- | Use PostgreSQL from Docker. Not used for now.
+_withPostgreSQLDocker :: (PostgresCreds -> IO a) -> IO a
+_withPostgreSQLDocker f = do
+  let cmd = DockerRun
+        { run_image = "postgres:14.10"
+        , run_args =
+          [ "--env", "POSTGRES_PASSWORD=" <> p_password
+          , "--env", "POSTGRES_USER=" <> p_username
+          , "--env", "POSTGRES_DB=" <> p_database
+          , "--publish",  show p_port <> ":5432"
+          ]
+        }
+  r <- withDocker False "PostgreSQL" cmd $ \h -> do
+    waitTillReady h
+    f creds
+  return r
+  where
+  waitTillReady h = do
+    putStrLn "Waiting for PostgreSQL docker..."
+    deadline (seconds 60) $ do
+      whileM $ do
+        line <- hGetLine h
+        return $ not $ isReadyNotice line
+    delay (seconds 1)
+    putStrLn "PostgreSQL docker is ready."
+
+  whileM m = do
+    r <- m
+    if r then whileM m else return ()
+
+  isReadyNotice str =
+    "database system is ready to accept connections" `isInfixOf` str
+
+  creds@PostgresCreds{..} = PostgresCreds
+    { p_database = "test_db"
+    , p_username = "test_user"
+    , p_password = "test_pass"
+    , p_host =  P.connectHost P.defaultConnectInfo
+    , p_port = 5555
+    }
+
