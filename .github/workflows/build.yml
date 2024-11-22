@@ -28,23 +28,22 @@ jobs:
         run: |
           set -x
           brew install docker
-          sudo ln -s ~/.docker/run/docker.sock /var/run/docker.sock
           docker --version
-          docker run hello-world
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      # - name: Set up QEMU
+      #   uses: docker/setup-qemu-action@v3
 
-      - name: Set up Docker Buildx
-        if: matrix.os == 'macos-latest'
-        uses: docker/setup-buildx-action@v3
+      # - name: Set up Docker Buildx
+      #   if: matrix.os == 'macos-latest'
+      #   uses: docker/setup-buildx-action@v3
 
-      - name: Check Docker installation
+      - name: Install colima
         if: matrix.os == 'macos-latest'
         run: |
           set -x
           brew install colima
-          colima start --cpu 3 --memory 6 --disk 100 --vm-type=qemu --mount-type=sshfs --dns=1.1.1.1
+          colima start
+          sudo ln -s ~/.colima/default/docker.sock /var/run/docker.sock
           docker run hello-world
 
       - name: Setup - PostgreSQL
