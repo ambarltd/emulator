@@ -24,17 +24,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Docker
-        if: matrix.os == 'macos-latest'
+        if: runner.os == 'macOS'
         uses: douglascamata/setup-docker-macos-action@v1-alpha
 
       - name: Test Docker
-        if: matrix.os == 'macos-latest'
-        run: |
-          docker run hello-world
-
-      - name: Install Docker
-        if: matrix.os == 'macos-latest'
-        uses: douglascamata/setup-docker-macos-action@v1-alpha
+        if: runner.os == 'macOS'
+        run: docker run hello-world
 
       - name: Setup - PostgreSQL
         id: postgres-setup
