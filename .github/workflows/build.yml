@@ -27,6 +27,15 @@ jobs:
         if: matrix.os == 'macos-latest'
         uses: douglascamata/setup-docker-macos-action@v1-alpha
 
+      - name: Test Docker
+        if: matrix.os == 'macos-latest'
+        run: |
+          docker run hello-world
+
+      - name: Install Docker
+        if: matrix.os == 'macos-latest'
+        uses: douglascamata/setup-docker-macos-action@v1-alpha
+
       - name: Setup - PostgreSQL
         id: postgres-setup
         uses: ikalnytskyi/action-setup-postgres@v7
