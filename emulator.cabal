@@ -84,6 +84,7 @@ library emulator-lib
         , http-client
         , http-client-tls
         , http-types
+        , mysql
         , mysql-simple
         , postgresql-simple
         , prettyprinter

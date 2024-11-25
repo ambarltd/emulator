@@ -5,20 +5,23 @@ module Ambar.Emulator.Connector.MySQL
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
-import Control.Exception (Exception, bracket)
+import Control.Exception (Exception, bracket, throw)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Lazy as LB
 import Data.Default (Default(..))
 import Data.List ((\\))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import Data.Text (Text)
-import Data.Typeable (Typeable)
 import Data.Word (Word16)
 import Data.Void (Void)
 import qualified Database.MySQL.Simple as M
+import qualified Database.MySQL.Simple.Result as M
+import qualified Database.MySQL.Base.Types as M (Field(..))
 import GHC.Generics (Generic)
 
 import qualified Ambar.Emulator.Connector as C
@@ -73,27 +76,27 @@ partitioningValue (MySQLRow (Record row)) = snd $ row !! 1
 newtype MySQLSchema = MySQLSchema { unTableSchema :: Map Text MySQLType }
   deriving Show
 
--- | Supported MySQL types
-data MySQLType
-  = MySQLInt8
-  | MySQLInt2
-  | MySQLInt4
-  | MySQLFloat4
-  | MySQLFloat8
-  | MySQLBool
-  | MySQLJson
-  | MySQLBytea
-  | MySQLTimestamp
-  | MySQLTimestamptz
-  | MySQLText
-  deriving (Show, Eq, Typeable)
-  deriving anyclass (M.Result)
+-- | All MySQL types
+newtype MySQLType = MySQLType Text
+  deriving (Show, Eq)
+
+instance M.Result MySQLType where
+  convert field mb =
+    case mb of
+      Nothing -> throw $ M.UnexpectedNull
+        { errSQLType = show (M.fieldType field)
+        , errHaskellType = "MySQLType"
+        , errFieldName = B8.unpack (M.fieldName field)
+        , errMessage =
+            let table = B8.unpack (M.fieldTable field)
+                database = B8.unpack (M.fieldDB field)
+            in
+            "unexpected null in table " ++ table ++ " of database " ++ database
+        }
+      Just v -> MySQLType $ Text.decodeUtf8 v
 
 data UnsupportedMySQLType = UnsupportedMySQLType String
   deriving (Show, Exception)
-
-instance M.FromField MySQLType where
-  fromField = undefined
 
 connect
   :: MySQL
