@@ -206,14 +206,11 @@ withMySQL f = bracket setup teardown f
           , p_port = M.connectPort M.defaultConnectInfo
           }
 
-        user = "'" <> p_username <> "'@'" <> p_host <> "'"
-
+        user = p_username
     putStrLn "creating user..."
     createUser user p_password
     putStrLn "creating database..."
     createDatabase p_username p_database
-    putStrLn "granting permissions..."
-    grantPermissions user p_database
     putStrLn "database ready"
     return creds
 
@@ -240,12 +237,10 @@ withMySQL f = bracket setup teardown f
     run $ unwords ["CREATE USER", user, "IDENTIFIED BY",  "'" <> pass <> "'"]
 
   createDatabase user db =
-    run $ unwords ["CREATE DATABASE", db, "WITH OWNER '" <> user <> "'"]
-
-  grantPermissions user db =
-    run $ unwords [
-      "GRANT ALL PRIVILEGES ON", db <> ".*", "TO", user, "WITH GRANT OPTION;",
-      "FLUSH PRIVILEGES;"
+    run $ unwords
+      ["CREATE DATABASE", db, ";"
+      , "GRANT ALL PRIVILEGES ON", db <> ".*", "TO", user, "WITH GRANT OPTION;"
+      , "FLUSH PRIVILEGES;"
       ]
 
   dropUser user =
