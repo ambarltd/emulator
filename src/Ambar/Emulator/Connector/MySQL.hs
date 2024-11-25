@@ -8,33 +8,37 @@ import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
 import Control.Exception (Exception, bracket, throw)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
-import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Lazy as LB
 import Data.Default (Default(..))
 import Data.List ((\\))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.String (fromString)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import Data.Text (Text)
 import Data.Word (Word16)
 import Data.Void (Void)
+import qualified Database.MySQL.Base.Types as M (Field(..), Type(..))
 import qualified Database.MySQL.Simple as M
 import qualified Database.MySQL.Simple.Result as M
-import qualified Database.MySQL.Base.Types as M (Field(..))
+import qualified Database.MySQL.Simple.QueryResults as M
 import GHC.Generics (Generic)
+import qualified Prettyprinter as Pretty
+import Prettyprinter (pretty, (<+>))
 
 import qualified Ambar.Emulator.Connector as C
 import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream)
 import qualified Ambar.Emulator.Connector.Poll as Poll
 import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
-import Ambar.Record (Record(..), Value(..))
+import Ambar.Record (Record(..), Value(..), Bytes(..), TimeStamp(..))
 import qualified Ambar.Record.Encoding as Encoding
 
 import Utils.Delay (Duration, millis, seconds)
 
 import Utils.Async (withAsyncThrow)
-import Utils.Logger (SimpleLogger)
+import Utils.Logger (SimpleLogger, logDebug, logInfo)
+import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
 
 _POLLING_INTERVAL :: Duration
 _POLLING_INTERVAL = millis 50
@@ -61,6 +65,61 @@ newtype MySQLState = MySQLState BoundaryTracker
 
 newtype MySQLRow = MySQLRow { unMySQLRow :: Record }
 
+newtype RawRow = RawRow [RawValue]
+
+instance M.QueryResults RawRow where
+  convertResults fs mbs = RawRow $ zipWith M.convert fs mbs
+
+newtype RawValue = RawValue { unRawValue :: Value }
+
+instance M.Result RawValue where
+  convert _ Nothing = RawValue Null
+  convert field mbs@(Just bs) = RawValue $
+    case M.fieldType field of
+      M.Decimal -> Real $ M.convert field mbs
+      M.Long -> Real $ M.convert field mbs
+      M.Float -> Real $ M.convert field mbs
+      M.Double -> Real $ M.convert field mbs
+      M.NewDecimal -> Real $ M.convert field mbs
+      M.Null -> Null
+      M.Timestamp -> DateTime $ TimeStamp (Text.decodeUtf8 bs) (M.convert field mbs)
+      M.Tiny -> Int $ M.convert field mbs
+      M.Short -> Int $ M.convert field mbs
+      M.LongLong -> Int $ M.convert field mbs
+      M.Int24 -> Int $ M.convert field mbs
+      M.Date -> unsupported
+      M.Time -> unsupported
+      M.DateTime -> unsupported
+      M.Year -> unsupported
+      M.NewDate -> unsupported
+      M.Bit -> unsupported
+      M.Enum -> unsupported
+      M.Set -> unsupported
+      M.TinyBlob -> Binary $ Bytes $ M.convert field mbs
+      M.MediumBlob -> Binary $ Bytes $ M.convert field mbs
+      M.LongBlob -> Binary $ Bytes $ M.convert field mbs
+      M.Blob -> Binary $ Bytes $ M.convert field mbs
+      M.VarChar -> String $ M.convert field mbs
+      M.VarString -> String $ M.convert field mbs
+      M.String -> String $ M.convert field mbs
+      M.Geometry -> unsupported
+      M.Json ->
+        case Aeson.eitherDecode' $ LB.fromStrict bs of
+          Left err -> throw $ M.ConversionFailed
+            { M.errSQLType = show $ M.fieldType field
+            , M.errHaskellType = "Aeson.Value"
+            , M.errFieldName = Text.unpack $ Text.decodeUtf8 $ M.fieldName field
+            , M.errMessage = "Unable to decode JSON input: " <> err
+            }
+          Right v -> Json (M.convert field mbs) v
+    where
+    unsupported = throw $ M.Incompatible
+      { M.errSQLType = show $ M.fieldType field
+      , M.errHaskellType = "UNSUPPORTED"
+      , M.errFieldName = Text.unpack $ Text.decodeUtf8 $ M.fieldName field
+      , M.errMessage = "Type not supported by the MySQL Connector"
+      }
+
 instance C.Connector MySQL where
   type ConnectorState MySQL = MySQLState
   type ConnectorRecord MySQL = MySQLRow
@@ -81,19 +140,7 @@ newtype MySQLType = MySQLType Text
   deriving (Show, Eq)
 
 instance M.Result MySQLType where
-  convert field mb =
-    case mb of
-      Nothing -> throw $ M.UnexpectedNull
-        { errSQLType = show (M.fieldType field)
-        , errHaskellType = "MySQLType"
-        , errFieldName = B8.unpack (M.fieldName field)
-        , errMessage =
-            let table = B8.unpack (M.fieldTable field)
-                database = B8.unpack (M.fieldDB field)
-            in
-            "unexpected null in table " ++ table ++ " of database " ++ database
-        }
-      Just v -> MySQLType $ Text.decodeUtf8 v
+  convert field mb = MySQLType (M.convert field mb)
 
 data UnsupportedMySQLType = UnsupportedMySQLType String
   deriving (Show, Exception)
@@ -105,13 +152,13 @@ connect
   -> Producer MySQLRow
   -> (STM MySQLState -> IO a)
   -> IO a
-connect config@MySQL{..} _ (MySQLState tracker) producer f =
+connect config@MySQL{..} logger (MySQLState tracker) producer f =
   withConnection $ \conn -> do
   schema <- fetchSchema c_table conn
   validate config schema
   trackerVar <- newTVarIO tracker
   let readState = MySQLState <$> readTVar trackerVar
-  withAsyncThrow (consume conn schema trackerVar) (f readState)
+  withAsyncThrow (consume conn trackerVar) (f readState)
   where
   withConnection = bracket open M.close
     where
@@ -133,10 +180,9 @@ connect config@MySQL{..} _ (MySQLState tracker) producer f =
 
   consume
      :: M.Connection
-     -> MySQLSchema
      -> TVar BoundaryTracker
      -> IO Void
-  consume _ _ trackerVar = Poll.connect trackerVar pc
+  consume conn trackerVar = Poll.connect trackerVar pc
     where
     pc = Poll.PollingConnector
        { Poll.c_getId = entryId
@@ -146,8 +192,48 @@ connect config@MySQL{..} _ (MySQLState tracker) producer f =
        , Poll.c_producer = producer
        }
 
+    toRow :: RawRow -> MySQLRow
+    toRow (RawRow rawValues) = MySQLRow $ Record $ zip cols vals
+      where
+      vals = fmap unRawValue rawValues
+      cols = columns config
+
     run :: Boundaries -> Stream MySQLRow
-    run _ = error "TODO: run" (columns config)
+    run (Boundaries bs) acc0 emit = do
+       logDebug logger query
+       (acc, count) <- M.fold_ conn (fromString query) (acc0, 0) $
+         \(acc, !count) raw -> do
+           let row = toRow raw
+           logResult row
+           acc' <- emit acc row
+           return (acc', succ count)
+       logDebug logger $ "results: " <> show @Int count
+       return acc
+       where
+       query = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
+          [ "SELECT" , commaSeparated $ map pretty $ columns config
+          , "FROM" , pretty c_table
+          , if null bs then "" else "WHERE" <> constraints
+          , "ORDER BY" , pretty c_incrementingColumn
+          ]
+
+       constraints = sepBy "AND"
+          [ Pretty.fillSep
+             [ "("
+             , pretty c_incrementingColumn, "<", pretty low
+             , "OR"
+             ,  pretty high, "<", pretty c_incrementingColumn
+             , ")"]
+          | (EntryId low, EntryId high) <- bs
+          ]
+
+       logResult row =
+        logInfo logger $ renderPretty $
+          "ingested." <+> commaSeparated
+            [ "serial_value:" <+> prettyJSON (serialValue row)
+            , "partitioning_value:" <+> prettyJSON (partitioningValue row)
+            ]
+
 
 -- | Columns in the order they will be queried.
 columns :: MySQL -> [Text]
@@ -168,4 +254,6 @@ serialValue (MySQLRow (Record row)) =
     (_,x):_ -> x
 
 validate :: MySQL -> MySQLSchema -> IO ()
-validate = error "TODO: validate"
+validate _ _ = do
+  -- TODO: Validate
+  return ()
