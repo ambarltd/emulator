@@ -8,11 +8,14 @@ module Test.Connector.MySQL
   where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
+import Control.Concurrent.Async (mapConcurrently)
 import Control.Exception (bracket, throwIO, ErrorCall(..))
-import Control.Monad (void, forM_)
+import Control.Monad (void, replicateM, forM_)
 import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Lazy as LB
 import Data.Default (def)
-import Data.List (stripPrefix)
+import Data.List (sort, stripPrefix)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import qualified Data.Text as Text
@@ -29,6 +32,7 @@ import Test.Hspec
   , describe
   , shouldBe
   )
+import Test.Hspec.Expectations.Contrib (annotate)
 
 
 import qualified Ambar.Emulator.Connector as Connector
@@ -39,6 +43,8 @@ import qualified Ambar.Emulator.Queue.Topic as Topic
 
 import Test.Queue (withFileTopic)
 import Test.Utils.OnDemand (OnDemand)
+import Utils.Async (withAsyncThrow)
+import Utils.Delay (deadline, seconds)
 import Utils.Logger (plainLogger, Severity(..))
 import qualified Test.Utils.OnDemand as OnDemand
 
@@ -52,6 +58,55 @@ testMySQL c = do
         insert conn table (take 10 $ head mocks)
         rs <- M.query_ @Event conn (fromString $ "SELECT * FROM " <> tableName table)
         length rs `shouldBe` 10
+
+    it "retrieves all events already in the db" $
+      with () (PartitionCount 1) $ \conn table topic connected -> do
+        let count = 10
+        insert conn table (take count $ head mocks)
+        connected $
+          deadline (seconds 2) $
+          Topic.withConsumer topic group $ \consumer -> do
+          es <- replicateM count $ readEntry @Event consumer
+          length es `shouldBe` count
+
+    it "can retrieve a large number of events" $
+      with () (PartitionCount 1) $ \conn table topic connected -> do
+        let count = 10_000
+        insert conn table (take count $ head mocks)
+        connected $ deadline (seconds 2) $
+          Topic.withConsumer topic group $ \consumer -> do
+          es <- replicateM count $ readEntry @Event consumer
+          length es `shouldBe` count
+
+    it "retrieves events added after initial snapshot" $
+      with () (PartitionCount 1) $ \conn table topic connected -> do
+        let count = 10
+            write = insert conn table (take count $ head mocks)
+        connected $ deadline (seconds 1) $
+          Topic.withConsumer topic group $ \consumer ->
+          withAsyncThrow write $ do
+          es <- replicateM count $ readEntry @Event consumer
+          length es `shouldBe` count
+
+    it "maintains ordering through parallel writes" $ do
+      let partitions = 5
+      with () (PartitionCount partitions) $ \conn table topic connected -> do
+        let count = 1_000
+            write = mapConcurrently id
+              [ insert conn table (take count $ mocks !! partition)
+              | partition <- [1..partitions] ]
+        connected $ deadline (seconds 1) $
+          Topic.withConsumer topic group $ \consumer -> do
+          -- write and consume concurrently
+          withAsyncThrow write $ do
+            es <- replicateM (count * partitions) $ readEntry consumer
+            let byAggregateId = Map.toList $ Map.fromListWith (flip (++))
+                    [ (e_aggregate_id, [e_sequence_number])
+                    | (Event{..}, _) <- es
+                    ]
+            forM_ byAggregateId $ \(a_id, seqs) ->
+              annotate ("ordered (" <> show a_id <> ")") $
+                sort seqs `shouldBe` seqs
   where
   with
     :: Table t
@@ -70,6 +125,17 @@ testMySQL c = do
         connected act = -- setup connector
           Connector.connect config logger def producer (const act)
     f conn table topic connected
+
+group :: Topic.ConsumerGroupName
+group = Topic.ConsumerGroupName "test_group"
+
+readEntry :: Aeson.FromJSON a => Topic.Consumer -> IO (a, Topic.Meta)
+readEntry consumer = do
+  result <- Topic.read consumer
+  (bs, meta) <- either (throwIO . ErrorCall . show) return result
+  case Aeson.eitherDecode $ LB.fromStrict bs of
+    Left err -> throwIO $ ErrorCall $ "decoding error: " <> show err
+    Right val -> return (val, meta)
 
 -- | Credentials to manipulate the available MySQL database.
 data MySQLCreds = MySQLCreds
