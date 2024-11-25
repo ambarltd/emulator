@@ -28,8 +28,8 @@ import Ambar.Emulator.Config
   )
 import Ambar.Emulator.Projector (Message(..), Payload(..))
 
-import Test.Connector (PostgresCreds, Event(..), mocks)
-import qualified Test.Connector as C
+import Test.Connector.PostgreSQL (PostgresCreds, Event(..), mocks)
+import qualified Test.Connector.PostgreSQL as C
 import Test.Utils.OnDemand (OnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
 import Utils.Async (withAsyncThrow)
