@@ -19,7 +19,6 @@ import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import qualified Data.Text as Text
 import qualified Database.MySQL.Simple as M
-import qualified Database.MySQL.Simple.QueryResults as M
 import GHC.Generics
 import System.Exit (ExitCode(..))
 import System.IO.Unsafe (unsafePerformIO)
@@ -41,6 +40,8 @@ import qualified Ambar.Emulator.Queue.Topic as Topic
 import Database.MySQL
    ( ConnectionInfo(..)
    , Connection
+   , FromRow(..)
+   , field
    , query_
    , executeMany
    , execute_
@@ -183,10 +184,8 @@ instance Aeson.FromJSON Event where
         fromMaybe label (stripPrefix "e_" label)
       }
 
-instance M.QueryResults Event where
-  convertResults tys mbs =
-    let (e_id, e_agg, e_seq) = M.convertResults tys mbs
-    in Event e_id e_agg e_seq
+instance FromRow Event where
+  fromRow = Event <$> field <*> field <*> field
 
 newtype EventsTable = EventsTable String
 
