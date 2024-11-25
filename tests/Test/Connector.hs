@@ -1,4 +1,8 @@
-module Test.Connector (testConnectors) where
+module Test.Connector
+  ( testConnectors
+  , withDatabases
+  , Databases(..)
+  ) where
 
 import Test.Hspec
   ( Spec
@@ -7,15 +11,26 @@ import Test.Hspec
   , shouldBe
   )
 import Ambar.Emulator.Connector.Poll (Boundaries(..), mark, boundaries, cleanup)
-import Test.Connector.PostgreSQL (PostgresCreds, testPostgreSQL)
+import Test.Connector.PostgreSQL (PostgresCreds, testPostgreSQL, withPostgreSQL)
+import Test.Connector.MySQL (MySQLCreds, testMySQL, withMySQL)
 import Test.Utils.OnDemand (OnDemand)
+import qualified Test.Utils.OnDemand as OnDemand
 
+-- | Info to connect to known databases.
+data Databases = Databases (OnDemand PostgresCreds) (OnDemand MySQLCreds)
 
-testConnectors :: OnDemand PostgresCreds -> Spec
-testConnectors creds = do
+withDatabases :: (Databases -> IO a) -> IO a
+withDatabases f =
+  OnDemand.withLazy withPostgreSQL $ \pcreds ->
+  OnDemand.withLazy withMySQL $ \mcreds ->
+    f (Databases pcreds mcreds)
+
+testConnectors :: Databases -> Spec
+testConnectors (Databases pcreds mcreds) = do
   describe "connector" $ do
     testPollingConnector
-    testPostgreSQL creds
+    testPostgreSQL pcreds
+    testMySQL mcreds
 
 testPollingConnector :: Spec
 testPollingConnector = describe "Poll" $

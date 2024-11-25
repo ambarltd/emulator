@@ -5,12 +5,9 @@ import Test.Hspec (hspec, parallel)
 import Test.Config (testConfig)
 import Test.Emulator (testEmulator)
 import Test.Queue (testQueues)
-import Test.Connector (testConnectors)
-import Test.Connector.PostgreSQL (withPostgreSQL)
+import Test.Connector (testConnectors, withDatabases, Databases(..))
 import Test.OnDemand (testOnDemand)
 import Test.Warden (testWarden)
-import qualified Test.Utils.OnDemand as OnDemand
-
 
 {- | Note [How tests work]
 
@@ -23,7 +20,7 @@ Example: match on test description
  -}
 main :: IO ()
 main =
-  OnDemand.withLazy withPostgreSQL $ \pcreds ->
+  withDatabases $ \dbs@(Databases pcreds _) ->
   hspec $ parallel $ do
     -- unit tests use the projector library
     testOnDemand
@@ -31,4 +28,4 @@ main =
     testConfig
     testQueues
     testEmulator pcreds
-    testConnectors pcreds
+    testConnectors dbs

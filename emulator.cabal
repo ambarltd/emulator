@@ -104,6 +104,7 @@ test-suite emulator-tests
         Test.Config
         Test.Queue
         Test.Connector
+        Test.Connector.MySQL
         Test.Connector.PostgreSQL
         Test.Emulator
         Test.OnDemand
@@ -124,6 +125,8 @@ test-suite emulator-tests
         , hspec
         , hspec-expectations
         , HUnit
+        , mysql
+        , mysql-simple
         , postgresql-simple
         , process
         , QuickCheck

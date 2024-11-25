@@ -51,7 +51,7 @@ data MySQL = MySQL
   , c_table :: Text
   , c_columns :: [Text]
   , c_partitioningColumn :: Text
-  , c_serialColumn :: Text
+  , c_incrementingColumn :: Text
   }
 
 newtype MySQLState = MySQLState BoundaryTracker
@@ -152,8 +152,8 @@ connect config@MySQL{..} _ (MySQLState tracker) producer f =
 -- | Columns in the order they will be queried.
 columns :: MySQL -> [Text]
 columns MySQL{..} =
-  [c_serialColumn, c_partitioningColumn] <>
-    ((c_columns \\ [c_serialColumn]) \\ [c_partitioningColumn])
+  [c_incrementingColumn, c_partitioningColumn] <>
+    ((c_columns \\ [c_incrementingColumn]) \\ [c_partitioningColumn])
 
 entryId :: MySQLRow -> EntryId
 entryId row =
