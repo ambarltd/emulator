@@ -15,18 +15,18 @@ module Database.MySQL
   , FromField(..)
   , field
   , failure
+  , ParseFailure(..)
   )
   where
 
 import Control.Concurrent (MVar, newMVar, newEmptyMVar, putMVar, takeMVar, tryPutMVar, modifyMVar_)
-import Control.Exception (SomeException, bracket, throwIO, try, evaluate)
+import Control.Exception (Exception, SomeException, bracket, throwIO, try, evaluate)
 import Control.Monad (forM, unless)
 import Control.Applicative (Alternative(..))
 import Data.ByteString (ByteString)
 import Data.Int (Int64)
 import Control.Monad (forever)
 import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
 import Data.Text (Text)
 import Data.Word (Word16)
 import System.IO.Unsafe (unsafePerformIO)
@@ -34,7 +34,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import qualified Database.MySQL.Base as M (MySQLError(..), initLibrary, initThread, endThread)
 import qualified Database.MySQL.Base.Types as M (Field(..))
 import qualified Database.MySQL.Simple as M
-import qualified Database.MySQL.Simple.Result as M (ResultError(..), Result(..))
+import qualified Database.MySQL.Simple.Result as M (Result(..))
 import qualified Database.MySQL.Simple.QueryResults as M
 import qualified Database.MySQL.Simple.QueryParams as M
 
@@ -137,10 +137,12 @@ withConnection ConnectionInfo{..} f = do
 
 newtype Row = Row [(M.Field, Maybe ByteString)]
 
-data ParseFailure = ParseFailure
-  { pf_field :: String
-  , pf_error :: String
-  }
+data ParseFailure
+  = ParseError M.ResultError
+  | Unexpected String
+  deriving (Show)
+  deriving anyclass (Exception)
+
 
 class FromRow r where
   fromRow :: RowParser r
@@ -173,12 +175,7 @@ parseRow row = fmap snd $ parser row
 parseRows :: FromRow a => [Row] -> IO [a]
 parseRows rows =
   case forM rows parseRow of
-    Left (ParseFailure fieldName err) -> throwIO $ M.ConversionFailed
-      { errSQLType = "empty"
-      , errHaskellType = "empty"
-      , errFieldName = fieldName
-      , errMessage = err
-      }
+    Left err -> throwIO err
     Right vs -> return vs
 
 newtype RowParser a = RowParser (Row -> Either ParseFailure (Row, a))
@@ -223,17 +220,11 @@ field = RowParser $ \(Row row) ->
 instance {-# OVERLAPPABLE #-} M.Result r => FromField r where
   parseField f mbs =
     case unsafePerformIO $ try $ evaluate $ M.convert f mbs of
-      Left (err :: M.ResultError) -> Left ParseFailure
-        { pf_field = Text.unpack $ Text.decodeUtf8 $ M.fieldName f
-        , pf_error = show err
-        }
+      Left (err :: M.ResultError) -> Left $ ParseError err
       Right v -> Right v
 
 failure :: String -> ParseFailure
-failure str = ParseFailure
-  { pf_field = "empty"
-  , pf_error = str
-  }
+failure = Unexpected
 
 instance M.QueryResults Row where
   convertResults fs mbs = Row $ zip fs mbs

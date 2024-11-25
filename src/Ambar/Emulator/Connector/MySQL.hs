@@ -5,7 +5,7 @@ module Ambar.Emulator.Connector.MySQL
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
-import Control.Exception (Exception, throw)
+import Control.Exception (Exception)
 import Control.Monad (forM_)
 import Control.Applicative (many)
 import Data.Aeson (FromJSON, ToJSON)
@@ -40,6 +40,7 @@ import Database.MySQL
   , FromField(..)
   , Connection
   , ConnectionInfo(..)
+  , ParseFailure(..)
   , query_
   , withConnection
   , failure
@@ -115,7 +116,7 @@ instance FromField RawValue where
       M.Geometry -> unsupported
       M.Json ->
         case Aeson.eitherDecode' $ LB.fromStrict bs of
-          Left err -> throw $ M.ConversionFailed
+          Left err -> Left $ ParseError $ M.ConversionFailed
             { M.errSQLType = show $ M.fieldType field
             , M.errHaskellType = "Aeson.Value"
             , M.errFieldName = Text.unpack $ Text.decodeUtf8 $ M.fieldName field
