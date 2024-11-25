@@ -57,6 +57,7 @@ library emulator-lib
         Ambar.Transport
         Ambar.Transport.Http
         Ambar.Transport.File
+        Database.MySQL
         Utils.Async
         Utils.Delay
         Utils.Directory

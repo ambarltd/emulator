@@ -5,7 +5,7 @@ module Ambar.Emulator.Connector.MySQL
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
-import Control.Exception (Exception, bracket, throw)
+import Control.Exception (Exception, throw)
 import Control.Monad (forM_)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
@@ -20,12 +20,10 @@ import qualified Data.Text.Encoding as Text
 import Data.Text (Text)
 import Data.Word (Word16)
 import Data.Void (Void)
-import qualified Database.MySQL.Base as M (MySQLError(..))
 import qualified Database.MySQL.Base.Types as M (Field(..), Type(..))
 import qualified Database.MySQL.Simple as M
 import qualified Database.MySQL.Simple.Result as M
 import qualified Database.MySQL.Simple.QueryResults as M
-import qualified Database.MySQL.Simple.QueryParams as M
 import GHC.Generics (Generic)
 import qualified Prettyprinter as Pretty
 import Prettyprinter (pretty, (<+>))
@@ -37,8 +35,8 @@ import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
 import Ambar.Record (Record(..), Value(..), Bytes(..), TimeStamp(..))
 import qualified Ambar.Record.Encoding as Encoding
 
+import Database.MySQL (Connection, ConnectionInfo(..), query_, withConnection)
 import Utils.Delay (Duration, millis, seconds)
-import Utils.Exception (annotateWith)
 import Utils.Async (withAsyncThrow)
 import Utils.Logger (SimpleLogger, logDebug, logInfo)
 import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
@@ -148,18 +146,6 @@ instance M.Result MySQLType where
 data UnsupportedMySQLType = UnsupportedMySQLType String
   deriving (Show, Exception)
 
-_runQuery :: (M.QueryParams q, M.QueryResults r) => M.Connection -> M.Query -> q -> IO [r]
-_runQuery conn q params = annotateWith f $ M.query conn q params
-  where
-  f :: M.MySQLError -> String
-  f _ = "On query " <> show q
-
-runQuery_ :: (M.QueryResults r) => M.Connection -> M.Query -> IO [r]
-runQuery_ conn q = annotateWith f $ M.query_ conn q
-  where
-  f :: M.MySQLError -> String
-  f _ = "On query " <> show q
-
 connect
   :: MySQL
   -> SimpleLogger
@@ -168,33 +154,31 @@ connect
   -> (STM MySQLState -> IO a)
   -> IO a
 connect config@MySQL{..} logger (MySQLState tracker) producer f =
-  withConnection $ \conn -> do
+  withConnection cinfo $ \conn -> do
   schema <- fetchSchema c_table conn
   validate config schema
   trackerVar <- newTVarIO tracker
   let readState = MySQLState <$> readTVar trackerVar
   withAsyncThrow (consume conn trackerVar) (f readState)
   where
-  withConnection = bracket open M.close
-    where
-    open = M.connect M.defaultConnectInfo
-       { M.connectHost = Text.unpack c_host
-       , M.connectPort = c_port
-       , M.connectUser = Text.unpack c_username
-       , M.connectPassword = Text.unpack c_password
-       , M.connectDatabase = Text.unpack c_database
-       }
+  cinfo = ConnectionInfo
+    { conn_host = c_host
+    , conn_port = c_port
+    , conn_username = c_username
+    , conn_password = c_password
+    , conn_database = c_database
+    }
 
-  fetchSchema :: Text -> M.Connection -> IO MySQLSchema
+  fetchSchema :: Text -> Connection -> IO MySQLSchema
   fetchSchema table conn = do
-    cols <- runQuery_ conn $ fromString $ "DESCRIBE " <> Text.unpack c_database <> "." <> Text.unpack table
+    cols <- query_ conn $ fromString $ "DESCRIBE " <> Text.unpack c_database <> "." <> Text.unpack table
     return $ MySQLSchema $ Map.fromList $ fromCol <$> cols
     where
     fromCol :: (Text, MySQLType, Maybe Bool, Maybe Text, Maybe Text, Maybe Text) -> (Text, MySQLType)
     fromCol (field, ty, _, _, _, _) = (field, ty)
 
   consume
-     :: M.Connection
+     :: Connection
      -> TVar BoundaryTracker
      -> IO Void
   consume conn trackerVar = Poll.connect trackerVar pc
@@ -216,7 +200,7 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
     run :: Boundaries -> IO [MySQLRow]
     run (Boundaries bs) = do
       logDebug logger query
-      raw <- runQuery_ conn (fromString query)
+      raw <- query_ conn (fromString query)
       let results = fmap toRow raw
       forM_ results logResult
       logDebug logger $ "results: " <> show (length results)
