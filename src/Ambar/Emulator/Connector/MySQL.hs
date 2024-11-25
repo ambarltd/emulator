@@ -7,6 +7,7 @@ module Ambar.Emulator.Connector.MySQL
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
 import Control.Exception (Exception, throw)
 import Control.Monad (forM_)
+import Control.Applicative (many)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LB
@@ -23,7 +24,6 @@ import Data.Void (Void)
 import qualified Database.MySQL.Base.Types as M (Field(..), Type(..))
 import qualified Database.MySQL.Simple as M
 import qualified Database.MySQL.Simple.Result as M
-import qualified Database.MySQL.Simple.QueryResults as M
 import GHC.Generics (Generic)
 import qualified Prettyprinter as Pretty
 import Prettyprinter (pretty, (<+>))
@@ -35,7 +35,16 @@ import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
 import Ambar.Record (Record(..), Value(..), Bytes(..), TimeStamp(..))
 import qualified Ambar.Record.Encoding as Encoding
 
-import Database.MySQL (Connection, ConnectionInfo(..), query_, withConnection)
+import Database.MySQL
+  ( FromRow(..)
+  , FromField(..)
+  , Connection
+  , ConnectionInfo(..)
+  , query_
+  , withConnection
+  , failure
+  )
+import qualified Database.MySQL as MySQL
 import Utils.Delay (Duration, millis, seconds)
 import Utils.Async (withAsyncThrow)
 import Utils.Logger (SimpleLogger, logDebug, logInfo)
@@ -68,26 +77,26 @@ newtype MySQLRow = MySQLRow { unMySQLRow :: Record }
 
 newtype RawRow = RawRow [RawValue]
 
-instance M.QueryResults RawRow where
-  convertResults fs mbs = RawRow $ zipWith M.convert fs mbs
+instance FromRow RawRow where
+  fromRow = RawRow <$> many MySQL.field
 
 newtype RawValue = RawValue { unRawValue :: Value }
 
-instance M.Result RawValue where
-  convert _ Nothing = RawValue Null
-  convert field mbs@(Just bs) = RawValue $
+instance FromField RawValue where
+  parseField _ Nothing = pure $ RawValue Null
+  parseField field mbs@(Just bs) = fmap RawValue $
     case M.fieldType field of
-      M.Decimal -> Real $ M.convert field mbs
-      M.Long -> Real $ M.convert field mbs
-      M.Float -> Real $ M.convert field mbs
-      M.Double -> Real $ M.convert field mbs
-      M.NewDecimal -> Real $ M.convert field mbs
-      M.Null -> Null
-      M.Timestamp -> DateTime $ TimeStamp (Text.decodeUtf8 bs) (M.convert field mbs)
-      M.Tiny -> Int $ M.convert field mbs
-      M.Short -> Int $ M.convert field mbs
-      M.LongLong -> Int $ M.convert field mbs
-      M.Int24 -> Int $ M.convert field mbs
+      M.Decimal -> Real <$> parseField field mbs
+      M.Long -> Real <$> parseField field mbs
+      M.Float -> Real <$> parseField field mbs
+      M.Double -> Real <$> parseField field mbs
+      M.NewDecimal -> Real <$> parseField field mbs
+      M.Null -> pure Null
+      M.Timestamp -> DateTime . TimeStamp (Text.decodeUtf8 bs) <$> parseField field mbs
+      M.Tiny -> Int <$> parseField field mbs
+      M.Short -> Int <$> parseField field mbs
+      M.LongLong -> Int <$> parseField field mbs
+      M.Int24 -> Int <$> parseField field mbs
       M.Date -> unsupported
       M.Time -> unsupported
       M.DateTime -> unsupported
@@ -96,13 +105,13 @@ instance M.Result RawValue where
       M.Bit -> unsupported
       M.Enum -> unsupported
       M.Set -> unsupported
-      M.TinyBlob -> Binary $ Bytes $ M.convert field mbs
-      M.MediumBlob -> Binary $ Bytes $ M.convert field mbs
-      M.LongBlob -> Binary $ Bytes $ M.convert field mbs
-      M.Blob -> Binary $ Bytes $ M.convert field mbs
-      M.VarChar -> String $ M.convert field mbs
-      M.VarString -> String $ M.convert field mbs
-      M.String -> String $ M.convert field mbs
+      M.TinyBlob -> Binary . Bytes <$> parseField field mbs
+      M.MediumBlob -> Binary . Bytes <$> parseField field mbs
+      M.LongBlob -> Binary . Bytes <$> parseField field mbs
+      M.Blob -> Binary . Bytes <$> parseField field mbs
+      M.VarChar -> String <$> parseField field mbs
+      M.VarString -> String <$> parseField field mbs
+      M.String -> String <$> parseField field mbs
       M.Geometry -> unsupported
       M.Json ->
         case Aeson.eitherDecode' $ LB.fromStrict bs of
@@ -112,14 +121,9 @@ instance M.Result RawValue where
             , M.errFieldName = Text.unpack $ Text.decodeUtf8 $ M.fieldName field
             , M.errMessage = "Unable to decode JSON input: " <> err
             }
-          Right v -> Json (M.convert field mbs) v
+          Right v -> (\val -> Json val v) <$> parseField field mbs
     where
-    unsupported = throw $ M.Incompatible
-      { M.errSQLType = show $ M.fieldType field
-      , M.errHaskellType = "UNSUPPORTED"
-      , M.errFieldName = Text.unpack $ Text.decodeUtf8 $ M.fieldName field
-      , M.errMessage = "Type not supported by the MySQL Connector"
-      }
+    unsupported = Left $ failure "Type not supported by the MySQL Connector"
 
 instance C.Connector MySQL where
   type ConnectorState MySQL = MySQLState

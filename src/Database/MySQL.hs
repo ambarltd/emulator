@@ -1,40 +1,59 @@
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | A thread-safe wrapper around the mysql and mysql-simple libraries.
 module Database.MySQL
-  ( query
+  ( Connection
+  , ConnectionInfo(..)
+  , withConnection
+  , query
   , query_
   , executeMany
   , execute_
-  , Connection
-  , ConnectionInfo(..)
-  , withConnection
+
+  -- saner parsing primitives
+  , FromRow(..)
+  , FromField(..)
+  , field
+  , failure
   )
   where
 
 import Control.Concurrent (MVar, newMVar, newEmptyMVar, putMVar, takeMVar, tryPutMVar, modifyMVar_)
-import Control.Exception (SomeException, bracket, throwIO)
-import Control.Monad (unless)
+import Control.Exception (SomeException, bracket, throwIO, try, evaluate)
+import Control.Monad (forM, unless)
+import Control.Applicative (Alternative(..))
+import Data.ByteString (ByteString)
 import Data.Int (Int64)
 import Control.Monad (forever)
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import Data.Text (Text)
 import Data.Word (Word16)
 import System.IO.Unsafe (unsafePerformIO)
 
 import qualified Database.MySQL.Base as M (MySQLError(..), initLibrary, initThread, endThread)
+import qualified Database.MySQL.Base.Types as M (Field(..))
 import qualified Database.MySQL.Simple as M
+import qualified Database.MySQL.Simple.Result as M (ResultError(..), Result(..))
 import qualified Database.MySQL.Simple.QueryResults as M
 import qualified Database.MySQL.Simple.QueryParams as M
 
 import Utils.Exception (annotateWith, tryAll)
 import Utils.Async (withAsyncBoundThrow)
 
-query :: (M.QueryParams q, M.QueryResults r) => Connection -> M.Query -> q -> IO [r]
-query (Connection run) q params = run $ \conn -> annotateQ q $ M.query conn q params
+query :: forall q r. (M.QueryParams q, FromRow r) => Connection -> M.Query -> q -> IO [r]
+query (Connection run) q params =
+  run $ \conn ->
+    annotateQ q $ do
+      rows <- M.query conn q params
+      parseRows rows
 
-query_ :: (M.QueryResults r) => Connection -> M.Query -> IO [r]
-query_ (Connection run) q = run $ \conn -> annotateQ q $ M.query_ conn q
-  where
+query_ :: FromRow r => Connection -> M.Query -> IO [r]
+query_ (Connection run) q =
+  run $ \conn ->
+    annotateQ q $ do
+      rows <- M.query_ conn q
+      parseRows rows
 
 execute_ :: Connection -> M.Query -> IO Int64
 execute_ (Connection run) q = run $ \conn -> annotateQ q $ M.execute_ conn q
@@ -42,6 +61,7 @@ execute_ (Connection run) q = run $ \conn -> annotateQ q $ M.execute_ conn q
 executeMany :: M.QueryParams q => Connection -> M.Query -> [q] -> IO Int64
 executeMany (Connection run) q ps = run $ \conn -> annotateQ q $ M.executeMany conn q ps
 
+-- | Include the query that was executed together with the error.
 annotateQ :: M.Query -> IO a -> IO a
 annotateQ q act = annotateWith f act
   where
@@ -114,3 +134,106 @@ withConnection ConnectionInfo{..} f = do
   close conn = do
     M.endThread
     M.close conn
+
+newtype Row = Row [(M.Field, Maybe ByteString)]
+
+data ParseFailure = ParseFailure
+  { pf_field :: String
+  , pf_error :: String
+  }
+
+class FromRow r where
+  fromRow :: RowParser r
+
+instance (FromField a, FromField b) =>
+  FromRow (a,b) where
+  fromRow = (,) <$> field <*> field
+
+instance (FromField a , FromField b, FromField c) =>
+    FromRow (a,b,c) where
+  fromRow = (,,) <$> field <*> field <*> field
+
+instance (FromField a , FromField b, FromField c, FromField d) =>
+    FromRow (a,b,c,d) where
+  fromRow = (,,,) <$> field <*> field <*> field <*> field
+
+instance (FromField a , FromField b, FromField c, FromField d, FromField e) =>
+    FromRow (a,b,c,d,e) where
+  fromRow = (,,,,) <$> field <*> field <*> field <*> field <*> field
+
+instance (FromField a , FromField b, FromField c, FromField d, FromField e, FromField f) =>
+    FromRow (a,b,c,d,e,f) where
+  fromRow = (,,,,,) <$> field <*> field <*> field <*> field <*> field <*> field
+
+parseRow :: FromRow a => Row -> Either ParseFailure a
+parseRow row = fmap snd $ parser row
+  where
+  RowParser parser = fromRow
+
+parseRows :: FromRow a => [Row] -> IO [a]
+parseRows rows =
+  case forM rows parseRow of
+    Left (ParseFailure fieldName err) -> throwIO $ M.ConversionFailed
+      { errSQLType = "empty"
+      , errHaskellType = "empty"
+      , errFieldName = fieldName
+      , errMessage = err
+      }
+    Right vs -> return vs
+
+newtype RowParser a = RowParser (Row -> Either ParseFailure (Row, a))
+
+instance Functor RowParser where
+  fmap f (RowParser g) = RowParser $ fmap (fmap $ fmap f) g
+
+instance Applicative RowParser where
+  pure v = RowParser $ \row -> Right (row, v)
+  (RowParser fs) <*> (RowParser vs) = RowParser $ \row -> do
+    (row', f) <- fs row
+    (row'', v) <- vs row'
+    return (row'', f v)
+
+instance Alternative RowParser where
+  empty = fail "no parse"
+  (RowParser l) <|> (RowParser r) = RowParser $ \row ->
+    case l row of
+      Right v -> return v
+      Left _ -> r row
+
+instance Monad RowParser where
+  (RowParser vs) >>= f = RowParser $ \row -> do
+    (row', v) <- vs row
+    let RowParser g = f v
+    x <- g row'
+    return x
+
+instance MonadFail RowParser where
+  fail str = RowParser $ \_ -> Left $ failure str
+
+class FromField r where
+  parseField :: M.Field -> Maybe ByteString -> Either ParseFailure r
+
+field :: FromField r => RowParser r
+field = RowParser $ \(Row row) ->
+  case row of
+    [] -> Left $ failure "insufficient values"
+    (f,mbs) : row' -> fmap (Row row',) (parseField f mbs)
+
+
+instance {-# OVERLAPPABLE #-} M.Result r => FromField r where
+  parseField f mbs =
+    case unsafePerformIO $ try $ evaluate $ M.convert f mbs of
+      Left (err :: M.ResultError) -> Left ParseFailure
+        { pf_field = Text.unpack $ Text.decodeUtf8 $ M.fieldName f
+        , pf_error = show err
+        }
+      Right v -> Right v
+
+failure :: String -> ParseFailure
+failure str = ParseFailure
+  { pf_field = "empty"
+  , pf_error = str
+  }
+
+instance M.QueryResults Row where
+  convertResults fs mbs = Row $ zip fs mbs
