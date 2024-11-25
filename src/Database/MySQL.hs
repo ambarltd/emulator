@@ -1,4 +1,5 @@
--- | A convenient wrapper around the mysql and mysql-simple libraries.
+
+-- | A thread-safe wrapper around the mysql and mysql-simple libraries.
 module Database.MySQL
   ( query
   , query_
@@ -10,15 +11,17 @@ module Database.MySQL
   )
   where
 
-import Control.Concurrent (MVar, newEmptyMVar, putMVar, takeMVar, tryPutMVar)
+import Control.Concurrent (MVar, newMVar, newEmptyMVar, putMVar, takeMVar, tryPutMVar, modifyMVar_)
 import Control.Exception (SomeException, bracket, throwIO)
+import Control.Monad (unless)
 import Data.Int (Int64)
 import Control.Monad (forever)
 import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Word (Word16)
+import System.IO.Unsafe (unsafePerformIO)
 
-import qualified Database.MySQL.Base as M (MySQLError(..))
+import qualified Database.MySQL.Base as M (MySQLError(..), initLibrary, initThread, endThread)
 import qualified Database.MySQL.Simple as M
 import qualified Database.MySQL.Simple.QueryResults as M
 import qualified Database.MySQL.Simple.QueryParams as M
@@ -56,13 +59,25 @@ data ConnectionInfo = ConnectionInfo
   , conn_database :: Text
   }
 
--- | The MySQL library uses thread-local variables which means it isn't really thread-safe.
--- There is a way to use a connection in multiple threads but it's too much hassle.
+{-# NOINLINE initialised #-}
+initialised :: MVar Bool
+initialised = unsafePerformIO (newMVar False)
+
+-- | Initialise the C library only once.
+initialise :: IO ()
+initialise = modifyMVar_ initialised $ \done -> do
+  unless done M.initLibrary
+  return True
+
+-- | The underlying MySQL C library uses thread-local variables which means it isn't
+-- really thread-safe. There is a way to use a connection in multiple threads but it's
+-- too much hassle.
 --
--- We do the easiest thing: use a sigle bound thread per connection to the db and perform
--- all db communication in that thread.
+-- We do the easiest thing: use a sigle bound thread per connection to the db and
+-- perform all db communication in that thread.
 withConnection :: ConnectionInfo -> (Connection -> IO a) -> IO a
 withConnection ConnectionInfo{..} f = do
+  initialise
   varAction <- newEmptyMVar
   r <- withAsyncBoundThrow (worker varAction) $ f (Connection (run varAction))
   _ <- tryPutMVar varAction (\_ -> return ())
@@ -81,15 +96,21 @@ withConnection ConnectionInfo{..} f = do
 
   worker :: MVar (M.Connection -> IO ()) -> IO ()
   worker varAction =
-    bracket open M.close $ \conn -> do
+    bracket open close $ \conn -> do
     forever $ do
       act <- takeMVar varAction
       act conn
 
-  open = M.connect M.defaultConnectInfo
+  open = do
+    M.initThread
+    M.connect M.defaultConnectInfo
      { M.connectHost = Text.unpack conn_host
      , M.connectPort = conn_port
      , M.connectUser = Text.unpack conn_username
      , M.connectPassword = Text.unpack conn_password
      , M.connectDatabase = Text.unpack conn_database
      }
+
+  close conn = do
+    M.endThread
+    M.close conn
