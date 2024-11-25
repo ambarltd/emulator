@@ -60,6 +60,7 @@ library emulator-lib
         Utils.Async
         Utils.Delay
         Utils.Directory
+        Utils.Exception
         Utils.Logger
         Utils.Prettyprinter
         Utils.STM

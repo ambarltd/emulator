@@ -6,6 +6,7 @@ module Ambar.Emulator.Connector.MySQL
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
 import Control.Exception (Exception, bracket, throw)
+import Control.Monad (forM_)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LB
@@ -19,23 +20,25 @@ import qualified Data.Text.Encoding as Text
 import Data.Text (Text)
 import Data.Word (Word16)
 import Data.Void (Void)
+import qualified Database.MySQL.Base as M (MySQLError(..))
 import qualified Database.MySQL.Base.Types as M (Field(..), Type(..))
 import qualified Database.MySQL.Simple as M
 import qualified Database.MySQL.Simple.Result as M
 import qualified Database.MySQL.Simple.QueryResults as M
+import qualified Database.MySQL.Simple.QueryParams as M
 import GHC.Generics (Generic)
 import qualified Prettyprinter as Pretty
 import Prettyprinter (pretty, (<+>))
 
 import qualified Ambar.Emulator.Connector as C
-import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream)
+import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..))
 import qualified Ambar.Emulator.Connector.Poll as Poll
 import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
 import Ambar.Record (Record(..), Value(..), Bytes(..), TimeStamp(..))
 import qualified Ambar.Record.Encoding as Encoding
 
 import Utils.Delay (Duration, millis, seconds)
-
+import Utils.Exception (annotateWith)
 import Utils.Async (withAsyncThrow)
 import Utils.Logger (SimpleLogger, logDebug, logInfo)
 import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
@@ -145,6 +148,18 @@ instance M.Result MySQLType where
 data UnsupportedMySQLType = UnsupportedMySQLType String
   deriving (Show, Exception)
 
+_runQuery :: (M.QueryParams q, M.QueryResults r) => M.Connection -> M.Query -> q -> IO [r]
+_runQuery conn q params = annotateWith f $ M.query conn q params
+  where
+  f :: M.MySQLError -> String
+  f _ = "On query " <> show q
+
+runQuery_ :: (M.QueryResults r) => M.Connection -> M.Query -> IO [r]
+runQuery_ conn q = annotateWith f $ M.query_ conn q
+  where
+  f :: M.MySQLError -> String
+  f _ = "On query " <> show q
+
 connect
   :: MySQL
   -> SimpleLogger
@@ -172,10 +187,10 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
 
   fetchSchema :: Text -> M.Connection -> IO MySQLSchema
   fetchSchema table conn = do
-    cols <- M.query conn "DESCRIBE" [c_database <> "." <> table]
+    cols <- runQuery_ conn $ fromString $ "DESCRIBE " <> Text.unpack c_database <> "." <> Text.unpack table
     return $ MySQLSchema $ Map.fromList $ fromCol <$> cols
     where
-    fromCol :: (Text, MySQLType, Bool, Text, Text, Text) -> (Text, MySQLType)
+    fromCol :: (Text, MySQLType, Maybe Bool, Maybe Text, Maybe Text, Maybe Text) -> (Text, MySQLType)
     fromCol (field, ty, _, _, _, _) = (field, ty)
 
   consume
@@ -186,7 +201,7 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
     where
     pc = Poll.PollingConnector
        { Poll.c_getId = entryId
-       , Poll.c_poll = run
+       , Poll.c_poll = \bs -> Poll.streamed $ run bs
        , Poll.c_pollingInterval = _POLLING_INTERVAL
        , Poll.c_maxTransactionTime = _MAX_TRANSACTION_TIME
        , Poll.c_producer = producer
@@ -198,41 +213,38 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
       vals = fmap unRawValue rawValues
       cols = columns config
 
-    run :: Boundaries -> Stream MySQLRow
-    run (Boundaries bs) acc0 emit = do
-       logDebug logger query
-       (acc, count) <- M.fold_ conn (fromString query) (acc0, 0) $
-         \(acc, !count) raw -> do
-           let row = toRow raw
-           logResult row
-           acc' <- emit acc row
-           return (acc', succ count)
-       logDebug logger $ "results: " <> show @Int count
-       return acc
-       where
-       query = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
-          [ "SELECT" , commaSeparated $ map pretty $ columns config
-          , "FROM" , pretty c_table
-          , if null bs then "" else "WHERE" <> constraints
-          , "ORDER BY" , pretty c_incrementingColumn
-          ]
+    run :: Boundaries -> IO [MySQLRow]
+    run (Boundaries bs) = do
+      logDebug logger query
+      raw <- runQuery_ conn (fromString query)
+      let results = fmap toRow raw
+      forM_ results logResult
+      logDebug logger $ "results: " <> show (length results)
+      return results
+      where
+      query = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
+         [ "SELECT" , commaSeparated $ map pretty $ columns config
+         , "FROM" , pretty c_table
+         , if null bs then "" else "WHERE" <> constraints
+         , "ORDER BY" , pretty c_incrementingColumn
+         ]
 
-       constraints = sepBy "AND"
-          [ Pretty.fillSep
-             [ "("
-             , pretty c_incrementingColumn, "<", pretty low
-             , "OR"
-             ,  pretty high, "<", pretty c_incrementingColumn
-             , ")"]
-          | (EntryId low, EntryId high) <- bs
-          ]
+      constraints = sepBy "AND"
+         [ Pretty.fillSep
+            [ "("
+            , pretty c_incrementingColumn, "<", pretty low
+            , "OR"
+            ,  pretty high, "<", pretty c_incrementingColumn
+            , ")"]
+         | (EntryId low, EntryId high) <- bs
+         ]
 
-       logResult row =
-        logInfo logger $ renderPretty $
-          "ingested." <+> commaSeparated
-            [ "serial_value:" <+> prettyJSON (serialValue row)
-            , "partitioning_value:" <+> prettyJSON (partitioningValue row)
-            ]
+      logResult row =
+       logInfo logger $ renderPretty $
+         "ingested." <+> commaSeparated
+           [ "serial_value:" <+> prettyJSON (serialValue row)
+           , "partitioning_value:" <+> prettyJSON (partitioningValue row)
+           ]
 
 
 -- | Columns in the order they will be queried.
