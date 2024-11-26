@@ -2,6 +2,7 @@ module Ambar.Emulator.Connector.MySQL
   ( MySQL(..)
   , MySQLState
   , MySQLRow
+  , UnsupportedType(..)
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
@@ -123,6 +124,9 @@ instance FromField RawValue where
             Right v -> (\val -> Json val v) <$> fieldParser
     where
     unsupported = fail "Type not supported by the MySQL Connector"
+
+data UnsupportedType = UnsupportedType String
+  deriving (Show, Exception)
 
 instance C.Connector MySQL where
   type ConnectorState MySQL = MySQLState

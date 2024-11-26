@@ -14,12 +14,16 @@ module Database.MySQL
   , fold_
 
   -- saner parsing primitives
+  , ToRow
+  , ToField
   , FromRow(..)
   , FromField(..)
   , FieldParser
   , RowParser
   , fieldInfo
   , fieldParseError
+  , fromFieldParser
+  , parseFailure
   , parseField
 
   -- useful re-exports
@@ -30,7 +34,7 @@ module Database.MySQL
   where
 
 import Control.Concurrent (MVar, newMVar, newEmptyMVar, putMVar, takeMVar, tryPutMVar, modifyMVar_)
-import Control.Exception (Exception, SomeException, bracket, throwIO, try, evaluate)
+import Control.Exception (Exception, SomeException, ErrorCall(..), toException, bracket, throwIO, try, evaluate)
 import Control.Monad (unless)
 import Control.Applicative (Alternative(..))
 import Data.ByteString (ByteString)
@@ -51,7 +55,7 @@ import qualified Database.MySQL.Simple.QueryParams as M
 import Utils.Exception (annotateWith, tryAll)
 import Utils.Async (withAsyncBoundThrow)
 
-query :: (M.QueryParams q, FromRow r) => Connection -> M.Query -> q -> IO [r]
+query :: (ToRow q, FromRow r) => Connection -> M.Query -> q -> IO [r]
 query (Connection run) q params =
   run $ \conn ->
     annotateQ q $ do
@@ -66,7 +70,7 @@ query_ (Connection run) q =
       traverse parseRow rows
 
 fold
-  :: (M.QueryParams q, FromRow r)
+  :: (ToRow q, FromRow r)
   => Connection
   -> M.Query
   -> q
@@ -91,7 +95,7 @@ fold_ (Connection run) q acc f =
 execute_ :: Connection -> M.Query -> IO Int64
 execute_ (Connection run) q = run $ \conn -> annotateQ q $ M.execute_ conn q
 
-executeMany :: M.QueryParams q => Connection -> M.Query -> [q] -> IO Int64
+executeMany :: ToRow q => Connection -> M.Query -> [q] -> IO Int64
 executeMany (Connection run) q ps =
   run $ \conn -> annotateQ q $ M.executeMany conn q ps
 
@@ -183,7 +187,7 @@ newtype Row = Row [(M.Field, Maybe ByteString)]
 
 data ParseFailure
   = ParseError M.ResultError
-  | Unexpected String
+  | Unexpected SomeException
   deriving (Show)
   deriving anyclass (Exception)
 
@@ -245,7 +249,7 @@ instance Monad RowParser where
     return x
 
 instance MonadFail RowParser where
-  fail str = RowParser $ \_ -> Left $ Unexpected str
+  fail str = fromFieldParser (fail str)
 
 class FromField r where
   fieldParser :: FieldParser r
@@ -255,6 +259,9 @@ fieldInfo = FieldParser $ \x mbs -> Right (x, mbs)
 
 fieldParseError :: M.ResultError -> FieldParser a
 fieldParseError err = FieldParser $ \_ _ -> Left (ParseError err)
+
+parseFailure :: Exception e => e -> FieldParser a
+parseFailure e = FieldParser $ \_ _ -> Left (Unexpected $ toException e)
 
 newtype FieldParser a = FieldParser
   { unFieldParser :: M.Field -> Maybe ByteString -> Either ParseFailure a
@@ -278,20 +285,33 @@ instance Monad FieldParser where
          in g x mbs
 
 instance MonadFail FieldParser where
-  fail str = FieldParser $ \_ _ -> Left $ Unexpected str
+  fail str = parseFailure (ErrorCall str)
 
 parseField :: FromField r => RowParser r
-parseField = RowParser $ \(Row row) ->
+parseField = fromFieldParser fieldParser
+
+fromFieldParser :: FieldParser a -> RowParser a
+fromFieldParser parser = RowParser $ \(Row row) ->
   case row of
-    [] -> Left $ Unexpected "insufficient values"
-    (f,mbs) : row' -> fmap (Row row',) (unFieldParser fieldParser f mbs)
+    [] -> Left $ Unexpected $ toException $ ErrorCall "insufficient values"
+    (f,mbs) : row' -> fmap (Row row',) (unFieldParser parser f mbs)
 
 instance {-# OVERLAPPABLE #-} M.Result r => FromField r where
   fieldParser  = do
     (f, mbs) <- fieldInfo
     case unsafePerformIO $ try $ evaluate $ M.convert f mbs of
-      Left (err :: M.ResultError) -> FieldParser $ \_ _ -> Left (ParseError err)
+      Left (err :: M.ResultError) ->
+        FieldParser $ \_ _ -> Left (ParseError err)
       Right v -> return v
 
 instance M.QueryResults Row where
   convertResults fs mbs = Row $ zip fs mbs
+
+-- | A value that can be converted into query parameters
+-- Use ToRow instead of QueryResults
+class M.QueryParams a => ToRow a
+instance M.QueryParams a => ToRow a
+
+-- Use ToField instead of Param
+class M.Param a => ToField a
+instance M.Param a => ToField a

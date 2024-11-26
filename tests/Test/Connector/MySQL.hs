@@ -8,9 +8,10 @@ module Test.Connector.MySQL
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
 import Control.Concurrent.Async (mapConcurrently)
-import Control.Exception (bracket, throwIO, ErrorCall(..), uninterruptibleMask_)
+import Control.Exception (bracket, throwIO, ErrorCall(..), uninterruptibleMask_, fromException)
 import Control.Monad (void, replicateM, forM_)
 import qualified Data.Aeson as Aeson
+import Data.Aeson (FromJSON)
 import qualified Data.ByteString.Lazy as LB
 import Data.Default (def)
 import Data.List (sort, stripPrefix)
@@ -27,19 +28,21 @@ import Test.Hspec
   , it
   , describe
   , shouldBe
+  , shouldThrow
   )
 import Test.Hspec.Expectations.Contrib (annotate)
 
 
 import qualified Ambar.Emulator.Connector as Connector
 import Ambar.Emulator.Connector (partitioner, encoder)
-import Ambar.Emulator.Connector.MySQL (MySQL(..))
+import Ambar.Emulator.Connector.MySQL (MySQL(..), UnsupportedType(..))
 import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Database.MySQL
    ( ConnectionInfo(..)
    , Connection
    , FromRow(..)
+   , ToField
    , parseField
    , query_
    , executeMany
@@ -115,7 +118,48 @@ testMySQL c = do
             forM_ byAggregateId $ \(a_id, seqs) ->
               annotate ("ordered (" <> show a_id <> ")") $
                 sort seqs `shouldBe` seqs
+
+    -- Test that column types are supported/unsupported by
+    -- creating database entries with the value and reporting
+    -- on the emulator's behaviour when trying to decode them.
+    describe "decodes" $ do
+      describe "Numeric" $ do
+        supported "SMALLINT"         (1 :: Int)
+        supported "INTEGER"          (1 :: Int)
+        supported "BIGINT"           (1 :: Int)
+        supported "REAL"             (1.0 :: Double)
+        supported "DOUBLE PRECISION" (1.5 :: Double)
+        supported "SMALLSERIAL"      (1 :: Int)
+        supported "SERIAL"           (1 :: Int)
+        supported "BIGSERIAL"        (1 :: Int)
+        -- unsupported "DECIMAL"        (1.5 :: Scientific)
+        -- unsupported "NUMERIC"        (1.5 :: Scientific)
+      describe "Monetary" $ do
+        unsupported "MONEY" (1.5 :: Double)
   where
+  unsupported :: (FromJSON a, ToField a, Show a, Eq a) => String -> a -> Spec
+  unsupported ty val =
+    it ("unsupported " <> ty) $
+      roundTrip ty val `shouldThrow` unsupportedType
+
+  unsupportedType e
+    | Just (UnsupportedType _) <- fromException e = True
+    | otherwise = False
+
+  supported :: (FromJSON a, ToField a, Show a, Eq a) => String -> a -> Spec
+  supported ty val = it ty $ roundTrip ty val
+
+  -- Write a value of a given type to a database table, then read it from the Topic.
+  roundTrip :: (FromJSON a, ToField a, Show a, Eq a) => String -> a -> IO ()
+  roundTrip ty val =
+    with (MySQLType ty) (PartitionCount 1) $ \conn table topic connected -> do
+    let record = TEntry 1 1 1 val
+    insert conn table [record]
+    connected $ deadline (seconds 1) $ do
+      Topic.withConsumer topic group $ \consumer -> do
+        (entry, _) <- readEntry consumer
+        entry `shouldBe` record
+
   with
     :: Table t
     => Config t
@@ -295,3 +339,54 @@ withMySQL f = bracket setup teardown f
 
   deleteDatabase db =
     run $ Text.unwords [ "DROP DATABASE", db]
+
+
+data TTable a = TTable
+  { tt_name :: String
+  , _tt_tyName :: String
+  }
+
+data TEntry a = TEntry
+  { te_id :: Int
+  , te_aggregate_id :: Int
+  , te_sequence_number :: Int
+  , te_value :: a
+  }
+  deriving (Eq, Show, Generic, Functor)
+
+instance FromJSON a => FromJSON (TEntry a) where
+  parseJSON = Aeson.genericParseJSON opt
+    where
+    opt = Aeson.defaultOptions
+      { Aeson.fieldLabelModifier = \label ->
+        fromMaybe label (stripPrefix "te_" label)
+      }
+
+newtype MySQLType a = MySQLType String
+
+instance ToField a => Table (TTable a) where
+  type Entry (TTable a) = TEntry a
+  type Config (TTable a) = MySQLType a
+  tableName (TTable name _) = name
+  tableCols _ = ["id", "aggregate_id", "sequence_number", "value"]
+  mocks = error "no mocks for TTable"
+  insert conn t entries =
+    void $ executeMany conn query [(agg_id, seq_num, val) | TEntry _ agg_id seq_num val <- entries ]
+    where
+    query = fromString $ unwords
+      [ "INSERT INTO", tt_name t
+      ,"(aggregate_id, sequence_number, value)"
+      ,"VALUES (?, ?, ?)"
+      ]
+  withTable (MySQLType ty) conn f =
+    withMySQLTable conn schema $ \name -> f (TTable name ty)
+    where
+    schema = unwords
+        [ "( id               SERIAL"
+        , ", aggregate_id     INTEGER NOT NULL"
+        , ", sequence_number  INTEGER NOT NULL"
+        , ", value            " <> ty
+        , ", PRIMARY KEY (id)"
+        , ", UNIQUE (aggregate_id, sequence_number)"
+        , ")"
+        ]
