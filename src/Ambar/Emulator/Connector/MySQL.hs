@@ -6,7 +6,6 @@ module Ambar.Emulator.Connector.MySQL
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
 import Control.Exception (Exception)
-import Control.Monad (forM_)
 import Control.Applicative (many)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
@@ -29,7 +28,7 @@ import qualified Prettyprinter as Pretty
 import Prettyprinter (pretty, (<+>))
 
 import qualified Ambar.Emulator.Connector as C
-import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..))
+import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream)
 import qualified Ambar.Emulator.Connector.Poll as Poll
 import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
 import Ambar.Record (Record(..), Value(..), Bytes(..), TimeStamp(..))
@@ -43,6 +42,7 @@ import Database.MySQL
   , fieldInfo
   , fieldParseError
   , query_
+  , fold_
   , withConnection
   )
 import qualified Database.MySQL as MySQL
@@ -192,7 +192,7 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
     where
     pc = Poll.PollingConnector
        { Poll.c_getId = entryId
-       , Poll.c_poll = \bs -> Poll.streamed $ run bs
+       , Poll.c_poll = run
        , Poll.c_pollingInterval = _POLLING_INTERVAL
        , Poll.c_maxTransactionTime = _MAX_TRANSACTION_TIME
        , Poll.c_producer = producer
@@ -204,14 +204,17 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
       vals = fmap unRawValue rawValues
       cols = columns config
 
-    run :: Boundaries -> IO [MySQLRow]
-    run (Boundaries bs) = do
+    run :: Boundaries -> Stream MySQLRow
+    run (Boundaries bs) acc0 emit = do
       logDebug logger query
-      raw <- query_ conn (fromString query)
-      let results = fmap toRow raw
-      forM_ results logResult
-      logDebug logger $ "results: " <> show (length results)
-      return results
+      (acc, count) <- fold_ conn (fromString query) (acc0, 0 :: Int) $
+        \(acc, !count) r -> do
+          let row = toRow r
+          logResult row
+          acc' <- emit acc row
+          return (acc', succ count)
+      logDebug logger $ "results: " <> show count
+      return acc
       where
       query = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
          [ "SELECT" , commaSeparated $ map pretty $ columns config

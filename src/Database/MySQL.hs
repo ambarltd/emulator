@@ -9,6 +9,8 @@ module Database.MySQL
   , query_
   , executeMany
   , execute_
+  , fold
+  , fold_
 
   -- saner parsing primitives
   , FromRow(..)
@@ -23,7 +25,7 @@ module Database.MySQL
 
 import Control.Concurrent (MVar, newMVar, newEmptyMVar, putMVar, takeMVar, tryPutMVar, modifyMVar_)
 import Control.Exception (Exception, SomeException, bracket, throwIO, try, evaluate)
-import Control.Monad (forM, unless)
+import Control.Monad (unless)
 import Control.Applicative (Alternative(..))
 import Data.ByteString (ByteString)
 import Data.Int (Int64)
@@ -43,25 +45,49 @@ import qualified Database.MySQL.Simple.QueryParams as M
 import Utils.Exception (annotateWith, tryAll)
 import Utils.Async (withAsyncBoundThrow)
 
-query :: forall q r. (M.QueryParams q, FromRow r) => Connection -> M.Query -> q -> IO [r]
+query :: (M.QueryParams q, FromRow r) => Connection -> M.Query -> q -> IO [r]
 query (Connection run) q params =
   run $ \conn ->
     annotateQ q $ do
       rows <- M.query conn q params
-      parseRows rows
+      traverse parseRow rows
 
 query_ :: FromRow r => Connection -> M.Query -> IO [r]
 query_ (Connection run) q =
   run $ \conn ->
     annotateQ q $ do
       rows <- M.query_ conn q
-      parseRows rows
+      traverse parseRow rows
+
+fold
+  :: (M.QueryParams q, FromRow r)
+  => Connection
+  -> M.Query
+  -> q
+  -> a
+  -> (a -> r -> IO a)
+  -> IO a
+fold (Connection run) q params acc f =
+  run $ \conn ->
+  annotateQ q $
+  M.fold conn q params acc $ \acc' row -> do
+    r <- parseRow row
+    f acc' r
+
+fold_ :: FromRow r => Connection -> M.Query -> a -> (a -> r -> IO a) -> IO a
+fold_ (Connection run) q acc f =
+  run $ \conn ->
+  annotateQ q $
+  M.fold_ conn q acc $ \acc' row -> do
+    r <- parseRow row
+    f acc' r
 
 execute_ :: Connection -> M.Query -> IO Int64
 execute_ (Connection run) q = run $ \conn -> annotateQ q $ M.execute_ conn q
 
 executeMany :: M.QueryParams q => Connection -> M.Query -> [q] -> IO Int64
-executeMany (Connection run) q ps = run $ \conn -> annotateQ q $ M.executeMany conn q ps
+executeMany (Connection run) q ps =
+  run $ \conn -> annotateQ q $ M.executeMany conn q ps
 
 -- | Include the query that was executed together with the error.
 annotateQ :: M.Query -> IO a -> IO a
@@ -168,16 +194,13 @@ instance (FromField a , FromField b, FromField c, FromField d, FromField e, From
     FromRow (a,b,c,d,e,f) where
   rowParser = (,,,,,) <$> field <*> field <*> field <*> field <*> field <*> field
 
-parseRow :: FromRow a => Row -> Either ParseFailure a
-parseRow row = fmap snd $ parser row
+parseRow :: FromRow a => Row -> IO a
+parseRow row =
+  case fmap snd $ parser row of
+    Left err -> throwIO err
+    Right v -> return v
   where
   RowParser parser = rowParser
-
-parseRows :: FromRow a => [Row] -> IO [a]
-parseRows rows =
-  case forM rows parseRow of
-    Left err -> throwIO err
-    Right vs -> return vs
 
 newtype RowParser a = RowParser (Row -> Either ParseFailure (Row, a))
 
