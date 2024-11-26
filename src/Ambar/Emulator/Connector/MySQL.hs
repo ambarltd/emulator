@@ -20,9 +20,6 @@ import qualified Data.Text.Encoding as Text
 import Data.Text (Text)
 import Data.Word (Word16)
 import Data.Void (Void)
-import qualified Database.MySQL.Base.Types as M (Field(..), Type(..))
-import qualified Database.MySQL.Simple as M
-import qualified Database.MySQL.Simple.Result as M
 import GHC.Generics (Generic)
 import qualified Prettyprinter as Pretty
 import Prettyprinter (pretty, (<+>))
@@ -39,13 +36,12 @@ import Database.MySQL
   , FromField(..)
   , Connection
   , ConnectionInfo(..)
+
   , fieldInfo
   , fieldParseError
-  , query_
-  , fold_
   , withConnection
   )
-import qualified Database.MySQL as MySQL
+import qualified Database.MySQL as M
 import Utils.Delay (Duration, millis, seconds)
 import Utils.Async (withAsyncThrow)
 import Utils.Logger (SimpleLogger, logDebug, logInfo)
@@ -79,7 +75,7 @@ newtype MySQLRow = MySQLRow { unMySQLRow :: Record }
 newtype RawRow = RawRow [RawValue]
 
 instance FromRow RawRow where
-  rowParser = RawRow <$> many MySQL.field
+  rowParser = RawRow <$> many M.field
 
 newtype RawValue = RawValue { unRawValue :: Value }
 
@@ -146,9 +142,7 @@ newtype MySQLSchema = MySQLSchema { unTableSchema :: Map Text MySQLType }
 -- | All MySQL types
 newtype MySQLType = MySQLType Text
   deriving (Show, Eq)
-
-instance M.Result MySQLType where
-  convert field mb = MySQLType (M.convert field mb)
+  deriving newtype (FromField)
 
 data UnsupportedMySQLType = UnsupportedMySQLType String
   deriving (Show, Exception)
@@ -178,7 +172,7 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
 
   fetchSchema :: Text -> Connection -> IO MySQLSchema
   fetchSchema table conn = do
-    cols <- query_ conn $ fromString $ "DESCRIBE " <> Text.unpack c_database <> "." <> Text.unpack table
+    cols <- M.query_ conn $ fromString $ "DESCRIBE " <> Text.unpack c_database <> "." <> Text.unpack table
     return $ MySQLSchema $ Map.fromList $ fromCol <$> cols
     where
     fromCol :: (Text, MySQLType, Maybe Bool, Maybe Text, Maybe Text, Maybe Text) -> (Text, MySQLType)
@@ -207,7 +201,7 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
     run :: Boundaries -> Stream MySQLRow
     run (Boundaries bs) acc0 emit = do
       logDebug logger query
-      (acc, count) <- fold_ conn (fromString query) (acc0, 0 :: Int) $
+      (acc, count) <- M.fold_ conn (fromString query) (acc0, 0 :: Int) $
         \(acc, !count) r -> do
           let row = toRow r
           logResult row

@@ -20,6 +20,11 @@ module Database.MySQL
   , fieldInfo
   , fieldParseError
   , field
+
+  -- useful re-exports
+  , M.Field(..)
+  , M.Type(..)
+  , M.ResultError(..)
   )
   where
 
@@ -36,9 +41,9 @@ import Data.Word (Word16)
 import System.IO.Unsafe (unsafePerformIO)
 
 import qualified Database.MySQL.Base as M (MySQLError(..), initLibrary, initThread, endThread)
-import qualified Database.MySQL.Base.Types as M (Field(..))
+import qualified Database.MySQL.Base.Types as M (Field(..), Type(..))
 import qualified Database.MySQL.Simple as M
-import qualified Database.MySQL.Simple.Result as M (Result(..))
+import qualified Database.MySQL.Simple.Result as M (Result(..), ResultError(..))
 import qualified Database.MySQL.Simple.QueryResults as M
 import qualified Database.MySQL.Simple.QueryParams as M
 
