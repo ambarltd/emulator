@@ -79,7 +79,7 @@ newtype MySQLRow = MySQLRow { unMySQLRow :: Record }
 newtype RawRow = RawRow [RawValue]
 
 instance FromRow RawRow where
-  fromRow = RawRow <$> many MySQL.field
+  rowParser = RawRow <$> many MySQL.field
 
 newtype RawValue = RawValue { unRawValue :: Value }
 

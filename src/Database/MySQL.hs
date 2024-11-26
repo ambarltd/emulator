@@ -13,6 +13,9 @@ module Database.MySQL
   -- saner parsing primitives
   , FromRow(..)
   , FromField(..)
+  , FieldParser
+  , RowParser
+  , fieldInfo
   , field
   , failure
   , ParseFailure(..)
@@ -145,32 +148,32 @@ data ParseFailure
 
 
 class FromRow r where
-  fromRow :: RowParser r
+  rowParser :: RowParser r
 
 instance (FromField a, FromField b) =>
   FromRow (a,b) where
-  fromRow = (,) <$> field <*> field
+  rowParser = (,) <$> field <*> field
 
 instance (FromField a , FromField b, FromField c) =>
     FromRow (a,b,c) where
-  fromRow = (,,) <$> field <*> field <*> field
+  rowParser = (,,) <$> field <*> field <*> field
 
 instance (FromField a , FromField b, FromField c, FromField d) =>
     FromRow (a,b,c,d) where
-  fromRow = (,,,) <$> field <*> field <*> field <*> field
+  rowParser = (,,,) <$> field <*> field <*> field <*> field
 
 instance (FromField a , FromField b, FromField c, FromField d, FromField e) =>
     FromRow (a,b,c,d,e) where
-  fromRow = (,,,,) <$> field <*> field <*> field <*> field <*> field
+  rowParser = (,,,,) <$> field <*> field <*> field <*> field <*> field
 
 instance (FromField a , FromField b, FromField c, FromField d, FromField e, FromField f) =>
     FromRow (a,b,c,d,e,f) where
-  fromRow = (,,,,,) <$> field <*> field <*> field <*> field <*> field <*> field
+  rowParser = (,,,,,) <$> field <*> field <*> field <*> field <*> field <*> field
 
 parseRow :: FromRow a => Row -> Either ParseFailure a
 parseRow row = fmap snd $ parser row
   where
-  RowParser parser = fromRow
+  RowParser parser = rowParser
 
 parseRows :: FromRow a => [Row] -> IO [a]
 parseRows rows =
@@ -210,12 +213,34 @@ instance MonadFail RowParser where
 class FromField r where
   parseField :: M.Field -> Maybe ByteString -> Either ParseFailure r
 
+fieldInfo :: FieldParser (M.Field, Maybe ByteString)
+fieldInfo = FieldParser $ \x mbs -> Right (x, mbs)
+
+newtype FieldParser a =
+  FieldParser (M.Field -> Maybe ByteString -> Either ParseFailure a)
+
+instance Functor FieldParser where
+  fmap fun (FieldParser g) = FieldParser $ \x mbs -> fun <$> g x mbs
+
+instance Applicative FieldParser where
+  pure v = FieldParser $ \_ _ -> Right v
+  FieldParser pf <*> FieldParser pv =
+    FieldParser $ \x mbs -> pf x mbs <*> pv x mbs
+
+instance Monad FieldParser where
+  return = pure
+  FieldParser pv >>= f = FieldParser $ \x mbs ->
+    case pv x mbs of
+      Left err -> Left err
+      Right v ->
+        let FieldParser g = f v
+         in g x mbs
+
 field :: FromField r => RowParser r
 field = RowParser $ \(Row row) ->
   case row of
     [] -> Left $ failure "insufficient values"
     (f,mbs) : row' -> fmap (Row row',) (parseField f mbs)
-
 
 instance {-# OVERLAPPABLE #-} M.Result r => FromField r where
   parseField f mbs =
