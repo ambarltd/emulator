@@ -4,6 +4,7 @@
 module Database.MySQL
   ( Connection
   , ConnectionInfo(..)
+  , defaultConnectionInfo
   , withConnection
   , query
   , query_
@@ -19,7 +20,7 @@ module Database.MySQL
   , RowParser
   , fieldInfo
   , fieldParseError
-  , field
+  , parseField
 
   -- useful re-exports
   , M.Field(..)
@@ -112,6 +113,16 @@ data ConnectionInfo = ConnectionInfo
   , conn_database :: Text
   }
 
+defaultConnectionInfo :: ConnectionInfo
+defaultConnectionInfo = ConnectionInfo
+  { conn_host = Text.pack $ M.connectHost M.defaultConnectInfo
+  , conn_port = M.connectPort M.defaultConnectInfo
+  , conn_username = Text.pack $ M.connectUser M.defaultConnectInfo
+  , conn_password = Text.pack $ M.connectPassword M.defaultConnectInfo
+  , conn_database = Text.pack $ M.connectDatabase M.defaultConnectInfo
+  }
+
+
 {-# NOINLINE initialised #-}
 initialised :: MVar Bool
 initialised = unsafePerformIO (newMVar False)
@@ -181,23 +192,23 @@ class FromRow r where
 
 instance (FromField a, FromField b) =>
   FromRow (a,b) where
-  rowParser = (,) <$> field <*> field
+  rowParser = (,) <$> parseField <*> parseField
 
 instance (FromField a , FromField b, FromField c) =>
     FromRow (a,b,c) where
-  rowParser = (,,) <$> field <*> field <*> field
+  rowParser = (,,) <$> parseField <*> parseField <*> parseField
 
 instance (FromField a , FromField b, FromField c, FromField d) =>
     FromRow (a,b,c,d) where
-  rowParser = (,,,) <$> field <*> field <*> field <*> field
+  rowParser = (,,,) <$> parseField <*> parseField <*> parseField <*> parseField
 
 instance (FromField a , FromField b, FromField c, FromField d, FromField e) =>
     FromRow (a,b,c,d,e) where
-  rowParser = (,,,,) <$> field <*> field <*> field <*> field <*> field
+  rowParser = (,,,,) <$> parseField <*> parseField <*> parseField <*> parseField <*> parseField
 
 instance (FromField a , FromField b, FromField c, FromField d, FromField e, FromField f) =>
     FromRow (a,b,c,d,e,f) where
-  rowParser = (,,,,,) <$> field <*> field <*> field <*> field <*> field <*> field
+  rowParser = (,,,,,) <$> parseField <*> parseField <*> parseField <*> parseField <*> parseField <*> parseField
 
 parseRow :: FromRow a => Row -> IO a
 parseRow row =
@@ -269,8 +280,8 @@ instance Monad FieldParser where
 instance MonadFail FieldParser where
   fail str = FieldParser $ \_ _ -> Left $ Unexpected str
 
-field :: FromField r => RowParser r
-field = RowParser $ \(Row row) ->
+parseField :: FromField r => RowParser r
+parseField = RowParser $ \(Row row) ->
   case row of
     [] -> Left $ Unexpected "insufficient values"
     (f,mbs) : row' -> fmap (Row row',) (unFieldParser fieldParser f mbs)

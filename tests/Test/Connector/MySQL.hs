@@ -18,7 +18,6 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import qualified Data.Text as Text
-import qualified Database.MySQL.Simple as M
 import GHC.Generics
 import System.Exit (ExitCode(..))
 import System.IO.Unsafe (unsafePerformIO)
@@ -41,11 +40,12 @@ import Database.MySQL
    ( ConnectionInfo(..)
    , Connection
    , FromRow(..)
-   , field
+   , parseField
    , query_
    , executeMany
    , execute_
    , withConnection
+   , defaultConnectionInfo
    )
 
 import Test.Queue (withFileTopic)
@@ -185,7 +185,7 @@ instance Aeson.FromJSON Event where
       }
 
 instance FromRow Event where
-  fromRow = Event <$> field <*> field <*> field
+  rowParser = Event <$> parseField <*> parseField <*> parseField
 
 newtype EventsTable = EventsTable String
 
@@ -250,12 +250,10 @@ withMySQL :: (ConnectionInfo -> IO a) -> IO a
 withMySQL f = bracket setup teardown f
   where
   setup = do
-    let creds@ConnectionInfo{..} = ConnectionInfo
+    let creds@ConnectionInfo{..} = defaultConnectionInfo
           { conn_database = "test_db"
           , conn_username = "test_user"
           , conn_password = "test_pass"
-          , conn_host = Text.pack $ M.connectHost M.defaultConnectInfo
-          , conn_port = M.connectPort M.defaultConnectInfo
           }
 
         user = conn_username
