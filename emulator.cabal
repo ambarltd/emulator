@@ -113,6 +113,7 @@ test-suite emulator-tests
         Test.Warden
         Test.Utils.OnDemand
         Test.Utils.Docker
+        Test.Utils.SQL
     type:    exitcode-stdio-1.0
     build-depends:
         base
@@ -127,8 +128,6 @@ test-suite emulator-tests
         , hspec
         , hspec-expectations
         , HUnit
-        , mysql
-        , mysql-simple
         , postgresql-simple
         , process
         , QuickCheck
