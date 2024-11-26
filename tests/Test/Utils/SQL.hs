@@ -7,6 +7,9 @@ module Test.Utils.SQL
 
   , Event(..)
   , EventsTable(..)
+
+  , TEntry(..)
+  , TTable(..)
   ) where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
@@ -25,7 +28,6 @@ import GHC.Generics (Generic)
 import System.IO.Unsafe (unsafePerformIO)
 import Test.Hspec (Spec, it, shouldBe)
 import Test.Hspec.Expectations.Contrib (annotate)
-
 
 import Ambar.Emulator.Connector (partitioner, encoder, Connector(..))
 import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
@@ -180,3 +182,28 @@ mkTableName :: IO String
 mkTableName = do
   number <- modifyMVar tableNumber $ \n -> return (n + 1, n)
   return $ "table_" <> show number
+
+--------------------
+
+-- | A table for testing type support
+data TTable db a = TTable
+  { _tt_name :: String
+  , _tt_tyName :: String
+  }
+
+-- | Event for testing type support
+data TEntry a = TEntry
+  { te_id :: Int
+  , te_aggregate_id :: Int
+  , te_sequence_number :: Int
+  , te_value :: a
+  }
+  deriving (Eq, Show, Generic, Functor)
+
+instance FromJSON a => FromJSON (TEntry a) where
+  parseJSON = Aeson.genericParseJSON opt
+    where
+    opt = Aeson.defaultOptions
+      { Aeson.fieldLabelModifier = \label ->
+        fromMaybe label (stripPrefix "te_" label)
+      }

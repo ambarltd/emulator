@@ -23,6 +23,8 @@ import Database.MySQL
    ( ConnectionInfo(..)
    , Connection
    , FromRow(..)
+   , FromField
+   , ToField
    , parseField
    , executeMany
    , execute_
@@ -55,6 +57,43 @@ mkMySQL ConnectionInfo{..} table = MySQL
   , c_partitioningColumn = "aggregate_id"
   , c_incrementingColumn = "id"
   }
+
+
+newtype MySQLType = MySQLType String
+
+instance FromField a => FromRow (TEntry a) where
+  rowParser = TEntry <$> parseField <*> parseField <*> parseField <*> parseField
+
+instance (ToField a, FromField a) => Table (TTable MySQL a) where
+  type Entry (TTable MySQL a) = TEntry a
+  type Config (TTable MySQL a) = MySQLType
+  type Connection (TTable MySQL a) = Connection
+  tableName (TTable name _) = name
+  tableCols _ = ["id", "aggregate_id", "sequence_number"]
+  mocks _ = error "no mock for TTable"
+  selectAll conn (TTable table _) =
+    query_ conn (fromString $ "SELECT * FROM " <> table)
+
+  insert conn (TTable table _) events =
+    void $ executeMany conn q [(agg_id, seq_num, val) | TEntry _ agg_id seq_num val <- events ]
+    where
+    q = fromString $ unwords
+      [ "INSERT INTO", table
+      ,"(aggregate_id, sequence_number, value)"
+      ,"VALUES ( ?, ?, ?)"
+      ]
+
+  withTable (MySQLType ty) conn f =
+    withMySQLTable conn schema $ \name -> f (TTable name ty)
+    where
+    schema = unwords
+        [ "( id               SERIAL"
+        , ", aggregate_id     INTEGER NOT NULL"
+        , ", sequence_number  INTEGER NOT NULL"
+        , ", PRIMARY KEY (id)"
+        , ", UNIQUE (aggregate_id, sequence_number)"
+        , ")"
+        ]
 
 instance FromRow Event where
   rowParser = Event <$> parseField <*> parseField <*> parseField
