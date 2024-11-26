@@ -1,9 +1,17 @@
 
 -- | Utilities for testing SQL connectors
-module Test.Utils.SQL where
+module Test.Utils.SQL
+  ( Table(..)
+  , testGenericSQL
+  , mkTableName
 
-import Control.Exception (throwIO, ErrorCall(..))
+  , Event(..)
+  , EventsTable(..)
+  ) where
+
+import Control.Concurrent (MVar, newMVar, modifyMVar)
 import Control.Concurrent.Async (mapConcurrently)
+import Control.Exception (throwIO, ErrorCall(..))
 import Control.Monad (replicateM, forM_)
 import qualified Data.Aeson as Aeson
 import Data.Aeson (FromJSON)
@@ -14,6 +22,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import GHC.Generics (Generic)
+import System.IO.Unsafe (unsafePerformIO)
 import Test.Hspec (Spec, it, shouldBe)
 import Test.Hspec.Expectations.Contrib (annotate)
 
@@ -163,3 +172,11 @@ withConnector od withConnection mkConfig conf partitions f =
   f conn table topic connected
 
 
+{-# NOINLINE tableNumber #-}
+tableNumber :: MVar Int
+tableNumber = unsafePerformIO (newMVar 0)
+
+mkTableName :: IO String
+mkTableName = do
+  number <- modifyMVar tableNumber $ \n -> return (n + 1, n)
+  return $ "table_" <> show number
