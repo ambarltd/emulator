@@ -58,7 +58,6 @@ mkMySQL ConnectionInfo{..} table = MySQL
   , c_incrementingColumn = "id"
   }
 
-
 newtype MySQLType = MySQLType String
 
 instance FromField a => FromRow (TEntry a) where

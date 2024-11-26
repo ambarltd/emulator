@@ -2,7 +2,6 @@ module Ambar.Emulator.Connector.MySQL
   ( MySQL(..)
   , MySQLState
   , MySQLRow
-  , UnsupportedType(..)
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
@@ -40,6 +39,7 @@ import Database.MySQL
 
   , fieldInfo
   , fieldParseError
+  , parseFailure
   , withConnection
   )
 import qualified Database.MySQL as M
@@ -83,6 +83,7 @@ newtype RawValue = RawValue { unRawValue :: Value }
 instance FromField RawValue where
   fieldParser = do
     (field, mbs) <- fieldInfo
+    let unsupported = parseFailure $ C.UnsupportedType $ show $ M.fieldType field
     fmap RawValue $ case mbs of
       Nothing -> pure Null
       Just bs -> case M.fieldType field of
@@ -121,12 +122,9 @@ instance FromField RawValue where
               , M.errFieldName = Text.unpack $ Text.decodeUtf8 $ M.fieldName field
               , M.errMessage = "Unable to decode JSON input: " <> err
               }
-            Right v -> (\val -> Json val v) <$> fieldParser
-    where
-    unsupported = fail "Type not supported by the MySQL Connector"
-
-data UnsupportedType = UnsupportedType String
-  deriving (Show, Exception)
+            Right v -> do
+              val <- fieldParser
+              return $ Json val v
 
 instance C.Connector MySQL where
   type ConnectorState MySQL = MySQLState
