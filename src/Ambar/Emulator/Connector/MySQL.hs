@@ -40,10 +40,10 @@ import Database.MySQL
   , FromField(..)
   , Connection
   , ConnectionInfo(..)
-  , ParseFailure(..)
+  , fieldInfo
+  , fieldParseError
   , query_
   , withConnection
-  , failure
   )
 import qualified Database.MySQL as MySQL
 import Utils.Delay (Duration, millis, seconds)
@@ -84,47 +84,49 @@ instance FromRow RawRow where
 newtype RawValue = RawValue { unRawValue :: Value }
 
 instance FromField RawValue where
-  parseField _ Nothing = pure $ RawValue Null
-  parseField field mbs@(Just bs) = fmap RawValue $
-    case M.fieldType field of
-      M.Decimal -> Real <$> parseField field mbs
-      M.Long -> Real <$> parseField field mbs
-      M.Float -> Real <$> parseField field mbs
-      M.Double -> Real <$> parseField field mbs
-      M.NewDecimal -> Real <$> parseField field mbs
-      M.Null -> pure Null
-      M.Timestamp -> DateTime . TimeStamp (Text.decodeUtf8 bs) <$> parseField field mbs
-      M.Tiny -> Int <$> parseField field mbs
-      M.Short -> Int <$> parseField field mbs
-      M.LongLong -> Int <$> parseField field mbs
-      M.Int24 -> Int <$> parseField field mbs
-      M.Date -> unsupported
-      M.Time -> unsupported
-      M.DateTime -> unsupported
-      M.Year -> unsupported
-      M.NewDate -> unsupported
-      M.Bit -> unsupported
-      M.Enum -> unsupported
-      M.Set -> unsupported
-      M.TinyBlob -> Binary . Bytes <$> parseField field mbs
-      M.MediumBlob -> Binary . Bytes <$> parseField field mbs
-      M.LongBlob -> Binary . Bytes <$> parseField field mbs
-      M.Blob -> Binary . Bytes <$> parseField field mbs
-      M.VarChar -> String <$> parseField field mbs
-      M.VarString -> String <$> parseField field mbs
-      M.String -> String <$> parseField field mbs
-      M.Geometry -> unsupported
-      M.Json ->
-        case Aeson.eitherDecode' $ LB.fromStrict bs of
-          Left err -> Left $ ParseError $ M.ConversionFailed
-            { M.errSQLType = show $ M.fieldType field
-            , M.errHaskellType = "Aeson.Value"
-            , M.errFieldName = Text.unpack $ Text.decodeUtf8 $ M.fieldName field
-            , M.errMessage = "Unable to decode JSON input: " <> err
-            }
-          Right v -> (\val -> Json val v) <$> parseField field mbs
+  fieldParser = do
+    (field, mbs) <- fieldInfo
+    fmap RawValue $ case mbs of
+      Nothing -> pure Null
+      Just bs -> case M.fieldType field of
+        M.Decimal -> Real <$> fieldParser
+        M.Long -> Real <$> fieldParser
+        M.Float -> Real <$> fieldParser
+        M.Double -> Real <$> fieldParser
+        M.NewDecimal -> Real <$> fieldParser
+        M.Null -> pure Null
+        M.Timestamp -> DateTime . TimeStamp (Text.decodeUtf8 bs) <$> fieldParser
+        M.Tiny -> Int <$> fieldParser
+        M.Short -> Int <$> fieldParser
+        M.LongLong -> Int <$> fieldParser
+        M.Int24 -> Int <$> fieldParser
+        M.Date -> unsupported
+        M.Time -> unsupported
+        M.DateTime -> unsupported
+        M.Year -> unsupported
+        M.NewDate -> unsupported
+        M.Bit -> unsupported
+        M.Enum -> unsupported
+        M.Set -> unsupported
+        M.TinyBlob -> Binary . Bytes <$> fieldParser
+        M.MediumBlob -> Binary . Bytes <$> fieldParser
+        M.LongBlob -> Binary . Bytes <$> fieldParser
+        M.Blob -> Binary . Bytes <$> fieldParser
+        M.VarChar -> String <$> fieldParser
+        M.VarString -> String <$> fieldParser
+        M.String -> String <$> fieldParser
+        M.Geometry -> unsupported
+        M.Json ->
+          case Aeson.eitherDecode' $ LB.fromStrict bs of
+            Left err -> fieldParseError $ M.ConversionFailed
+              { M.errSQLType = show $ M.fieldType field
+              , M.errHaskellType = "Aeson.Value"
+              , M.errFieldName = Text.unpack $ Text.decodeUtf8 $ M.fieldName field
+              , M.errMessage = "Unable to decode JSON input: " <> err
+              }
+            Right v -> (\val -> Json val v) <$> fieldParser
     where
-    unsupported = Left $ failure "Type not supported by the MySQL Connector"
+    unsupported = fail "Type not supported by the MySQL Connector"
 
 instance C.Connector MySQL where
   type ConnectorState MySQL = MySQLState

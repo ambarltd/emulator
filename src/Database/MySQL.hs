@@ -16,9 +16,8 @@ module Database.MySQL
   , FieldParser
   , RowParser
   , fieldInfo
+  , fieldParseError
   , field
-  , failure
-  , ParseFailure(..)
   )
   where
 
@@ -146,7 +145,6 @@ data ParseFailure
   deriving (Show)
   deriving anyclass (Exception)
 
-
 class FromRow r where
   rowParser :: RowParser r
 
@@ -208,16 +206,20 @@ instance Monad RowParser where
     return x
 
 instance MonadFail RowParser where
-  fail str = RowParser $ \_ -> Left $ failure str
+  fail str = RowParser $ \_ -> Left $ Unexpected str
 
 class FromField r where
-  parseField :: M.Field -> Maybe ByteString -> Either ParseFailure r
+  fieldParser :: FieldParser r
 
 fieldInfo :: FieldParser (M.Field, Maybe ByteString)
 fieldInfo = FieldParser $ \x mbs -> Right (x, mbs)
 
-newtype FieldParser a =
-  FieldParser (M.Field -> Maybe ByteString -> Either ParseFailure a)
+fieldParseError :: M.ResultError -> FieldParser a
+fieldParseError err = FieldParser $ \_ _ -> Left (ParseError err)
+
+newtype FieldParser a = FieldParser
+  { unFieldParser :: M.Field -> Maybe ByteString -> Either ParseFailure a
+  }
 
 instance Functor FieldParser where
   fmap fun (FieldParser g) = FieldParser $ \x mbs -> fun <$> g x mbs
@@ -236,20 +238,21 @@ instance Monad FieldParser where
         let FieldParser g = f v
          in g x mbs
 
+instance MonadFail FieldParser where
+  fail str = FieldParser $ \_ _ -> Left $ Unexpected str
+
 field :: FromField r => RowParser r
 field = RowParser $ \(Row row) ->
   case row of
-    [] -> Left $ failure "insufficient values"
-    (f,mbs) : row' -> fmap (Row row',) (parseField f mbs)
+    [] -> Left $ Unexpected "insufficient values"
+    (f,mbs) : row' -> fmap (Row row',) (unFieldParser fieldParser f mbs)
 
 instance {-# OVERLAPPABLE #-} M.Result r => FromField r where
-  parseField f mbs =
+  fieldParser  = do
+    (f, mbs) <- fieldInfo
     case unsafePerformIO $ try $ evaluate $ M.convert f mbs of
-      Left (err :: M.ResultError) -> Left $ ParseError err
-      Right v -> Right v
-
-failure :: String -> ParseFailure
-failure = Unexpected
+      Left (err :: M.ResultError) -> FieldParser $ \_ _ -> Left (ParseError err)
+      Right v -> return v
 
 instance M.QueryResults Row where
   convertResults fs mbs = Row $ zip fs mbs
