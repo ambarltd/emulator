@@ -5,7 +5,7 @@ module Ambar.Emulator.Connector.MySQL
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
-import Control.Exception (Exception)
+import Control.Exception (Exception, throwIO)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LB
@@ -27,7 +27,7 @@ import qualified Ambar.Emulator.Connector as C
 import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream)
 import qualified Ambar.Emulator.Connector.Poll as Poll
 import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
-import Ambar.Record (Record(..), Value(..), Bytes(..), TimeStamp(..))
+import Ambar.Record (Record(..), Value(..), Bytes(..), TimeStamp(..), Type(..))
 import qualified Ambar.Record.Encoding as Encoding
 
 import Database.MySQL
@@ -46,7 +46,7 @@ import Database.MySQL
 import qualified Database.MySQL as M
 import Utils.Delay (Duration, millis, seconds)
 import Utils.Async (withAsyncThrow)
-import Utils.Logger (SimpleLogger, logDebug, logInfo, fatal)
+import Utils.Logger (SimpleLogger, logDebug, logInfo)
 import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
 
 _POLLING_INTERVAL :: Duration
@@ -129,15 +129,30 @@ instance FromField RawValue where
               val <- fieldParser
               return $ Json val v
 
-mkParser :: SimpleLogger -> [Text] -> MySQLSchema -> RowParser RawRow
-mkParser logger cols (MySQLSchema schema) = RawRow <$> mapM parse cols
+mkParser :: [Text] -> MySQLSchema -> RowParser RawRow
+mkParser cols (MySQLSchema schema) = RawRow <$> mapM parse cols
   where
     parse cname = do
-      ty <- case Map.lookup cname schema of
-        Nothing -> fatal logger $ "unknown column: " <> cname
+      _ <- case Map.lookup cname schema of
+        Nothing -> fail $ "unknown column: " <> Text.unpack cname
         Just v -> return v
-      case ty of
-        MySQLType _ -> parseField
+      parseField
+
+toExpectedType :: MySQLType -> Maybe Type
+toExpectedType (MySQLType sqlty)
+  | hasPrefix "BIT" = Nothing
+  | any hasPrefix integers && contains "UNSIGNED" = Just TUInteger
+  | any hasPrefix integers = Just TInteger
+  | any hasPrefix reals = Just TReal
+  | otherwise = Nothing
+  where
+  ty = Text.toUpper sqlty
+  hasPrefix v = v `Text.isPrefixOf` ty
+  contains v = v `Text.isInfixOf` ty
+  integers = ["SMALLINT", "TINYINT", "MEDIUMINT", "INT", "INTEGER", "BIGINT"]
+  reals = ["DECIMAL", "DEC", "NUMERIC", "FIXED", "FLOAT", "DOUBLE"]
+
+
 
 instance C.Connector MySQL where
   type ConnectorState MySQL = MySQLState
@@ -151,11 +166,11 @@ instance C.Connector MySQL where
 partitioningValue :: MySQLRow -> Value
 partitioningValue (MySQLRow (Record row)) = snd $ row !! 1
 
-newtype MySQLSchema = MySQLSchema { unTableSchema :: Map Text MySQLType }
+newtype MySQLSchema = MySQLSchema { unTableSchema :: Map Text Type }
   deriving Show
 
 -- | All MySQL types
-newtype MySQLType = MySQLType Text
+newtype MySQLType = MySQLType { unMySQLType :: Text }
   deriving (Show, Eq)
   deriving newtype (FromField)
 
@@ -188,10 +203,13 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
   fetchSchema :: Text -> Connection -> IO MySQLSchema
   fetchSchema table conn = do
     cols <- M.query_ conn $ fromString $ "DESCRIBE " <> Text.unpack c_database <> "." <> Text.unpack table
-    return $ MySQLSchema $ Map.fromList $ fromCol <$> cols
+    MySQLSchema . Map.fromList <$> traverse fromCol cols
     where
-    fromCol :: (Text, MySQLType, Maybe Bool, Maybe Text, Maybe Text, Maybe Text) -> (Text, MySQLType)
-    fromCol (field, ty, _, _, _, _) = (field, ty)
+    fromCol :: (Text, MySQLType, Maybe Bool, Maybe Text, Maybe Text, Maybe Text) -> IO (Text, Type)
+    fromCol (field, ty, _, _, _, _) =
+      case toExpectedType ty of
+        Nothing -> throwIO $ C.UnsupportedType (Text.unpack $ unMySQLType ty)
+        Just t -> return (field, t)
 
   consume
      :: Connection
@@ -214,7 +232,7 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
       vals = fmap unRawValue rawValues
       cols = columns config
 
-    parser = mkParser logger (columns config) schema
+    parser = mkParser (columns config) schema
 
     run :: Boundaries -> Stream MySQLRow
     run (Boundaries bs) acc0 emit = do
