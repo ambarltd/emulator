@@ -35,16 +35,18 @@ import Database.MySQL
   , FromField(..)
   , Connection
   , ConnectionInfo(..)
+  , RowParser
 
   , fieldInfo
   , fieldParseError
   , parseFailure
+  , parseField
   , withConnection
   )
 import qualified Database.MySQL as M
 import Utils.Delay (Duration, millis, seconds)
 import Utils.Async (withAsyncThrow)
-import Utils.Logger (SimpleLogger, logDebug, logInfo)
+import Utils.Logger (SimpleLogger, logDebug, logInfo, fatal)
 import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
 
 _POLLING_INTERVAL :: Duration
@@ -101,7 +103,7 @@ instance FromField RawValue where
         M.Int24 -> Int <$> fieldParser
         M.Date -> unsupported
         M.Time -> unsupported
-        M.DateTime -> unsupported
+        M.DateTime -> DateTime . TimeStamp (Text.decodeUtf8 bs) <$> fieldParser
         M.Year -> unsupported
         M.NewDate -> unsupported
         M.Bit -> unsupported
@@ -126,6 +128,16 @@ instance FromField RawValue where
             Right v -> do
               val <- fieldParser
               return $ Json val v
+
+mkParser :: SimpleLogger -> [Text] -> MySQLSchema -> RowParser RawRow
+mkParser logger cols (MySQLSchema schema) = RawRow <$> mapM parse cols
+  where
+    parse cname = do
+      ty <- case Map.lookup cname schema of
+        Nothing -> fatal logger $ "unknown column: " <> cname
+        Just v -> return v
+      case ty of
+        MySQLType _ -> parseField
 
 instance C.Connector MySQL where
   type ConnectorState MySQL = MySQLState
@@ -163,7 +175,7 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
   validate config schema
   trackerVar <- newTVarIO tracker
   let readState = MySQLState <$> readTVar trackerVar
-  withAsyncThrow (consume conn trackerVar) (f readState)
+  withAsyncThrow (consume conn schema trackerVar) (f readState)
   where
   cinfo = ConnectionInfo
     { conn_host = c_host
@@ -183,9 +195,10 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
 
   consume
      :: Connection
+     -> MySQLSchema
      -> TVar BoundaryTracker
      -> IO Void
-  consume conn trackerVar = Poll.connect trackerVar pc
+  consume conn schema trackerVar = Poll.connect trackerVar pc
     where
     pc = Poll.PollingConnector
        { Poll.c_getId = entryId
@@ -201,10 +214,12 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
       vals = fmap unRawValue rawValues
       cols = columns config
 
+    parser = mkParser logger (columns config) schema
+
     run :: Boundaries -> Stream MySQLRow
     run (Boundaries bs) acc0 emit = do
       logDebug logger query
-      (acc, count) <- M.fold_ conn (fromString query) (acc0, 0 :: Int) $
+      (acc, count) <- M.foldWith_ conn parser (fromString query) (acc0, 0 :: Int) $
         \(acc, !count) r -> do
           let row = toRow r
           logResult row

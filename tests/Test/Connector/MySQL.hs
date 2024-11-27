@@ -95,57 +95,43 @@ testMySQL c = do
         supported "REAL"                  (1.5 :: Double)
         supported "REAL(5,2)"             (1.5 :: Double)
 
-      describe "Binary" $ do
-        unsupported "BIT"              (1 :: Int)
-        unsupported "BIT(5)"           (1 :: Int)
+        -- BOOLEAN is numeric. Very sad.
+        supported "BOOL"                  (1 :: Int)
+        supported "BOOLEAN"               (0 :: Int)
 
-      describe "Boolean" $ do
-        supported "BOOL"                      True
-        supported "BOOLEAN"                      True
+        -- BIT is numeric. Very sad.
+        unsupported "BIT"                        (1 :: Int)
+        unsupported "BIT(5)"                     (1 :: Int)
 
-      -- describe "Strings" $ do
-      --   supported "TEXT"                         ("tryme" :: String)
-      --   unsupported "CHARACTER VARYING(5)"       ("tryme" :: String)
-      --   unsupported "VARCHAR(5)"                 ("tryme" :: String)
-      --   unsupported "CHARACTER(5)"               ("tryme" :: String)
-      --   unsupported "CHAR(5)"                    ("tryme" :: String)
-      --   unsupported "BPCHAR(5)"                  ("tryme" :: String)
-      --   unsupported "BPCHAR"                     ("tryme" :: String)
+      describe "Time" $ do
+        unsupported "DATE"                       ("1999-01-08" :: String)
+
+        -- DATETIME is time from 1000 to 9999
+        supported "DATETIME"                   ("1999-01-08 00:00:00" :: String)
+        supported "DATETIME(3)"                ("1999-01-08 04:05:06.555" :: String)
+
+        -- TIMESTAMP is time from 1970 to 2038
+        supported "TIMESTAMP"                   ("1999-01-08 00:00:00" :: String)
+        supported "TIMESTAMP(3)"                ("1999-01-08 04:05:06.555" :: String)
+
+        -- Time
+        unsupported "TIME"                       ("04:05:06.789" :: String)
+        unsupported "TIME(3)"                    ("04:05:06.789" :: String)
+
+        unsupported "YEAR"                       ("1999" :: String)
+        unsupported "YEAR(4)"                    ("1999" :: String)
+
+      describe "Strings" $ do
+        supported "TEXT"                         ("tryme" :: String)
+        unsupported "CHARACTER VARYING(5)"       ("tryme" :: String)
+        unsupported "VARCHAR(5)"                 ("tryme" :: String)
+        unsupported "CHARACTER(5)"               ("tryme" :: String)
+        unsupported "CHAR(5)"                    ("tryme" :: String)
+        unsupported "BPCHAR(5)"                  ("tryme" :: String)
+        unsupported "BPCHAR"                     ("tryme" :: String)
 
       -- describe "Binary" $ do
       --   supported "BYTEA"                        (BytesRow (Bytes "AAAA"))
-
-      -- describe "Time" $ do
-      --   unsupported "DATE"                       ("1999-01-08" :: String)
-      --   unsupported "DATE"                       ("January 8, 1999" :: String)
-
-      --   -- Time
-      --   unsupported "TIME"                       ("04:05:06.789" :: String)
-      --   unsupported "TIME"                       ("04:05:06.789" :: String)
-      --   unsupported "TIME"                       ("04:05 PM" :: String)
-      --   unsupported "TIME"                       ("04:05:06 PST" :: String)
-      --   -- time zone ignored
-      --   unsupported "TIME"                       ("04:05:06 PST" :: String)
-      --   -- date is taken into account for daylight savings rules.
-      --   unsupported "TIME"                       ("2003-04-12 04:05:06 America/New_York" :: String)
-      --   unsupported "TIME(0)"                    ("04:05" :: String)
-      --   unsupported "TIME WITHOUT TIME ZONE"     ("04:05 PM" :: String)
-      --   unsupported "TIMETZ"                     ("04:05:06 PST" :: String)
-      --   unsupported "TIME WITH TIME ZONE"        ("04:05:06 PST" :: String)
-      --   unsupported "TIME(0) WITH TIME ZONE"     ("04:05:06 PST" :: String)
-
-      --   -- Timestamps
-      --   supported "TIMESTAMP"                    ("1999-01-08 04:05:06" :: String)
-      --   supported "TIMESTAMP"                    ("1999-01-08 04:05:06" :: String)
-      --   supported "TIMESTAMP(0)"                 ("1999-01-08 04:05:06" :: String)
-      --   supported "TIMESTAMP WITHOUT TIME ZONE"  ("1999-01-08 04:05:06" :: String)
-      --   supported "TIMESTAMPTZ"                  ("1999-01-08 12:05:06+00" :: String)
-      --   supported "TIMESTAMPTZ(0)"               ("1999-01-08 04:05:06+00" :: String)
-      --   supported "TIMESTAMP WITH TIME ZONE"     ("1999-01-08 04:05:06+00" :: String)
-
-      --   unsupported "INTERVAL"                   ("3 years 3 mons 700 days 133:17:36.789" :: String)
-      --   unsupported "INTERVAL(0)"                ("3 years 3 mons 700 days 133:17:36.789" :: String)
-      --   unsupported "INTERVAL YEAR"              ("3 years" :: String)
 
 
       -- -- describe "Custom" $ do -- Custom types are not supported.

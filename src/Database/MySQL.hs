@@ -12,6 +12,7 @@ module Database.MySQL
   , execute_
   , fold
   , fold_
+  , foldWith_
 
   -- saner parsing primitives
   , ToRow
@@ -65,14 +66,14 @@ query (Connection run) q params =
   run $ \conn ->
     annotateQ q $ do
       rows <- M.query conn q params
-      traverse parseRow rows
+      traverse (parseRow rowParser) rows
 
 query_ :: FromRow r => Connection -> M.Query -> IO [r]
 query_ (Connection run) q =
   run $ \conn ->
     annotateQ q $ do
       rows <- M.query_ conn q
-      traverse parseRow rows
+      traverse (parseRow rowParser) rows
 
 fold
   :: (ToRow q, FromRow r)
@@ -86,7 +87,7 @@ fold (Connection run) q params acc f =
   run $ \conn ->
   annotateQ q $
   M.fold conn q params acc $ \acc' row -> do
-    r <- parseRow row
+    r <- parseRow rowParser row
     f acc' r
 
 fold_ :: FromRow r => Connection -> M.Query -> a -> (a -> r -> IO a) -> IO a
@@ -94,7 +95,15 @@ fold_ (Connection run) q acc f =
   run $ \conn ->
   annotateQ q $
   M.fold_ conn q acc $ \acc' row -> do
-    r <- parseRow row
+    r <- parseRow rowParser row
+    f acc' r
+
+foldWith_ :: Connection -> RowParser r -> M.Query -> a -> (a -> r -> IO a) -> IO a
+foldWith_ (Connection run) parser q acc f =
+  run $ \conn ->
+  annotateQ q $
+  M.fold_ conn q acc $ \acc' row -> do
+    r <- parseRow parser row
     f acc' r
 
 execute_ :: Connection -> M.Query -> IO Int64
@@ -226,14 +235,12 @@ instance (FromField a , FromField b, FromField c, FromField d, FromField e, From
     FromRow (a,b,c,d,e,f) where
   rowParser = (,,,,,) <$> parseField <*> parseField <*> parseField <*> parseField <*> parseField <*> parseField
 
-parseRow :: FromRow a => Row -> IO a
-parseRow row =
+parseRow :: RowParser a -> Row -> IO a
+parseRow (RowParser parser) row =
   case snd <$> parser row of
     Left (ParseError err) -> throwIO err
     Left (Unexpected err) -> throwIO err
     Right v -> return v
-  where
-  RowParser parser = rowParser
 
 newtype RowParser a = RowParser (Row -> Either ParseFailure (Row, a))
 
