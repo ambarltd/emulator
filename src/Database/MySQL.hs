@@ -20,6 +20,8 @@ module Database.MySQL
   , FromField(..)
   , FieldParser
   , RowParser
+  , isEndOfRow
+  , asList
   , fieldInfo
   , fieldParseError
   , fromFieldParser
@@ -263,6 +265,17 @@ instance MonadFail RowParser where
 
 class FromField r where
   fieldParser :: FieldParser r
+
+-- | Parse a row as a list of values.
+asList :: FromField a => RowParser [a]
+asList = do
+  isEnd <- isEndOfRow
+  if isEnd
+     then return []
+     else (:) <$> parseField <*> asList
+
+isEndOfRow :: RowParser Bool
+isEndOfRow  = RowParser $ \(Row xs) -> Right (Row xs, null xs)
 
 fieldInfo :: FieldParser (M.Field, Maybe ByteString)
 fieldInfo = FieldParser $ \x mbs -> Right (x, mbs)

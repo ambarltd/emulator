@@ -6,7 +6,6 @@ module Ambar.Emulator.Connector.MySQL
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
 import Control.Exception (Exception)
-import Control.Applicative (many)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LB
@@ -74,11 +73,13 @@ newtype MySQLState = MySQLState BoundaryTracker
 newtype MySQLRow = MySQLRow { unMySQLRow :: Record }
 
 newtype RawRow = RawRow [RawValue]
+  deriving Show
 
 instance FromRow RawRow where
-  rowParser = RawRow <$> many M.parseField
+  rowParser = RawRow <$> M.asList
 
 newtype RawValue = RawValue { unRawValue :: Value }
+  deriving Show
 
 instance FromField RawValue where
   fieldParser = do
