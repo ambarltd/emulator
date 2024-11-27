@@ -30,16 +30,17 @@ module Database.MySQL
   , M.Field(..)
   , M.Type(..)
   , M.ResultError(..)
+  , Binary(..)
+  , M.Param(..)
   )
   where
 
 import Control.Concurrent (MVar, newMVar, newEmptyMVar, putMVar, takeMVar, tryPutMVar, modifyMVar_)
 import Control.Exception (Exception, SomeException, ErrorCall(..), toException, bracket, throwIO, try, evaluate)
-import Control.Monad (unless)
 import Control.Applicative (Alternative(..))
+import Control.Monad (unless, forever)
 import Data.ByteString (ByteString)
 import Data.Int (Int64)
-import Control.Monad (forever)
 import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Word (Word16)
@@ -48,6 +49,8 @@ import System.IO.Unsafe (unsafePerformIO)
 import qualified Database.MySQL.Base as M (MySQLError(..), initLibrary, initThread, endThread)
 import qualified Database.MySQL.Base.Types as M (Field(..), Type(..))
 import qualified Database.MySQL.Simple as M
+import qualified Database.MySQL.Simple.Param as M (Param(..))
+import Database.MySQL.Simple.Types (Binary(..))
 import qualified Database.MySQL.Simple.Result as M (Result(..), ResultError(..))
 import qualified Database.MySQL.Simple.QueryResults as M
 import qualified Database.MySQL.Simple.QueryParams as M
@@ -183,6 +186,13 @@ withConnection ConnectionInfo{..} f = do
     M.endThread
     M.close conn
 
+-- | A value that can be converted into query parameters
+-- Use ToRow instead of QueryResults
+type ToRow = M.QueryParams
+
+-- Use ToField instead of Param
+type ToField = M.Param
+
 newtype Row = Row [(M.Field, Maybe ByteString)]
 
 data ParseFailure
@@ -307,11 +317,3 @@ instance {-# OVERLAPPABLE #-} M.Result r => FromField r where
 instance M.QueryResults Row where
   convertResults fs mbs = Row $ zip fs mbs
 
--- | A value that can be converted into query parameters
--- Use ToRow instead of QueryResults
-class M.QueryParams a => ToRow a
-instance M.QueryParams a => ToRow a
-
--- Use ToField instead of Param
-class M.Param a => ToField a
-instance M.Param a => ToField a

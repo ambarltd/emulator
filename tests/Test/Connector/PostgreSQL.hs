@@ -44,7 +44,7 @@ import System.Process (readProcessWithExitCode)
 
 import qualified Ambar.Emulator.Connector as Connector
 import Ambar.Emulator.Connector (partitioner, encoder)
-import Ambar.Emulator.Connector.Postgres (PostgreSQL(..), UnsupportedType(..))
+import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
 import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Record (Bytes(..))
@@ -282,7 +282,7 @@ testPostgreSQL p = do
       roundTrip ty val `shouldThrow` unsupportedType
 
   unsupportedType e
-    | Just (UnsupportedType _) <- fromException e = True
+    | Just (Connector.UnsupportedType _) <- fromException e = True
     | otherwise = False
 
   supported :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> Spec

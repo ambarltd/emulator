@@ -4,6 +4,9 @@ module Test.Utils.SQL
   ( Table(..)
   , testGenericSQL
   , mkTableName
+  , withConnector
+  , group
+  , readEntry
 
   , Event(..)
   , EventsTable(..)
