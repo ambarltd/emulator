@@ -227,9 +227,7 @@ mkParser cols (MySQLSchema schema) = RawRow <$> mapM parse cols
           , M.errFieldName = Text.unpack $ Text.decodeUtf8 $ M.fieldName field
           , M.errMessage = "Unable to decode JSON input: " <> err
           }
-        Right v -> do
-          val <- fieldParser
-          return $ Json val v
+        Right v -> return $ Json (Text.decodeUtf8 bs) v
 
 toExpectedType :: MySQLType -> Maybe Type
 toExpectedType (MySQLType sqlty)
@@ -240,6 +238,7 @@ toExpectedType (MySQLType sqlty)
   | oneOf ["DATETIME", "TIMESTAMP"] = Just TDateTime
   | oneOf text = Just TString
   | oneOf binary = Just TBytes
+  | oneOf ["JSON"] = Just TJSON
   | otherwise = Nothing
   where
   ty = Text.toUpper sqlty
