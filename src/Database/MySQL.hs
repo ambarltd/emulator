@@ -228,8 +228,9 @@ instance (FromField a , FromField b, FromField c, FromField d, FromField e, From
 
 parseRow :: FromRow a => Row -> IO a
 parseRow row =
-  case fmap snd $ parser row of
-    Left err -> throwIO err
+  case snd <$> parser row of
+    Left (ParseError err) -> throwIO err
+    Left (Unexpected err) -> throwIO err
     Right v -> return v
   where
   RowParser parser = rowParser

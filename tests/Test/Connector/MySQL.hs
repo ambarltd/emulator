@@ -61,151 +61,177 @@ testMySQL c = do
     -- on the emulator's behaviour when trying to decode them.
     describe "decodes" $ do
       describe "Numeric" $ do
-        supported "SMALLINT"         (1 :: Int)
-        supported "INTEGER"          (1 :: Int)
-        supported "BIGINT"           (1 :: Int)
-        supported "REAL"             (1.0 :: Double)
-        supported "DOUBLE PRECISION" (1.5 :: Double)
-        supported "SMALLSERIAL"      (1 :: Int)
-        supported "SERIAL"           (1 :: Int)
-        supported "BIGSERIAL"        (1 :: Int)
-        -- unsupported "DECIMAL"        (1.5 :: Scientific)
-        -- unsupported "NUMERIC"        (1.5 :: Scientific)
-
-      describe "Monetary" $ do
-        unsupported "MONEY" (1.5 :: Double)
-
-      describe "Strings" $ do
-        supported "TEXT"                         ("tryme" :: String)
-        unsupported "CHARACTER VARYING(5)"       ("tryme" :: String)
-        unsupported "VARCHAR(5)"                 ("tryme" :: String)
-        unsupported "CHARACTER(5)"               ("tryme" :: String)
-        unsupported "CHAR(5)"                    ("tryme" :: String)
-        unsupported "BPCHAR(5)"                  ("tryme" :: String)
-        unsupported "BPCHAR"                     ("tryme" :: String)
+        -- supported "SERIAL" (1 :: Int) -- there can only be one SERIAL and the 'id' is already it.
+        supported "TINYINT"               (1 :: Int)
+        supported "TINYINT UNSIGNED"      (1 :: Int)
+        supported "TINYINT(5)"            (1 :: Int)
+        supported "SMALLINT"              (1 :: Int)
+        supported "SMALLINT UNSIGNED"     (1 :: Int)
+        supported "SMALLINT(5)"           (1 :: Int)
+        supported "MEDIUMINT"             (1 :: Int)
+        supported "MEDIUMINT UNSIGNED"    (1 :: Int)
+        supported "MEDIUMINT(5)"          (1 :: Int)
+        supported "INT"                   (1 :: Int)
+        supported "INT UNSIGNED"          (1 :: Int)
+        supported "INT(5)"                (1 :: Int)
+        supported "INTEGER"               (1 :: Int)
+        supported "INTEGER UNSIGNED"      (1 :: Int)
+        supported "INTEGER(5)"            (1 :: Int)
+        supported "BIGINT"                (1 :: Int)
+        supported "BIGINT UNSIGNED"       (1 :: Int)
+        supported "BIGINT(5)"             (1 :: Int)
+        supported "DECIMAL"               (1.0 :: Double)
+        supported "DECIMAL(5,2)"          (1.5 :: Double) -- 5 digits, 2 after comma.
+        supported "DEC(5,2)"              (1.5 :: Double)
+        supported "NUMERIC(5,2)"          (1.5 :: Double)
+        supported "FIXED(5,2)"            (1.5 :: Double)
+        supported "FLOAT"                 (1.5 :: Double)
+        supported "FLOAT(5)"              (1.5 :: Double)  -- 5 bits of precision
+        supported "FLOAT(5,2)"            (1.5 :: Double)  -- 5 digits, 2 after comma.
+        supported "DOUBLE"                (1.5 :: Double)
+        supported "DOUBLE(5,2)"           (1.5 :: Double)
+        supported "DOUBLE PRECISION"      (1.5 :: Double)
+        supported "DOUBLE PRECISION(5,2)" (1.5 :: Double)
+        supported "REAL"                  (1.5 :: Double)
+        supported "REAL(5,2)"             (1.5 :: Double)
 
       describe "Binary" $ do
-        supported "BYTEA"                        (BytesRow (Bytes "AAAA"))
-
-      describe "Time" $ do
-        unsupported "DATE"                       ("1999-01-08" :: String)
-        unsupported "DATE"                       ("January 8, 1999" :: String)
-
-        -- Time
-        unsupported "TIME"                       ("04:05:06.789" :: String)
-        unsupported "TIME"                       ("04:05:06.789" :: String)
-        unsupported "TIME"                       ("04:05 PM" :: String)
-        unsupported "TIME"                       ("04:05:06 PST" :: String)
-        -- time zone ignored
-        unsupported "TIME"                       ("04:05:06 PST" :: String)
-        -- date is taken into account for daylight savings rules.
-        unsupported "TIME"                       ("2003-04-12 04:05:06 America/New_York" :: String)
-        unsupported "TIME(0)"                    ("04:05" :: String)
-        unsupported "TIME WITHOUT TIME ZONE"     ("04:05 PM" :: String)
-        unsupported "TIMETZ"                     ("04:05:06 PST" :: String)
-        unsupported "TIME WITH TIME ZONE"        ("04:05:06 PST" :: String)
-        unsupported "TIME(0) WITH TIME ZONE"     ("04:05:06 PST" :: String)
-
-        -- Timestamps
-        supported "TIMESTAMP"                    ("1999-01-08 04:05:06" :: String)
-        supported "TIMESTAMP"                    ("1999-01-08 04:05:06" :: String)
-        supported "TIMESTAMP(0)"                 ("1999-01-08 04:05:06" :: String)
-        supported "TIMESTAMP WITHOUT TIME ZONE"  ("1999-01-08 04:05:06" :: String)
-        supported "TIMESTAMPTZ"                  ("1999-01-08 12:05:06+00" :: String)
-        supported "TIMESTAMPTZ(0)"               ("1999-01-08 04:05:06+00" :: String)
-        supported "TIMESTAMP WITH TIME ZONE"     ("1999-01-08 04:05:06+00" :: String)
-
-        unsupported "INTERVAL"                   ("3 years 3 mons 700 days 133:17:36.789" :: String)
-        unsupported "INTERVAL(0)"                ("3 years 3 mons 700 days 133:17:36.789" :: String)
-        unsupported "INTERVAL YEAR"              ("3 years" :: String)
+        unsupported "BIT"              (1 :: Int)
+        unsupported "BIT(5)"           (1 :: Int)
 
       describe "Boolean" $ do
+        supported "BOOL"                      True
         supported "BOOLEAN"                      True
 
-      -- describe "Custom" $ do -- Custom types are not supported.
-      --   it "unsupported ENUM" $
-      --     withType "MOOD" "CREATE TYPE MOOD AS ENUM ('sad', 'ok', 'happy')" $
-      --     roundTrip "MOOD" ("ok" :: String) `shouldThrow` unsupportedType
+      -- describe "Strings" $ do
+      --   supported "TEXT"                         ("tryme" :: String)
+      --   unsupported "CHARACTER VARYING(5)"       ("tryme" :: String)
+      --   unsupported "VARCHAR(5)"                 ("tryme" :: String)
+      --   unsupported "CHARACTER(5)"               ("tryme" :: String)
+      --   unsupported "CHAR(5)"                    ("tryme" :: String)
+      --   unsupported "BPCHAR(5)"                  ("tryme" :: String)
+      --   unsupported "BPCHAR"                     ("tryme" :: String)
 
-      --   -- composite types are not supported.
-      --   it "unsupported - composit types" $
-      --     withType "complex" "CREATE TYPE complex AS ( r DOUBLE PRECISION, i DOUBLE PRECISION )" $
-      --     roundTrip "COMPLEX" ("( 1.0 , 1.0 )" :: String) `shouldThrow` unsupportedType
+      -- describe "Binary" $ do
+      --   supported "BYTEA"                        (BytesRow (Bytes "AAAA"))
 
-      --   it "unsupported - domain types" $
-      --     withType "positive_int" "CREATE DOMAIN positive_int AS integer CHECK (VALUE > 0)" $
-      --     roundTrip "POSITIVE_INT" (10 :: Int) `shouldThrow` unsupportedType
+      -- describe "Time" $ do
+      --   unsupported "DATE"                       ("1999-01-08" :: String)
+      --   unsupported "DATE"                       ("January 8, 1999" :: String)
 
-      describe "Geometric" $ do
-        unsupported "POINT"                      ("( 1,2 )" :: String)
-        unsupported "LINE"                       ("{ 1,2,3 }" :: String)
-        unsupported "LSEG"                       ("[ (1,2), (3,4) ]" :: String)
-        unsupported "BOX"                        ("(1,2), (3,4)" :: String)
-        unsupported "PATH"                       ("[ (1,2), (3,4) ]" :: String)
-        unsupported "POLYGON"                    ("( (1,2), (3,4) )" :: String)
-        unsupported "CIRCLE"                     ("<(1,2), 3>" :: String)
+      --   -- Time
+      --   unsupported "TIME"                       ("04:05:06.789" :: String)
+      --   unsupported "TIME"                       ("04:05:06.789" :: String)
+      --   unsupported "TIME"                       ("04:05 PM" :: String)
+      --   unsupported "TIME"                       ("04:05:06 PST" :: String)
+      --   -- time zone ignored
+      --   unsupported "TIME"                       ("04:05:06 PST" :: String)
+      --   -- date is taken into account for daylight savings rules.
+      --   unsupported "TIME"                       ("2003-04-12 04:05:06 America/New_York" :: String)
+      --   unsupported "TIME(0)"                    ("04:05" :: String)
+      --   unsupported "TIME WITHOUT TIME ZONE"     ("04:05 PM" :: String)
+      --   unsupported "TIMETZ"                     ("04:05:06 PST" :: String)
+      --   unsupported "TIME WITH TIME ZONE"        ("04:05:06 PST" :: String)
+      --   unsupported "TIME(0) WITH TIME ZONE"     ("04:05:06 PST" :: String)
 
-      describe "Network" $ do
-        unsupported "INET"                       ("127.0.0.1" :: String)
-        unsupported "INET"                       ("2001:0000:130F:0000:0000:09C0:876A:130B" :: String)
-        unsupported "CIDR"                       ("::ffff:1.2.3.0/120" :: String)
-        unsupported "MACADDR"                    ("08:00:2b:01:02:03" :: String)
-        unsupported "MACADDR"                    ("08002b010203" :: String)
-        unsupported "MACADDR8"                   ("08:00:2b:01:02:03:04:05" :: String)
-        unsupported "MACADDR8"                   ("08002b0102030405" :: String)
+      --   -- Timestamps
+      --   supported "TIMESTAMP"                    ("1999-01-08 04:05:06" :: String)
+      --   supported "TIMESTAMP"                    ("1999-01-08 04:05:06" :: String)
+      --   supported "TIMESTAMP(0)"                 ("1999-01-08 04:05:06" :: String)
+      --   supported "TIMESTAMP WITHOUT TIME ZONE"  ("1999-01-08 04:05:06" :: String)
+      --   supported "TIMESTAMPTZ"                  ("1999-01-08 12:05:06+00" :: String)
+      --   supported "TIMESTAMPTZ(0)"               ("1999-01-08 04:05:06+00" :: String)
+      --   supported "TIMESTAMP WITH TIME ZONE"     ("1999-01-08 04:05:06+00" :: String)
 
-      describe "Bit String" $ do
-        unsupported "BIT"                        ("0" :: String)
-        unsupported "BIT(3)"                     ("111" :: String)
-        unsupported "BIT VARYING(5)"             ("111" :: String)
+      --   unsupported "INTERVAL"                   ("3 years 3 mons 700 days 133:17:36.789" :: String)
+      --   unsupported "INTERVAL(0)"                ("3 years 3 mons 700 days 133:17:36.789" :: String)
+      --   unsupported "INTERVAL YEAR"              ("3 years" :: String)
 
-      describe "UUID Type" $ do
-        unsupported "UUID"                       ("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11" :: String)
 
-      describe "XML Type" $ do
-        unsupported "XML"                        ("<?xml version=\"1.0\"?><book><title>Manual</title></book>" :: String)
+      -- -- describe "Custom" $ do -- Custom types are not supported.
+      -- --   it "unsupported ENUM" $
+      -- --     withType "MOOD" "CREATE TYPE MOOD AS ENUM ('sad', 'ok', 'happy')" $
+      -- --     roundTrip "MOOD" ("ok" :: String) `shouldThrow` unsupportedType
 
-      describe "JSON" $ do
-        -- JSON values are delivered to the client as a string.
-        supported "JSON"                         ("{\"one\":1}" :: String)
-        unsupported "JSONB"                      ("{ \"one\": 1 }" :: String)
+      -- --   -- composite types are not supported.
+      -- --   it "unsupported - composit types" $
+      -- --     withType "complex" "CREATE TYPE complex AS ( r DOUBLE PRECISION, i DOUBLE PRECISION )" $
+      -- --     roundTrip "COMPLEX" ("( 1.0 , 1.0 )" :: String) `shouldThrow` unsupportedType
 
-      describe "Arrays" $ do
-        unsupported "INTEGER[]"                  ("{1,2,3}" :: String)
-        unsupported "INTEGER ARRAY"              ("{1,2,3}" :: String)
-        unsupported "INTEGER[3]"                 ("{1,2,3}" :: String)
-        unsupported "INTEGER ARRAY[3]"           ("{1,2,3}" :: String)
-        unsupported "INTEGER[][]"                ("{ {1,2,3}, {4,5,6} }" :: String)
-        unsupported "INTEGER[3][3]"              ("{ {1,2,3}, {4,5,6} }" :: String)
+      -- --   it "unsupported - domain types" $
+      -- --     withType "positive_int" "CREATE DOMAIN positive_int AS integer CHECK (VALUE > 0)" $
+      -- --     roundTrip "POSITIVE_INT" (10 :: Int) `shouldThrow` unsupportedType
 
-      describe "Ranges" $ do
-        unsupported "INT4RANGE"                  ("[1,3)" :: String)
-        unsupported "INT4RANGE"                  ("empty" :: String)
-        unsupported "INT4MULTIRANGE"             ("{ [1,3) }" :: String)
-        unsupported "INT8RANGE"                  ("[1,3)" :: String)
-        unsupported "INT8MULTIRANGE"             ("{ [1,3) }" :: String)
-        unsupported "NUMRANGE"                   ("[ 1.0, 3.0 )" :: String)
-        unsupported "NUMMULTIRANGE"              ("{ [1.0, 3.0 ) }" :: String)
-        unsupported "TSRANGE"                    ("[1999-01-08 04:05:06, 2000-01-08 04:05:06)" :: String)
-        unsupported "TSMULTIRANGE"               ("{ [1999-01-08 04:05:06, 2000-01-08 04:05:06) }" :: String)
-        unsupported "TSTZRANGE"                  ("[1999-01-08 12:05:06+00, 2000-01-08 12:05:06+00)" :: String)
-        unsupported "TSTZMULTIRANGE"             ("{ [1999-01-08 12:05:06+00, 2000-01-08 12:05:06+00) }" :: String)
-        unsupported "DATERANGE"                  ("[1999-01-08, 2000-01-08)" :: String)
-        unsupported "DATEMULTIRANGE"             ("{ [1999-01-08, 2000-01-08) }" :: String)
+      -- describe "Geometric" $ do
+      --   unsupported "POINT"                      ("( 1,2 )" :: String)
+      --   unsupported "LINE"                       ("{ 1,2,3 }" :: String)
+      --   unsupported "LSEG"                       ("[ (1,2), (3,4) ]" :: String)
+      --   unsupported "BOX"                        ("(1,2), (3,4)" :: String)
+      --   unsupported "PATH"                       ("[ (1,2), (3,4) ]" :: String)
+      --   unsupported "POLYGON"                    ("( (1,2), (3,4) )" :: String)
+      --   unsupported "CIRCLE"                     ("<(1,2), 3>" :: String)
 
-      describe "Object Identifier" $ do
-        unsupported "OID"                       (564182 :: Int)
-        unsupported "REGCLASS"                  ("pg_type" :: String)
-        unsupported "REGCOLLATION"              ("\"POSIX\"" :: String)
-        unsupported "REGCONFIG"                 ("english" :: String)
-        unsupported "REGDICTIONARY"             ("simple" :: String)
-        unsupported "REGNAMESPACE"              ("pg_catalog" :: String)
-        unsupported "REGOPERATOR"               ("*(integer,integer)" :: String)
-        unsupported "REGPROC"                   ("xml" :: String)
-        unsupported "REGPROCEDURE"              ("sum(int4)" :: String)
-        -- unsupported "REGROLE"                   ("postgres" :: String)
-        unsupported "REGTYPE"                   ("integer" :: String)
-        unsupported "PG_LSN"                    ("AAA/AAA" :: String)
+      -- describe "Network" $ do
+      --   unsupported "INET"                       ("127.0.0.1" :: String)
+      --   unsupported "INET"                       ("2001:0000:130F:0000:0000:09C0:876A:130B" :: String)
+      --   unsupported "CIDR"                       ("::ffff:1.2.3.0/120" :: String)
+      --   unsupported "MACADDR"                    ("08:00:2b:01:02:03" :: String)
+      --   unsupported "MACADDR"                    ("08002b010203" :: String)
+      --   unsupported "MACADDR8"                   ("08:00:2b:01:02:03:04:05" :: String)
+      --   unsupported "MACADDR8"                   ("08002b0102030405" :: String)
+
+      -- describe "Bit String" $ do
+      --   unsupported "BIT"                        ("0" :: String)
+      --   unsupported "BIT(3)"                     ("111" :: String)
+      --   unsupported "BIT VARYING(5)"             ("111" :: String)
+
+      -- describe "UUID Type" $ do
+      --   unsupported "UUID"                       ("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11" :: String)
+
+      -- describe "XML Type" $ do
+      --   unsupported "XML"                        ("<?xml version=\"1.0\"?><book><title>Manual</title></book>" :: String)
+
+      -- describe "JSON" $ do
+      --   -- JSON values are delivered to the client as a string.
+      --   supported "JSON"                         ("{\"one\":1}" :: String)
+      --   unsupported "JSONB"                      ("{ \"one\": 1 }" :: String)
+
+      -- describe "Arrays" $ do
+      --   unsupported "INTEGER[]"                  ("{1,2,3}" :: String)
+      --   unsupported "INTEGER ARRAY"              ("{1,2,3}" :: String)
+      --   unsupported "INTEGER[3]"                 ("{1,2,3}" :: String)
+      --   unsupported "INTEGER ARRAY[3]"           ("{1,2,3}" :: String)
+      --   unsupported "INTEGER[][]"                ("{ {1,2,3}, {4,5,6} }" :: String)
+      --   unsupported "INTEGER[3][3]"              ("{ {1,2,3}, {4,5,6} }" :: String)
+
+      -- describe "Ranges" $ do
+      --   unsupported "INT4RANGE"                  ("[1,3)" :: String)
+      --   unsupported "INT4RANGE"                  ("empty" :: String)
+      --   unsupported "INT4MULTIRANGE"             ("{ [1,3) }" :: String)
+      --   unsupported "INT8RANGE"                  ("[1,3)" :: String)
+      --   unsupported "INT8MULTIRANGE"             ("{ [1,3) }" :: String)
+      --   unsupported "NUMRANGE"                   ("[ 1.0, 3.0 )" :: String)
+      --   unsupported "NUMMULTIRANGE"              ("{ [1.0, 3.0 ) }" :: String)
+      --   unsupported "TSRANGE"                    ("[1999-01-08 04:05:06, 2000-01-08 04:05:06)" :: String)
+      --   unsupported "TSMULTIRANGE"               ("{ [1999-01-08 04:05:06, 2000-01-08 04:05:06) }" :: String)
+      --   unsupported "TSTZRANGE"                  ("[1999-01-08 12:05:06+00, 2000-01-08 12:05:06+00)" :: String)
+      --   unsupported "TSTZMULTIRANGE"             ("{ [1999-01-08 12:05:06+00, 2000-01-08 12:05:06+00) }" :: String)
+      --   unsupported "DATERANGE"                  ("[1999-01-08, 2000-01-08)" :: String)
+      --   unsupported "DATEMULTIRANGE"             ("{ [1999-01-08, 2000-01-08) }" :: String)
+
+      -- describe "Object Identifier" $ do
+      --   unsupported "OID"                       (564182 :: Int)
+      --   unsupported "REGCLASS"                  ("pg_type" :: String)
+      --   unsupported "REGCOLLATION"              ("\"POSIX\"" :: String)
+      --   unsupported "REGCONFIG"                 ("english" :: String)
+      --   unsupported "REGDICTIONARY"             ("simple" :: String)
+      --   unsupported "REGNAMESPACE"              ("pg_catalog" :: String)
+      --   unsupported "REGOPERATOR"               ("*(integer,integer)" :: String)
+      --   unsupported "REGPROC"                   ("xml" :: String)
+      --   unsupported "REGPROCEDURE"              ("sum(int4)" :: String)
+      --   -- unsupported "REGROLE"                   ("postgres" :: String)
+      --   unsupported "REGTYPE"                   ("integer" :: String)
+      --   unsupported "PG_LSN"                    ("AAA/AAA" :: String)
   where
   unsupported :: (FromField a, FromJSON a, ToField a, Show a, Eq a) => String -> a -> Spec
   unsupported ty val =
@@ -276,7 +302,7 @@ instance (ToField a, FromField a) => Table (TTable MySQL a) where
     q = fromString $ unwords
       [ "INSERT INTO", table
       ,"(aggregate_id, sequence_number, value)"
-      ,"VALUES ( ?, ?, ?)"
+      ,"VALUES (?, ?, ?)"
       ]
 
   withTable (MySQLType ty) conn f =
