@@ -5,9 +5,10 @@ module Ambar.Emulator.Connector.MySQL
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
-import Control.Exception (Exception, throwIO)
+import Control.Exception (Exception(..), throwIO)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
+import Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LB
 import Data.Default (Default(..))
 import Data.List ((\\))
@@ -36,11 +37,12 @@ import Database.MySQL
   , Connection
   , ConnectionInfo(..)
   , RowParser
+  , FieldParser
 
   , fieldInfo
   , fieldParseError
   , parseFailure
-  , parseField
+  , fromFieldParser
   , withConnection
   )
 import qualified Database.MySQL as M
@@ -129,28 +131,120 @@ instance FromField RawValue where
               val <- fieldParser
               return $ Json val v
 
+-- | May be thrown if we didn't expect to read that type
+data UnexpectedType = UnexpectedType Type M.Type
+  deriving (Show)
+
+instance Exception UnexpectedType where
+  displayException (UnexpectedType expected found) =
+    unwords
+      [ "Unexpected type."
+      , "Expected:", show expected
+      , "Found:", show found
+      ]
+
 mkParser :: [Text] -> MySQLSchema -> RowParser RawRow
 mkParser cols (MySQLSchema schema) = RawRow <$> mapM parse cols
   where
-    parse cname = do
-      _ <- case Map.lookup cname schema of
-        Nothing -> fail $ "unknown column: " <> Text.unpack cname
-        Just v -> return v
-      parseField
+  parse :: Text -> RowParser RawValue
+  parse cname = do
+    ty <- case Map.lookup cname schema of
+      Nothing -> fail $ "unknown column: " <> Text.unpack cname
+      Just v -> return v
+    fromFieldParser $ do
+      (field, mbs) <- fieldInfo
+      RawValue <$> case mbs of
+        Nothing -> return Null
+        Just bs -> parseWithType field bs ty
+
+  parseWithType :: M.Field -> ByteString -> Type -> FieldParser Value
+  parseWithType field bs ty = case ty of
+    TBoolean   -> (Boolean . toEnum) `ifType` [M.Tiny]
+    TUInteger  -> UInt `ifType` [M.Tiny, M.Short, M.Long, M.Int24, M.LongLong]
+    TInteger   -> Int `ifType` [M.Tiny, M.Short, M.Long, M.Int24, M.LongLong]
+    TReal      -> Real `ifType` [M.Decimal, M.Long, M.Float, M.Double, M.NewDecimal]
+    TString    -> String `ifType` [M.VarChar, M.VarString, M.String]
+    TBytes     -> (Binary . Bytes) `ifType` [M.TinyBlob, M.MediumBlob, M.LongBlob, M.Blob]
+    TJSON      -> json `ifType_` [M.Json]
+    TDateTime  -> datetime  `ifType_` [M.DateTime, M.Timestamp]
+    where
+    ifType_ :: FieldParser Value -> [M.Type] -> FieldParser Value
+    ifType_ parser xs =
+      if sqlty `elem` xs
+      then parser
+      else unexpected
+
+    ifType :: forall a. FromField a => (a -> Value) -> [M.Type] -> FieldParser Value
+    ifType f xs = (f <$> fieldParser) `ifType_` xs
+
+    sqlty = M.fieldType field
+
+    unexpected = case sqlty of
+      M.Null       -> pure Null
+      M.Date       -> unsupported
+      M.Time       -> unsupported
+      M.Geometry   -> unsupported
+      M.Year       -> unsupported
+      M.NewDate    -> unsupported
+      M.Bit        -> unsupported
+      M.Enum       -> unsupported
+      M.Set        -> unsupported
+      M.Decimal    -> mismatch
+      M.Long       -> mismatch
+      M.Float      -> mismatch
+      M.Double     -> mismatch
+      M.NewDecimal -> mismatch
+      M.Timestamp  -> mismatch
+      M.Tiny       -> mismatch
+      M.Short      -> mismatch
+      M.LongLong   -> mismatch
+      M.Int24      -> mismatch
+      M.DateTime   -> mismatch
+      M.TinyBlob   -> mismatch
+      M.MediumBlob -> mismatch
+      M.LongBlob   -> mismatch
+      M.Blob       -> mismatch
+      M.VarChar    -> mismatch
+      M.VarString  -> mismatch
+      M.String     -> mismatch
+      M.Json       -> mismatch
+
+    unsupported = parseFailure $ C.UnsupportedType $ show sqlty
+
+    mismatch = parseFailure $ UnexpectedType ty sqlty
+
+    datetime = do
+      utc <- fieldParser
+      return $ DateTime $ TimeStamp (Text.decodeUtf8 bs) utc
+
+    json =
+      case Aeson.eitherDecode' $ LB.fromStrict bs of
+        Left err -> fieldParseError $ M.ConversionFailed
+          { M.errSQLType = show sqlty
+          , M.errHaskellType = "Aeson.Value"
+          , M.errFieldName = Text.unpack $ Text.decodeUtf8 $ M.fieldName field
+          , M.errMessage = "Unable to decode JSON input: " <> err
+          }
+        Right v -> do
+          val <- fieldParser
+          return $ Json val v
 
 toExpectedType :: MySQLType -> Maybe Type
 toExpectedType (MySQLType sqlty)
-  | hasPrefix "BIT" = Nothing
-  | any hasPrefix integers && contains "UNSIGNED" = Just TUInteger
-  | any hasPrefix integers = Just TInteger
-  | any hasPrefix reals = Just TReal
+  | oneOf unsupported = Nothing
+  | oneOf integers && contains "UNSIGNED" = Just TUInteger
+  | oneOf integers = Just TInteger
+  | oneOf reals = Just TReal
+  | oneOf ["DATETIME", "TIMESTAMP"] = Just TDateTime
   | otherwise = Nothing
   where
   ty = Text.toUpper sqlty
+  oneOf xs = any hasPrefix xs
   hasPrefix v = v `Text.isPrefixOf` ty
   contains v = v `Text.isInfixOf` ty
-  integers = ["SMALLINT", "TINYINT", "MEDIUMINT", "INT", "INTEGER", "BIGINT"]
+  integers = ["BIGINT", "INT", "INTEGER", "MEDIUMINT", "SMALLINT", "TINYINT"]
   reals = ["DECIMAL", "DEC", "NUMERIC", "FIXED", "FLOAT", "DOUBLE"]
+  unsupported = ["BIT"]
 
 
 

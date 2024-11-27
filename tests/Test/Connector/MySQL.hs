@@ -94,14 +94,13 @@ testMySQL c = do
         supported "DOUBLE PRECISION(5,2)" (-1.5 :: Double)
         supported "REAL"                  (-1.5 :: Double)
         supported "REAL(5,2)"             (-1.5 :: Double)
+        -- BIT is numeric. Very sad.
+        unsupported "BIT"                 (1 :: Int)
+        unsupported "BIT(5)"              (1 :: Int)
 
         -- BOOLEAN is numeric. Very sad.
         supported "BOOL"                  (1 :: Int)
-        supported "BOOLEAN"               (0 :: Int)
-
-        -- BIT is numeric. Very sad.
-        unsupported "BIT"                        (1 :: Int)
-        unsupported "BIT(5)"                     (1 :: Int)
+        supported "BOOLEAN"               (1 :: Int)
 
       describe "Time" $ do
         unsupported "DATE"                       ("1999-01-08" :: String)
