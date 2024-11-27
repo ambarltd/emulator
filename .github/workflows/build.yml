@@ -35,10 +35,6 @@ jobs:
 
       - name: Setup - MySQL
         uses: shogo82148/actions-setup-mysql@v1
-        with:
-          root-password: ""
-          user: "root"
-          password: ""
 
       - name: Setup - GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
