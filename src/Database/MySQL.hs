@@ -25,7 +25,7 @@ module Database.MySQL
   , asList
   , fieldInfo
   , fieldParseError
-  , fromFieldParser
+  , parseFieldWith
   , parseFailure
   , parseField
 
@@ -269,7 +269,7 @@ instance Monad RowParser where
     return x
 
 instance MonadFail RowParser where
-  fail str = fromFieldParser (fail str)
+  fail str = parseFieldWith (fail str)
 
 class FromField r where
   fieldParser :: FieldParser r
@@ -319,10 +319,10 @@ instance MonadFail FieldParser where
   fail str = parseFailure (ErrorCall str)
 
 parseField :: FromField r => RowParser r
-parseField = fromFieldParser fieldParser
+parseField = parseFieldWith fieldParser
 
-fromFieldParser :: FieldParser a -> RowParser a
-fromFieldParser parser = RowParser $ \(Row row) ->
+parseFieldWith :: FieldParser a -> RowParser a
+parseFieldWith parser = RowParser $ \(Row row) ->
   case row of
     [] -> Left $ Unexpected $ toException $ ErrorCall "insufficient values"
     (f,mbs) : row' -> fmap (Row row',) (unFieldParser parser f mbs)
