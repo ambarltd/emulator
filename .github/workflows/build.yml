@@ -33,6 +33,13 @@ jobs:
           username: 'postgres'
           password: ${{ env.PGPASSWORD }}
 
+      - name: Setup - MySQL
+        uses: shogo82148/actions-setup-mysql@v1
+        with:
+          root-password: ""
+          user: "root"
+          password: ""
+
       - name: Setup - GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
         id: setup
