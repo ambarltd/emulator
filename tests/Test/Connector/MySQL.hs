@@ -150,6 +150,16 @@ testMySQL c = do
         supported "MEDIUMBLOB"                   (BytesRow (Bytes "AAAA"))
         supported "LONGBLOB"                     (BytesRow (Bytes "AAAA"))
 
+      describe "Spatial" $ do
+       unsupported "GEOMETRY"                    _NULL
+       unsupported "POINT"                       _NULL
+       unsupported "LINESTRING"                  _NULL
+       unsupported "POLYGON"                     _NULL
+       unsupported "MULTIPOINT"                  _NULL
+       unsupported "MULTILINESTRING"             _NULL
+       unsupported "MULTIPOLYGON"                _NULL
+       unsupported "GEOMETRYCOLLECTION"          _NULL
+
 
       -- -- describe "Custom" $ do -- Custom types are not supported.
       -- --   it "unsupported ENUM" $
@@ -236,6 +246,9 @@ testMySQL c = do
       --   unsupported "REGTYPE"                   ("integer" :: String)
       --   unsupported "PG_LSN"                    ("AAA/AAA" :: String)
   where
+  _NULL :: Maybe String
+  _NULL = Nothing
+
   unsupported :: (FromField a, FromJSON a, ToField a, Show a, Eq a) => String -> a -> Spec
   unsupported ty val =
     it ("unsupported " <> ty) $
