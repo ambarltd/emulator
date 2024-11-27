@@ -11,6 +11,7 @@ module Test.Connector.MySQL
 import Control.Exception (bracket, throwIO, ErrorCall(..), uninterruptibleMask_, fromException)
 import Control.Monad (void, forM_)
 import Data.Aeson (FromJSON, ToJSON)
+import qualified Data.ByteString as BS
 import Data.String (fromString)
 import qualified Data.Text as Text
 import System.Exit (ExitCode(..))
@@ -106,12 +107,12 @@ testMySQL c = do
         unsupported "DATE"                       ("1999-01-08" :: String)
 
         -- DATETIME is time from 1000 to 9999
-        supported "DATETIME"                   ("1999-01-08 00:00:00" :: String)
-        supported "DATETIME(3)"                ("1999-01-08 04:05:06.555" :: String)
+        supported "DATETIME"                     ("1999-01-08 00:00:00" :: String)
+        supported "DATETIME(3)"                  ("1999-01-08 04:05:06.555" :: String)
 
         -- TIMESTAMP is time from 1970 to 2038
-        supported "TIMESTAMP"                   ("1999-01-08 00:00:00" :: String)
-        supported "TIMESTAMP(3)"                ("1999-01-08 04:05:06.555" :: String)
+        supported "TIMESTAMP"                    ("1999-01-08 00:00:00" :: String)
+        supported "TIMESTAMP(3)"                 ("1999-01-08 04:05:06.555" :: String)
 
         -- Time
         unsupported "TIME"                       ("04:05:06.789" :: String)
@@ -121,16 +122,33 @@ testMySQL c = do
         unsupported "YEAR(4)"                    ("1999" :: String)
 
       describe "Strings" $ do
+        --  CHAR, VARCHAR, BINARY, VARBINARY, BLOB, TEXT, ENUM, and SET.
         supported "TEXT"                         ("tryme" :: String)
-        unsupported "CHARACTER VARYING(5)"       ("tryme" :: String)
-        unsupported "VARCHAR(5)"                 ("tryme" :: String)
-        unsupported "CHARACTER(5)"               ("tryme" :: String)
-        unsupported "CHAR(5)"                    ("tryme" :: String)
-        unsupported "BPCHAR(5)"                  ("tryme" :: String)
-        unsupported "BPCHAR"                     ("tryme" :: String)
+        supported "MEDIUMTEXT"                   ("tryme" :: String)
+        supported "LONGTEXT"                     ("tryme" :: String)
+        supported "CHAR"                         ("t" :: String)
+        supported "CHAR(5)"                      ("tryme" :: String)
+        supported "NCHAR"                        ("t" :: String)
+        supported "NCHAR(5)"                     ("tryme" :: String)
+        supported "CHARACTER"                    ("t" :: String)
+        supported "CHARACTER(5)"                 ("tryme" :: String)
+        supported "NATIONAL CHAR"                ("t" :: String)
+        supported "NATIONAL CHAR(5)"             ("tryme" :: String)
+        supported "NATIONAL CHARACTER"           ("t" :: String)
+        supported "NATIONAL CHARACTER(5)"        ("tryme" :: String)
+        supported "TINYTEXT"                     ("tryme" :: String)
+        supported "ENUM ('A','B','C')"           ("A" :: String)
+        supported "SET ('A','B','C')"            ("A" :: String)
 
-      -- describe "Binary" $ do
-      --   supported "BYTEA"                        (BytesRow (Bytes "AAAA"))
+      describe "Binary" $ do
+        supported "BINARY"                       (BytesRow (Bytes (BS.pack [0])))
+        supported "BINARY(4)"                    (BytesRow (Bytes "AAAA"))
+        supported "VARBINARY(64)"                (BytesRow (Bytes "AAAA"))
+        supported "TINYBLOB"                     (BytesRow (Bytes "AAAA"))
+        supported "BLOB"                         (BytesRow (Bytes "AAAA"))
+        supported "BLOB(64)"                     (BytesRow (Bytes "AAAA"))
+        supported "MEDIUMBLOB"                   (BytesRow (Bytes "AAAA"))
+        supported "LONGBLOB"                     (BytesRow (Bytes "AAAA"))
 
 
       -- -- describe "Custom" $ do -- Custom types are not supported.

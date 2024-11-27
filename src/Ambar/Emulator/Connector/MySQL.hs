@@ -159,15 +159,17 @@ mkParser cols (MySQLSchema schema) = RawRow <$> mapM parse cols
 
   parseWithType :: M.Field -> ByteString -> Type -> FieldParser Value
   parseWithType field bs ty = case ty of
-    TBoolean   -> (Boolean . toEnum) `ifType` [M.Tiny]
+    TBoolean   -> error "non-existent MySQL base type"
     TUInteger  -> UInt `ifType` [M.Tiny, M.Short, M.Long, M.Int24, M.LongLong]
     TInteger   -> Int `ifType` [M.Tiny, M.Short, M.Long, M.Int24, M.LongLong]
     TReal      -> Real `ifType` [M.Decimal, M.Long, M.Float, M.Double, M.NewDecimal]
-    TString    -> String `ifType` [M.VarChar, M.VarString, M.String]
-    TBytes     -> (Binary . Bytes) `ifType` [M.TinyBlob, M.MediumBlob, M.LongBlob, M.Blob]
+    TString    -> String `ifType` stringTypes
+    TBytes     -> (Binary . Bytes) `ifType` stringTypes
     TJSON      -> json `ifType_` [M.Json]
     TDateTime  -> datetime  `ifType_` [M.DateTime, M.Timestamp]
     where
+    stringTypes = [M.VarChar,M.VarString,M.String,M.Set,M.Enum,M.Json,M.TinyBlob,M.MediumBlob,M.LongBlob,M.Blob]
+
     ifType_ :: FieldParser Value -> [M.Type] -> FieldParser Value
     ifType_ parser xs =
       if sqlty `elem` xs
@@ -236,6 +238,8 @@ toExpectedType (MySQLType sqlty)
   | oneOf integers = Just TInteger
   | oneOf reals = Just TReal
   | oneOf ["DATETIME", "TIMESTAMP"] = Just TDateTime
+  | oneOf text = Just TString
+  | oneOf binary = Just TBytes
   | otherwise = Nothing
   where
   ty = Text.toUpper sqlty
@@ -244,7 +248,9 @@ toExpectedType (MySQLType sqlty)
   contains v = v `Text.isInfixOf` ty
   integers = ["BIGINT", "INT", "INTEGER", "MEDIUMINT", "SMALLINT", "TINYINT"]
   reals = ["DECIMAL", "DEC", "NUMERIC", "FIXED", "FLOAT", "DOUBLE"]
-  unsupported = ["BIT"]
+  text = ["CHAR", "NATIONAL CHAR", "TEXT", "CHARACTER", "TINYTEXT", "MEDIUMTEXT","LONGTEXT", "ENUM", "SET"]
+  binary = ["BIT", "BINARY", "VARBINARY", "BLOB","TINYBLOB", "MEDIUMBLOB", "LONGBLOB"]
+  unsupported = []
 
 
 
