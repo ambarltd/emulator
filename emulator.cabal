@@ -99,7 +99,13 @@ library emulator-lib
 
 test-suite emulator-tests
     import: common
-    ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
+    ghc-options:
+        -threaded
+        -rtsopts
+        -with-rtsopts=-N
+        -Wall
+        -Werror
+        -Wno-x-partial
     hs-source-dirs: tests
     main-is: Tests.hs
     other-modules:

@@ -1,4 +1,4 @@
-
+{-# OPTIONS_GHC -Wno-x-partial #-}
 -- | Utilities for testing SQL connectors
 module Test.Utils.SQL
   ( Table(..)
