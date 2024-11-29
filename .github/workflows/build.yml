@@ -31,15 +31,6 @@ jobs:
           sudo apt-get install libmysqlclient-dev
           sudo apt-get install libmysqlclient21
 
-          cat <<EOF >cabal.project.local
-          ignore-project: False
-          package mysql
-            extra-include-dirs: /opt/hostedtoolcache/mysql/9.1.0/x64/include
-            extra-lib-dirs: /opt/hostedtoolcache/mysql/9.1.0/x64/lib
-            extra-prog-path: /opt/hostedtoolcache/mysql/9.1.0/x64/lib
-          EOF
-          cat cabal.project.local
-
       - name: Install system dependencies - Windows
         if: runner.os == 'Windows'
         run: |
@@ -130,6 +121,9 @@ jobs:
 
       - name: Test
         run: |
+          set -x
+          LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/opt/hostedtoolcache/mysql/9.1.0/x64/lib"
+          echo $LD_LIBRARY_PATH
           LD_DEBUG=libs cabal run --verbose emulator-tests -- +RTS -N
 
       # We run this only when a PR is merged so we can see how things are performing
