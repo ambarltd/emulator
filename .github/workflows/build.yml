@@ -82,8 +82,8 @@ jobs:
           sudo apt-get install libpcre3-dev
           sudo apt-get install libmysqlclient-dev
           sudo apt-get install libmysqlclient21
-          sudo ln -s /opt/hostedtoolcache/mysql/9.1.0/x64/lib/libmysqlclient.so.24 /usr/lib/libmysqlclient.so.24
-          find /opt/hostedtoolcache/mysql/9.1.0/x64/lib
+          sudo ln -s /opt/hostedtoolcache/mysql/9.0.1/x64/lib/libmysqlclient.so.24 /usr/lib/libmysqlclient.so.24
+          find /opt/hostedtoolcache/mysql/9.0.1/x64/lib
 
       - name: Setup - GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
