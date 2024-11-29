@@ -93,7 +93,7 @@ jobs:
 
       - name: Build - Configure
         run: |
-          cabal configure --enable-tests --enable-benchmarks --disable-documentation
+          cabal configure --enable-tests --enable-benchmarks --disable-documentation --enable-relocatable
           cabal build all --dry-run
         # The last step generates dist-newstyle/cache/plan.json for the cache key.
 
