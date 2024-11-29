@@ -113,8 +113,8 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           set -x
-          cabal build pcre-light --only-dependencies --verbose --extra-include-dirs=/opt/homebrew/include
-          cabal build mysql      --only-dependencies --verbose --extra-include-dirs=/opt/homebrew/include
+          cabal build pcre-light --verbose --extra-include-dirs=/opt/homebrew/include
+          cabal build mysql      --verbose --extra-include-dirs=/opt/homebrew/include
 
       - name: Build - Install dependencies
         # If we had an exact cache hit, the dependencies will be up to date.
