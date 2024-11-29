@@ -40,25 +40,24 @@ jobs:
       - name: Install system dependencies - MacOS
         if: runner.os == 'macOS'
         run: |
+          set -x
           brew install pcre2
           brew install pcre
           brew install mysql-connector-c
           export LDFLAGS="-L/opt/homebrew/opt/mysql-client/lib"
           export CPPFLAGS="-I/opt/homebrew/opt/mysql-client/include"
           cat <<EOF >cabal.project.local
-            ignore-project: False
-
-            package pcre-light
-              extra-include-dirs: /opt/homebrew/include
-              extra-lib-dirs: /opt/homebrew/lib
-              extra-prog-path: /opt/homebrew/lib
-
-            package mysql
-              extra-include-dirs: /opt/homebrew/include
-              extra-lib-dirs: /opt/homebrew/lib
-              extra-prog-path: /opt/homebrew/lib
-            EOF
-          cat caba.project.local
+          ignore-project: False
+          package pcre-light
+            extra-include-dirs: /opt/homebrew/include
+            extra-lib-dirs: /opt/homebrew/lib
+            extra-prog-path: /opt/homebrew/lib
+          package mysql
+            extra-include-dirs: /opt/homebrew/include
+            extra-lib-dirs: /opt/homebrew/lib
+            extra-prog-path: /opt/homebrew/lib
+          EOF
+          cat cabal.project.local
           ls -la /opt/homebrew/include
 
       - name: Setup - PostgreSQL
@@ -77,7 +76,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get install tree
-          tree opt/hostedtoolcache/mysql
+          tree /opt/hostedtoolcache/mysql
 
       - name: Setup - GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
