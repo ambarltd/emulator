@@ -168,7 +168,7 @@ jobs:
 
           cat <<EOF >~/.my.cnf
           [mysql]
-          socket=${{ steps.mysql.outputs.base-dir }}/tmp/mysql.sock
+          socket=${{ steps.mysql-setup.outputs.base-dir }}/tmp/mysql.sock
           EOF
 
 
