@@ -106,10 +106,18 @@ jobs:
           key: ${{ env.key }}-plan-${{ hashFiles('**/plan.json') }}
           restore-keys: ${{ env.key }}-
 
+      - name: Build failing deps
+        # If we had an exact cache hit, the dependencies will be up to date.
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -x
+          cabal build pcre-light --only-dependencies --verbose --extra-include-dirs=/opt/homebrew/include
+          cabal build mysql      --only-dependencies --verbose --extra-include-dirs=/opt/homebrew/include
+
       - name: Build - Install dependencies
         # If we had an exact cache hit, the dependencies will be up to date.
         if: steps.cache.outputs.cache-hit != 'true'
-        run: cabal build all --only-dependencies --verbose
+        run: cabal build all --only-dependencies --verbose --extra-include-dirs=/opt/homebrew/include
 
       # Cache dependencies already here, so that we do not have to rebuild them should the subsequent steps fail.
       - name: Build - Save dependencies to cache
@@ -124,17 +132,10 @@ jobs:
         run: cabal build all --extra-include-dirs=/opt/homebrew/include
 
       - name: Test
-        run: |
-          set -x
-          LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/opt/hostedtoolcache/mysql/9.1.0/x64/lib"
-          echo $LD_LIBRARY_PATH
-          LD_DEBUG=libs cabal run --verbose emulator-tests -- +RTS -N
+        run: cabal run emulator-tests
 
       # We run this only when a PR is merged so we can see how things are performing
       # on the GH actions machines.
       - name: Benchmark
         if: github.ref == 'refs/heads/main'
-        env:
-          PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
-        run: cabal run emulator-tests -- +RTS -N
-
+        run: cabal run emulator-tests
