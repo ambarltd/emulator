@@ -25,7 +25,8 @@ jobs:
       - name: Install system dependencies Linux
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install pcre
+          sudo apt-get update
+          sudo apt-get install libpcre3-dev
 
       - name: Setup - PostgreSQL
         id: postgres-setup
