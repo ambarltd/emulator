@@ -109,7 +109,7 @@ jobs:
       - name: Build - Install dependencies
         # If we had an exact cache hit, the dependencies will be up to date.
         if: steps.cache.outputs.cache-hit != 'true'
-        run: cabal build all --only-dependencies
+        run: cabal build all --only-dependencies --verbose
 
       # Cache dependencies already here, so that we do not have to rebuild them should the subsequent steps fail.
       - name: Build - Save dependencies to cache
@@ -121,7 +121,9 @@ jobs:
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Build
-        run: cabal build all --enable-relocatable
+        run: cabal build all \
+          --extra-include-dirs=/opt/homebrew/include \
+          --enable-relocatable
 
       - name: Test
         run: |
