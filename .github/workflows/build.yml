@@ -92,7 +92,7 @@ jobs:
 
       - name: Build - Configure
         run: |
-          cabal configure --enable-tests --enable-benchmarks --disable-documentation --enable-relocatable
+          cabal configure --enable-tests --enable-benchmarks --disable-documentation
           cabal build all --dry-run
         # The last step generates dist-newstyle/cache/plan.json for the cache key.
 
@@ -121,9 +121,7 @@ jobs:
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Build
-        run: cabal build all \
-          --extra-include-dirs=/opt/homebrew/include \
-          --enable-relocatable
+        run: cabal build all --extra-include-dirs=/opt/homebrew/include
 
       - name: Test
         run: |
