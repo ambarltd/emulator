@@ -29,6 +29,12 @@ jobs:
           sudo apt-get install libpcre3-dev
           sudo apt-get install libmysqlclient-dev
 
+      - name: Install system dependencies Windows
+        if: runner.os == 'Windows'
+        run: |
+          choco install msys2
+          pacman -Ss pcre
+
       - name: Setup - PostgreSQL
         id: postgres-setup
         uses: ikalnytskyi/action-setup-postgres@v7
