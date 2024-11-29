@@ -45,6 +45,11 @@ jobs:
           cabal-version: 'latest'
           cabal-update: true
 
+      - name: Install system dependencies Linux
+        if: runner.os == 'Linux'
+        run: |
+          apt-get install pcre-dev
+
       - name: Build - Configure
         run: |
           cabal configure --enable-tests --enable-benchmarks --disable-documentation
