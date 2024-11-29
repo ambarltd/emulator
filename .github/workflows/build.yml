@@ -27,7 +27,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install libpcre3-dev
-          sudo apt-get install libmysqlclient24
+          sudo apt-get install libmysqlclient-dev
+          sudo apt-get install libmysqlclient
 
       - name: Install system dependencies - Windows
         if: runner.os == 'Windows'
