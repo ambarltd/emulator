@@ -22,6 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install system dependencies Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install pcre-dev
+
       - name: Setup - PostgreSQL
         id: postgres-setup
         uses: ikalnytskyi/action-setup-postgres@v7
@@ -42,11 +47,6 @@ jobs:
           # Defaults, added for clarity:
           cabal-version: 'latest'
           cabal-update: true
-
-      - name: Install system dependencies Linux
-        if: runner.os == 'Linux'
-        run: |
-          apt-get install pcre-dev
 
       - name: Build - Configure
         run: |
