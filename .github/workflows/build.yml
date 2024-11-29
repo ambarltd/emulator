@@ -67,13 +67,6 @@ jobs:
         with:
           mysql-version: "9.0.1"
 
-      - name: Show mysql contents
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get install tree
-          tree /opt/hostedtoolcache/mysql
-
-
       - name: Install system dependencies - Linux
         if: runner.os == 'Linux'
         run: |
@@ -117,6 +110,8 @@ jobs:
           set -x
           export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/opt/homebrew/include"
           export LD_LIBRARY="$LD_LIBRARY:/opt/homebrew/include"
+
+          MYSQL_LIB=$(dirname $(dirname $LIBMYSQL_PLUGIN_DIR))
           cat <<EOF >cabal.project.local
           ignore-project: False
           package pcre-light
@@ -124,13 +119,14 @@ jobs:
             extra-lib-dirs: /opt/homebrew/lib
             extra-prog-path: /opt/homebrew/lib
           package mysql
-            extra-include-dirs: /opt/homebrew/include
-            extra-lib-dirs: /opt/homebrew/lib
-            extra-prog-path: /opt/homebrew/lib
+            extra-include-dirs: $MYSQL_LIB/include
+            extra-lib-dirs: $MYSQL_LIB/lib
+            extra-prog-path: $MYSQL_LIB/lib
           EOF
-          cat cabal.project.local
-          cabal build pcre-light --verbose --extra-include-dirs="/opt/homebrew/include"
-          cabal build mysql      --verbose --extra-include-dirs="/opt/homebrew/include"
+
+          find /opt/homebrew/lib
+          cabal build pcre-light
+          cabal build mysql
 
       - name: Build - Install dependencies
         # If we had an exact cache hit, the dependencies will be up to date.
