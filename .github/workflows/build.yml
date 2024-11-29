@@ -12,13 +12,14 @@ concurrency:
 
 jobs:
   build:
-    name: GHC ${{ matrix.ghc-version }} on ${{ matrix.os }}
+    name: GHC ${{ matrix.ghc }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        ghc-version: ['9.10.1']
+        ghc: ['9.10.1']
+        cabal: ['3.10.3.0']
     steps:
       - uses: actions/checkout@v4
 
@@ -34,9 +35,18 @@ jobs:
       - name: Install system dependencies - Windows
         if: runner.os == 'Windows'
         run: |
-          C:\msys64\usr\bin\pacman.exe -Ss pcre
-          C:\msys64\usr\bin\pacman.exe -Ss mingw-w64-x86_64-pcre
-          C:\msys64\usr\bin\pacman.exe -Ss mingw-w64-x86_64-pkg-config
+          # ghcup should be installed on current GHA Windows runners. Let's use ghcup to run
+          # pacman, to install the necessary dependencies, ...
+          ghcup run --mingw-path -- pacman --noconfirm -S `
+            mingw-w64-x86_64-pkg-config `
+            mingw-w64-x86_64-pcre `
+            mingw-w64-x86_64-libsodium `
+            base-devel `
+            autoconf-wrapper `
+            autoconf `
+            automake `
+            libtool `
+            make
 
       - name: Install system dependencies - MacOS
         if: runner.os == 'macOS'
@@ -64,14 +74,22 @@ jobs:
         with:
           mysql-version: "9.0.1"
 
-      - name: Setup - GHC ${{ matrix.ghc-version }}
-        uses: haskell-actions/setup@v2
-        id: setup
-        with:
-          ghc-version: ${{ matrix.ghc-version }}
-          # Defaults, added for clarity:
-          cabal-version: 'latest'
-          cabal-update: true
+      - name: Setup Haskell
+        run: |
+          ghcup install ghc --set ${{ matrix.ghc }}
+          ghcup install cabal --set 3.10.3.0
+
+          ghc --version
+          cabal --version
+
+          # - name: Setup - GHC ${{ matrix.ghc }}
+          #   uses: haskell-actions/setup@v2
+          #   id: setup
+          #   with:
+          #     ghc-version: ${{ matrix.ghc }}
+          #     # Defaults, added for clarity:
+          #     cabal-version: 'latest'
+          #     cabal-update: true
 
       - name: Build - Configure
         run: |
@@ -113,6 +131,13 @@ jobs:
           find /opt/homebrew/lib
           cabal build pcre-light
           cabal build mysql
+
+
+      - name: Build - Install dependencies - windows
+        shell: msys2 {0}
+        # If we had an exact cache hit, the dependencies will be up to date.
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        run: cabal build all --only-dependencies --verbose --extra-include-dirs=/opt/homebrew/include
 
       - name: Build - Install dependencies
         # If we had an exact cache hit, the dependencies will be up to date.
