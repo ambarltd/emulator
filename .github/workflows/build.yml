@@ -35,8 +35,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           dir C:\msys64\usr\bin\
-          SETX PATH "%PATH%;C:\msys64\usr\bin\"
-          pacman -Ss pcre
+          C:\msys64\usr\bin\pacman.exe -Ss pcre
 
       - name: Setup - PostgreSQL
         id: postgres-setup
