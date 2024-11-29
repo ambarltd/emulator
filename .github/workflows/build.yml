@@ -22,17 +22,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies - Linux
-        if: runner.os == 'Linux'
-        run: |
-          set -x
-          sudo apt-get update
-          sudo apt-get install libpcre3-dev
-          sudo apt-get install libmysqlclient-dev
-          sudo apt-get install libmysqlclient21
-          sudo ln -s /opt/hostedtoolcache/mysql/9.1.0/x64/lib/libmysqlclient.so.24 /usr/lib/libmysqlclient.so.24
-          find /opt/hostedtoolcache/mysql/9.1.0/x64/lib
-
       - name: Install system dependencies - Windows
         if: runner.os == 'Windows'
         run: |
@@ -83,6 +72,18 @@ jobs:
         run: |
           sudo apt-get install tree
           tree /opt/hostedtoolcache/mysql
+
+
+      - name: Install system dependencies - Linux
+        if: runner.os == 'Linux'
+        run: |
+          set -x
+          sudo apt-get update
+          sudo apt-get install libpcre3-dev
+          sudo apt-get install libmysqlclient-dev
+          sudo apt-get install libmysqlclient21
+          sudo ln -s /opt/hostedtoolcache/mysql/9.1.0/x64/lib/libmysqlclient.so.24 /usr/lib/libmysqlclient.so.24
+          find /opt/hostedtoolcache/mysql/9.1.0/x64/lib
 
       - name: Setup - GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
