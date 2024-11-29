@@ -35,10 +35,9 @@ jobs:
       - name: Install system dependencies - Windows
         if: runner.os == 'Windows'
         run: |
-          C:\msys64\usr\bin\pacman.exe -Syu
-          C:\msys64\usr\bin\pacman.exe -S pcre
-          C:\msys64\usr\bin\pacman.exe -S mingw-w64-x86_64-pcre
-          C:\msys64\usr\bin\pacman.exe -S mingw-w64-x86_64-pkg-config
+          C:\msys64\usr\bin\pacman.exe -Ss pcre
+          C:\msys64\usr\bin\pacman.exe -Ss mingw-w64-x86_64-pcre
+          C:\msys64\usr\bin\pacman.exe -Ss mingw-w64-x86_64-pkg-config
 
 
       - name: Install system dependencies - MacOS
