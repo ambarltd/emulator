@@ -35,7 +35,6 @@ jobs:
       - name: Install system dependencies - Windows
         if: runner.os == 'Windows'
         run: |
-          sudo apt-get install pkg-config
           C:\msys64\usr\bin\pacman.exe -Ss pcre
           C:\msys64\usr\bin\pacman.exe -Ss mingw-w64-x86_64-pcre
           C:\msys64\usr\bin\pacman.exe -Ss mingw-w64-x86_64-pkg-config
@@ -75,6 +74,8 @@ jobs:
 
       - name: Setup - MySQL
         uses: shogo82148/actions-setup-mysql@v1
+        with:
+          mysql-version: "9.0.1"
 
       - name: Show mysql contents
         if: runner.os == 'Linux'
@@ -133,6 +134,8 @@ jobs:
         run: cabal build all --extra-include-dirs=/opt/homebrew/include
 
       - name: Test
+        env:
+          PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
         run: cabal run emulator-tests
 
       # We run this only when a PR is merged so we can see how things are performing
