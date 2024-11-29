@@ -31,6 +31,7 @@ jobs:
           sudo apt-get install libmysqlclient-dev
           sudo apt-get install libmysqlclient21
           sudo ln -s /opt/hostedtoolcache/mysql/9.1.0/x64/lib/libmysqlclient.so.24 /usr/lib/libmysqlclient.so.24
+          find /opt/hostedtoolcache/mysql/9.1.0/x64/lib
 
       - name: Install system dependencies - Windows
         if: runner.os == 'Windows'
@@ -110,11 +111,25 @@ jobs:
 
       - name: Build failing deps
         # If we had an exact cache hit, the dependencies will be up to date.
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS'
         run: |
           set -x
-          cabal build pcre-light --verbose --extra-include-dirs=/opt/homebrew/include
-          cabal build mysql      --verbose --extra-include-dirs=/opt/homebrew/include
+          export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/opt/homebrew/include"
+          export LD_LIBRARY="$LD_LIBRARY:/opt/homebrew/include"
+          cat <<EOF >cabal.project.local
+          ignore-project: False
+          package pcre-light
+            extra-include-dirs: /opt/homebrew/include
+            extra-lib-dirs: /opt/homebrew/lib
+            extra-prog-path: /opt/homebrew/lib
+          package mysql
+            extra-include-dirs: /opt/homebrew/include
+            extra-lib-dirs: /opt/homebrew/lib
+            extra-prog-path: /opt/homebrew/lib
+          EOF
+          cat cabal.project.local
+          cabal build pcre-light --verbose --extra-include-dirs="/opt/homebrew/include"
+          cabal build mysql      --verbose --extra-include-dirs="/opt/homebrew/include"
 
       - name: Build - Install dependencies
         # If we had an exact cache hit, the dependencies will be up to date.
@@ -131,7 +146,7 @@ jobs:
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Build
-        run: cabal build all --extra-include-dirs=/opt/homebrew/include
+        run: LD_DEBUG=libs cabal build all --extra-include-dirs=/opt/homebrew/include
 
       - name: Test
         env:
