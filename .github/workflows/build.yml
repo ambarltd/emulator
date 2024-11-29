@@ -29,13 +29,11 @@ jobs:
           sudo apt-get install libpcre3-dev
           sudo apt-get install libmysqlclient-dev
 
-      - name: Install system dependencies - Windows - MSYS
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
-
       - name: Install system dependencies - Windows
         if: runner.os == 'Windows'
         run: |
+          set PATH=%PATH%;C:\msys64\usr\bin\
+          dir C:\msys64\usr\bin\
           pacman -Ss pcre
 
       - name: Setup - PostgreSQL
