@@ -43,6 +43,8 @@ jobs:
           brew install pcre2
           brew install pcre
           brew install mysql-connector-c
+          export LDFLAGS="-L/opt/homebrew/opt/mysql-client/lib"
+          export CPPFLAGS="-I/opt/homebrew/opt/mysql-client/include"
           cat <<EOF >cabal.project.local
             ignore-project: False
 
@@ -56,8 +58,8 @@ jobs:
               extra-lib-dirs: /opt/homebrew/lib
               extra-prog-path: /opt/homebrew/lib
             EOF
-        cat caba.project.local
-        ls -la /opt/homebrew/include
+          cat caba.project.local
+          ls -la /opt/homebrew/include
 
       - name: Setup - PostgreSQL
         id: postgres-setup
