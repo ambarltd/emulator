@@ -80,8 +80,8 @@ jobs:
 
       - name: Build - Configure
         run: |
-          cabal configure --enable-tests --enable-benchmarks --disable-documentation
-          cabal build all --dry-run
+          LD_DEBUG=libs cabal configure --enable-tests --enable-benchmarks --disable-documentation
+          LD_DEBUG=libs cabal build all --dry-run
         # The last step generates dist-newstyle/cache/plan.json for the cache key.
 
       - name: Build - Restore cached dependencies
@@ -97,7 +97,7 @@ jobs:
       - name: Build - Install dependencies
         # If we had an exact cache hit, the dependencies will be up to date.
         if: steps.cache.outputs.cache-hit != 'true'
-        run: cabal build all --only-dependencies
+        run: LD_DEBUG=libs cabal build all --only-dependencies
 
       # Cache dependencies already here, so that we do not have to rebuild them should the subsequent steps fail.
       - name: Build - Save dependencies to cache
@@ -109,7 +109,7 @@ jobs:
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Build
-        run: cabal build all
+        run: LD_DEBUG=libs cabal build all
 
       - name: Test
         run: LD_DEBUG=libs cabal run --verbose emulator-tests -- +RTS -N
