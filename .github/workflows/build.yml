@@ -26,7 +26,6 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-cache search libmysqlclient
           sudo apt-get install libpcre3-dev
           sudo apt-get install libmysqlclient-dev
           sudo apt-get install libmysqlclient21
@@ -34,8 +33,13 @@ jobs:
       - name: Install system dependencies - Windows
         if: runner.os == 'Windows'
         run: |
-          dir C:\msys64\usr\bin\
           C:\msys64\usr\bin\pacman.exe -Ss pcre
+
+      - name: Install system dependencies - MacOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install pcre
+          brew install mysql-connector-c
 
       - name: Setup - PostgreSQL
         id: postgres-setup
