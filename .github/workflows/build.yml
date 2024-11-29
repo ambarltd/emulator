@@ -56,6 +56,8 @@ jobs:
               extra-lib-dirs: /opt/homebrew/lib
               extra-prog-path: /opt/homebrew/lib
             EOF
+        cat caba.project.local
+        ls -la /opt/homebrew/include
 
       - name: Setup - PostgreSQL
         id: postgres-setup
@@ -68,6 +70,12 @@ jobs:
 
       - name: Setup - MySQL
         uses: shogo82148/actions-setup-mysql@v1
+
+      - name: Show mysql contents
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install tree
+          tree $LIBMYSQL_PLUGIN_DIR
 
       - name: Setup - GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
