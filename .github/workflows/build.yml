@@ -157,7 +157,7 @@ jobs:
 
           cat <<EOF >~/.my.cnf
           [mysql]
-          socket=$(dirname $MYSQL_HOME)/tmp/mysql.sock
+          socket=$(dirname $MYSQL_HOME)/tmp/wat/mysql.sock
           EOF
 
 
