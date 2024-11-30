@@ -32,9 +32,9 @@ jobs:
           sudo apt-get install libmysqlclient21
           sudo ln -s /opt/hostedtoolcache/mysql/9.0.1/x64/lib/libmysqlclient.so.24 /usr/lib/libmysqlclient.so.24
 
-      - name: Install MSYS for Windors
-        if: runner.os == 'Windows'
-        uses: msys2/setup-msys2@v2
+#     - name: Install MSYS for Windors
+#       if: runner.os == 'Windows'
+#       uses: msys2/setup-msys2@v2
 
       - name: Install system dependencies - MacOS
         if: runner.os == 'macOS'
@@ -70,6 +70,16 @@ jobs:
           # Defaults, added for clarity:
           cabal-version: ${{ matrix.cabal }}
           cabal-update: true
+
+            # - name: Setup Haskell
+            #   if: runner.os == 'Windows'
+            #   run: |
+            #     ghcup install ghc --set ${{ matrix.ghc }}
+            #     ghcup install cabal --set ${{ matrix.cabal }}
+
+            #     ghc --version
+            #     cabal --version
+            #     cabal update
 
       - name: Install system dependencies - Windows
         if: runner.os == 'Windows'
@@ -132,13 +142,12 @@ jobs:
             extra-prog-path: $MYSQL_LIB/lib
           EOF
 
-          find /opt/homebrew/lib
+          ls -la /opt/homebrew/lib
           cabal build pcre-light
           cabal build mysql
 
 
       - name: Build - Install dependencies - windows
-        shell: msys2 {0}
         # If we had an exact cache hit, the dependencies will be up to date.
         if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
         run: cabal build all --only-dependencies --verbose --extra-include-dirs=/opt/homebrew/include
