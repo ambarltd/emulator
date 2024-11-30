@@ -34,7 +34,7 @@ jobs:
 
       - name: Install MSYS for Windors
         if: runner.os == 'Windows'
-        use: /usr/lib/libmysqlclient.so.24
+        uses: msys2/setup-msys2@v2
 
       - name: Install system dependencies - MacOS
         if: runner.os == 'macOS'
