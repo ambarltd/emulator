@@ -129,6 +129,8 @@ jobs:
           export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/opt/homebrew/include"
           export LD_LIBRARY="$LD_LIBRARY:/opt/homebrew/include"
 
+          mkdir -p /usr/local/lib || true
+          export DYLD_LIBRARY_PATH=/usr/local/lib
           MYSQL_LIB=$(dirname $LIBMYSQL_PLUGIN_DIR)
           ls -la $MYSQL_LIB
           sudo ln -s $MYSQL_LIB/libmysqlclient.24.dylib /usr/local/lib/libmysqlclient.24.dylib
