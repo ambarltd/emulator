@@ -43,6 +43,8 @@ jobs:
           brew install pcre2
           brew install pcre
           brew install mysql-connector-c
+          brew install mysql-client
+          ls -la /opt/homebrew/lib
 
       - name: Setup - PostgreSQL
         id: postgres-setup
@@ -128,7 +130,7 @@ jobs:
 
           MYSQL_LIB=$(dirname $LIBMYSQL_PLUGIN_DIR)
           ls -la $MYSQL_LIB
-          sudo ln -s $MYSQL_LIB/libmysqlclient.so.24 /usr/local/lib/libmysqlclient.so.24
+          sudo ln -s $MYSQL_LIB/libmysqlclient.24.dylib /usr/local/lib/libmysqlclient.24.dylib
 
           MYSQL_LIB=$(dirname $(dirname $LIBMYSQL_PLUGIN_DIR))
           cat <<EOF >cabal.project.local
