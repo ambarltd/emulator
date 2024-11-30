@@ -129,7 +129,7 @@ jobs:
           export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/opt/homebrew/include"
           export LD_LIBRARY="$LD_LIBRARY:/opt/homebrew/include"
 
-          mkdir -p /usr/local/lib || true
+          sudo mkdir -p /usr/local/lib
           export DYLD_LIBRARY_PATH=/usr/local/lib
           MYSQL_LIB=$(dirname $LIBMYSQL_PLUGIN_DIR)
           ls -la $MYSQL_LIB
