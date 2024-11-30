@@ -74,18 +74,7 @@ jobs:
         with:
           mysql-version: "9.0.1"
 
-      - name: Setup Haskell
-        if: runner.os == 'Windows'
-        run: |
-          ghcup install ghc --set ${{ matrix.ghc }}
-          ghcup install cabal --set 3.10.3.0
-
-          ghc --version
-          cabal --version
-          cabal update
-
       - name: Setup - GHC ${{ matrix.ghc }}
-        if: runner.os != 'Windows'
         uses: haskell-actions/setup@v2
         id: setup
         with:
