@@ -88,6 +88,7 @@ jobs:
           ghcup run --mingw-path -- pacman --noconfirm -S `
             mingw-w64-x86_64-pkg-config `
             mingw-w64-x86_64-pcre `
+            mariadb-libs `
             mingw-w64-x86_64-libsodium `
             base-devel `
             autoconf-wrapper `
