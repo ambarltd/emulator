@@ -126,9 +126,9 @@ jobs:
           export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/opt/homebrew/include"
           export LD_LIBRARY="$LD_LIBRARY:/opt/homebrew/include"
 
-          MYSQL_LIB=$(dirname $(dirname $LIBMYSQL_PLUGIN_DIR))
+          MYSQL_LIB=$(dirname $LIBMYSQL_PLUGIN_DIR)
           ls -la $MYSQL_LIB
-          sudo ln -s $MYSQL_LIB/libmysqlclient.so.24 /usr/lib/libmysqlclient.so.24
+          sudo ln -s $MYSQL_LIB/libmysqlclient.so.24 /usr/local/lib/libmysqlclient.so.24
 
           MYSQL_LIB=$(dirname $(dirname $LIBMYSQL_PLUGIN_DIR))
           cat <<EOF >cabal.project.local
