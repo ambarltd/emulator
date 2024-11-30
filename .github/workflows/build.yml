@@ -146,7 +146,7 @@ jobs:
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Build
-        run: LD_DEBUG=libs cabal build all --extra-include-dirs=/opt/homebrew/include
+        run: cabal build all --extra-include-dirs=/opt/homebrew/include
 
       - name: Test
         env:
@@ -154,13 +154,8 @@ jobs:
           MYSQL_STUFF: ${{ steps.mysql.outputs.base-dir }}
         run: |
           set -x
-
-          cat <<EOF >~/.my.cnf
-          [mysql]
-          socket=$(dirname $MYSQL_HOME)/tmp/wat/mysql.sock
-          EOF
-
-
+          export MYSQL_UNIX_PORT=$(dirname $MYSQL_HOME)/tmp/wat/mysql.sock
+          sudo ln -s $MYSQL_UNIX_PORT /tmp/mysql.sock
           cabal run emulator-tests
 
       # We run this only when a PR is merged so we can see how things are performing
