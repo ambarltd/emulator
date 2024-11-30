@@ -36,22 +36,6 @@ jobs:
         if: runner.os == 'Windows'
         use: /usr/lib/libmysqlclient.so.24
 
-      - name: Install system dependencies - Windows
-        if: runner.os == 'Windows'
-        run: |
-          # ghcup should be installed on current GHA Windows runners. Let's use ghcup to run
-          # pacman, to install the necessary dependencies, ...
-          ghcup run --mingw-path -- pacman --noconfirm -S `
-            mingw-w64-x86_64-pkg-config `
-            mingw-w64-x86_64-pcre `
-            mingw-w64-x86_64-libsodium `
-            base-devel `
-            autoconf-wrapper `
-            autoconf `
-            automake `
-            libtool `
-            make
-
       - name: Install system dependencies - MacOS
         if: runner.os == 'macOS'
         run: |
@@ -86,6 +70,30 @@ jobs:
           # Defaults, added for clarity:
           cabal-version: ${{ matrix.cabal }}
           cabal-update: true
+
+      - name: Install system dependencies - Windows
+        if: runner.os == 'Windows'
+        run: |
+          # ghcup should be installed on current GHA Windows runners. Let's use ghcup to run
+          # pacman, to install the necessary dependencies, ...
+          ghcup run --mingw-path -- pacman --noconfirm -S `
+            mingw-w64-x86_64-pkg-config `
+            mingw-w64-x86_64-pcre `
+            mingw-w64-x86_64-libsodium `
+            base-devel `
+            autoconf-wrapper `
+            autoconf `
+            automake `
+            libtool `
+            make
+          $ghcMingwDir = Join-Path -Path $(ghc --print-libdir) `
+                                 -ChildPath ../mingw/x86_64-*-mingw32/lib/ `
+                                 -Resolve
+          cabal user-config -a "extra-prog-path: C:/msys64/mingw64/bin, C:/msys64/usr/bin" `
+                          -a "extra-include-dirs: C:/msys64/mingw64/include" `
+                          -a ("extra-lib-dirs: {0}, C:/msys64/mingw64/lib" -f $ghcMingwDir) `
+                          -f init
+
 
       - name: Build - Configure
         run: |
