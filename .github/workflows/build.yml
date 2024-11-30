@@ -166,8 +166,7 @@ jobs:
           MYSQL_STUFF: ${{ steps.mysql.outputs.base-dir }}
         run: |
           set -x
-          export MYSQL_UNIX_PORT=$(dirname $MYSQL_HOME)/tmp/wat/mysql.sock
-          sudo ln -s $MYSQL_UNIX_PORT /tmp/mysql.sock
+          export MYSQL_UNIX_PORT=$(dirname $MYSQL_HOME)/tmp/mysql.sock
           cabal run emulator-tests
 
       # We run this only when a PR is merged so we can see how things are performing
