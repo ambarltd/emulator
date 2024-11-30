@@ -43,9 +43,6 @@ jobs:
           brew install pcre2
           brew install pcre
           brew install mysql-connector-c
-          export LDFLAGS="-L/opt/homebrew/opt/mysql-client/lib"
-          export CPPFLAGS="-I/opt/homebrew/opt/mysql-client/include"
-          ls -la /opt/homebrew/include
 
       - name: Setup - PostgreSQL
         id: postgres-setup
@@ -130,6 +127,10 @@ jobs:
           export LD_LIBRARY="$LD_LIBRARY:/opt/homebrew/include"
 
           MYSQL_LIB=$(dirname $(dirname $LIBMYSQL_PLUGIN_DIR))
+          ls -la $MYSQL_LIB
+          sudo ln -s $MYSQL_LIB/libmysqlclient.so.24 /usr/lib/libmysqlclient.so.24
+
+          MYSQL_LIB=$(dirname $(dirname $LIBMYSQL_PLUGIN_DIR))
           cat <<EOF >cabal.project.local
           ignore-project: False
           package pcre-light
@@ -142,20 +143,13 @@ jobs:
             extra-prog-path: $MYSQL_LIB/lib
           EOF
 
-          ls -la /opt/homebrew/lib
           cabal build pcre-light
           cabal build mysql
-
-
-      - name: Build - Install dependencies - windows
-        # If we had an exact cache hit, the dependencies will be up to date.
-        if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
-        run: cabal build all --only-dependencies --verbose --extra-include-dirs=/opt/homebrew/include
 
       - name: Build - Install dependencies
         # If we had an exact cache hit, the dependencies will be up to date.
         if: steps.cache.outputs.cache-hit != 'true'
-        run: cabal build all --only-dependencies --verbose --extra-include-dirs=/opt/homebrew/include
+        run: cabal build all --only-dependencies --extra-include-dirs=/opt/homebrew/include
 
       # Cache dependencies already here, so that we do not have to rebuild them should the subsequent steps fail.
       - name: Build - Save dependencies to cache
