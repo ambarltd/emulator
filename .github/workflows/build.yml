@@ -32,6 +32,10 @@ jobs:
           sudo apt-get install libmysqlclient21
           sudo ln -s /opt/hostedtoolcache/mysql/9.0.1/x64/lib/libmysqlclient.so.24 /usr/lib/libmysqlclient.so.24
 
+      - name: Install MSYS for Windors
+        if: runner.os == 'Windows'
+        use: /usr/lib/libmysqlclient.so.24
+
       - name: Install system dependencies - Windows
         if: runner.os == 'Windows'
         run: |
