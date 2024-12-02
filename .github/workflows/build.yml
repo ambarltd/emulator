@@ -23,17 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies - Linux
-        if: runner.os == 'Linux'
-        run: |
-          set -x
-          sudo apt-get update
-          sudo apt-get install libpcre3-dev
-          sudo apt-get install libmysqlclient-dev
-          sudo apt-get install libmysqlclient21
-          echo $LIBMYSQL_PLUGIN_DIR
-          sudo ln -s /opt/hostedtoolcache/mysql/9.0.1/x64/lib/libmysqlclient.so.24 /usr/lib/libmysqlclient.so.24
-
       - name: Setup - PostgreSQL
         id: postgres-setup
         uses: ikalnytskyi/action-setup-postgres@v7
@@ -57,6 +46,18 @@ jobs:
           # Defaults, added for clarity:
           cabal-version: ${{ matrix.cabal }}
           cabal-update: true
+
+
+      - name: Install system dependencies - Linux
+        if: runner.os == 'Linux'
+        run: |
+          set -x
+          sudo apt-get update
+          sudo apt-get install libpcre3-dev
+          sudo apt-get install libmysqlclient-dev
+          sudo apt-get install libmysqlclient21
+          echo $LIBMYSQL_PLUGIN_DIR
+          sudo ln -s /opt/hostedtoolcache/mysql/9.0.1/x64/lib/libmysqlclient.so.24 /usr/lib/libmysqlclient.so.24
 
       - name: Build - Configure
         run: |
