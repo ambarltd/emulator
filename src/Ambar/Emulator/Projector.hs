@@ -27,6 +27,7 @@ import Ambar.Emulator.Config (Id(..), DataDestination, DataSource(..), Source(..
 import Ambar.Emulator.Queue.Topic (Topic, ReadError(..), PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
+import Ambar.Emulator.Connector.MySQL (MySQL(..))
 import Ambar.Transport (Transport)
 import qualified Ambar.Transport as Transport
 import Utils.Some (Some)
@@ -106,6 +107,12 @@ relevantFields source (Payload value) = renderPretty $
   withObject $ \o ->
   case source of
     SourceFile _ -> prettyJSON value
+    SourceMySQL MySQL{..} ->
+      fillSep $
+        [ pretty field <> ":" <+> prettyJSON v
+        | field <- [c_incrementingColumn, c_partitioningColumn]
+        , Just v <- [KeyMap.lookup (fromString $ Text.unpack field) o]
+        ]
     SourcePostgreSQL PostgreSQL{..} ->
       fillSep $
         [ pretty field <> ":" <+> prettyJSON v

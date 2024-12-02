@@ -1,62 +1,52 @@
 #
 # Build a statically-linked binary for Linux
 #
-FROM alpine:3.19
+FROM alpine:3.20
 
-# Install system deps
 RUN apk update
+
+# Compiler dependencies
 RUN apk add \
-    autoconf \
-    automake \
-    bash \
-    binutils \
-    binutils-gold \
-    build-base \
-    coreutils \
-    cpio \
     curl \
-    g++  \
+    binutils-gold \
     gcc \
-    git \
+    g++ \
     gmp-dev \
     libc-dev \
     libffi-dev \
-    libpq-dev \
-    libxml2-dev \
-    libxml2-static \
-    linux-headers \
-    lld \
-    lm-sensors \
-    lz4-static \
     make \
     musl-dev \
     ncurses-dev \
-    ncurses-dev \
-    ncurses-libs \
-    ncurses-static \
-    openssl \
-    openssl-dev \
-    openssl-libs-static \
     perl \
     pkgconfig \
-    postgresql-dev \
-    readline-dev \
-    readline-static \
     tar \
-    wget \
-    xz \
-    zlib-dev \
-    zlib-static \
-    zstd-static
+    xz
 
-# Install ghcup
+# Install compiler (GHC) and build system (cabal)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | \
     BOOTSTRAP_HASKELL_NONINTERACTIVE=1 \
     BOOTSTRAP_HASKELL_GHC_VERSION="9.10.1" \
+    BOOTSTRAP_HASKELL_CABAL_VERSION="3.10.3.0" \
     BOOTSTRAP_HASKELL_INSTALL_NO_STACK=1 \
     sh
+
+# Add 'GHC' and 'cabal' to PATH
 ENV PATH="/root/.ghcup/bin:$PATH"
-ENV PATH="$HOME/.cabal/bin:$PATH"
+
+# Library dependencies
+RUN apk add \
+    libxml2-static \
+    lz4-static \
+    ncurses-static \
+    openssl-libs-static \
+    readline-static \
+    zlib-static \
+    zstd-static \
+    mariadb-static \
+    pcre-dev \
+    zlib-dev \
+    mariadb-connector-c-dev \
+    libpq-dev
 
 WORKDIR /opt/emulator
 
@@ -65,21 +55,19 @@ WORKDIR /opt/emulator
 # dependencies (unless the .cabal file changes)
 COPY ./emulator.cabal       /opt/emulator
 COPY ./cabal.project        /opt/emulator
-
-RUN cabal build --dependencies-only
+RUN cabal build --dependencies-only +RTS -N
 
 # Add and build application code.
-# The 'cabal install' command will also add the 'emulator' binary to the PATH.
 # For maximum caching we only copy source code files.
 COPY ./src          /opt/emulator/src
 COPY ./tests        /opt/emulator/tests
 COPY ./benchmarks   /opt/emulator/benchmarks
-
 RUN cabal build \
     --enable-executable-static \
     --ghc-options='-optl-lpq -optl-lssl -optl-lcrypto -optl-lpgcommon -optl-lpgport -optl-lzstd -optl-llz4 -optl-lxml2 -optl-lssl -optl-lcrypto -optl-lz -optl-lreadline -optl-lm' \
     emulator
 
+# Add executable to PATH as 'emulator'
 RUN ln -s $(cabal list-bin emulator) /usr/local/bin/emulator
 
 ENTRYPOINT ["emulator"]

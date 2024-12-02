@@ -28,6 +28,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Yaml as Yaml
 
 import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
+import Ambar.Emulator.Connector.MySQL (MySQL(..))
 import Ambar.Emulator.Connector.File (FileConnector(..))
 import Ambar.Transport (SubmissionError)
 import Ambar.Transport.Http (Endpoint, User, Password)
@@ -56,8 +57,9 @@ data DataSource = DataSource
   }
 
 data Source
-  = SourcePostgreSQL PostgreSQL
-  | SourceFile FileConnector
+  = SourceFile FileConnector
+  | SourcePostgreSQL PostgreSQL
+  | SourceMySQL MySQL
 
 data DataDestination = DataDestination
   { d_id :: Id DataDestination
@@ -101,6 +103,7 @@ instance FromJSON DataSource where
     s_source <- (o .: "type") >>= \t ->
       case t of
         "postgres" -> parsePostgreSQL o
+        "mysql" -> parseMySQL o
         "file" -> parseFile o
         _ -> fail $ unwords
           [ "Invalid data source type: '" <> t <> "'."
@@ -119,6 +122,18 @@ instance FromJSON DataSource where
       c_partitioningColumn <- o .: "partitioningColumn"
       c_serialColumn <- o .: "serialColumn"
       return $ SourcePostgreSQL PostgreSQL{..}
+
+    parseMySQL o = do
+      c_host <- o .: "host"
+      c_port <- o .: "port"
+      c_username <- o .: "username"
+      c_password <- o .: "password"
+      c_database <- o .: "database"
+      c_table <- o .: "table"
+      c_columns <- o .: "columns"
+      c_partitioningColumn <- o .: "partitioningColumn"
+      c_incrementingColumn <- o .: "autoIncrementingColumn"
+      return $ SourceMySQL MySQL{..}
 
     parseFile o = SourceFile . FileConnector <$> (o .: "path")
 

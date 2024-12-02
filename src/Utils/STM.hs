@@ -5,11 +5,13 @@ module Utils.STM
 import qualified Control.Exception as E
 import qualified Control.Concurrent.STM as STM
 
+import Utils.Exception (annotateWith)
+
 atomicallyNamed :: String -> STM.STM a -> IO a
-atomicallyNamed msg = E.handle f . STM.atomically
+atomicallyNamed msg = annotateWith f . STM.atomically
   where
-  f :: E.BlockedIndefinitelyOnSTM -> IO a
-  f = E.throwIO . AnnotatedException msg . E.toException
+  f :: E.BlockedIndefinitelyOnSTM -> String
+  f _ = msg
 
 data AnnotatedException = AnnotatedException String E.SomeException
   deriving Show

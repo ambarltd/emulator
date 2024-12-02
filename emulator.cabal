@@ -45,6 +45,7 @@ library emulator-lib
         Ambar.Emulator.Connector.File
         Ambar.Emulator.Connector.Poll
         Ambar.Emulator.Connector.Postgres
+        Ambar.Emulator.Connector.MySQL
         Ambar.Emulator.Projector
         Ambar.Emulator.Queue
         Ambar.Emulator.Queue.Topic
@@ -56,9 +57,11 @@ library emulator-lib
         Ambar.Transport
         Ambar.Transport.Http
         Ambar.Transport.File
+        Database.MySQL
         Utils.Async
         Utils.Delay
         Utils.Directory
+        Utils.Exception
         Utils.Logger
         Utils.Prettyprinter
         Utils.STM
@@ -83,6 +86,8 @@ library emulator-lib
         , http-client
         , http-client-tls
         , http-types
+        , mysql
+        , mysql-simple
         , postgresql-simple
         , prettyprinter
         , random
@@ -94,18 +99,27 @@ library emulator-lib
 
 test-suite emulator-tests
     import: common
-    ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
+    ghc-options:
+        -threaded
+        -rtsopts
+        -with-rtsopts=-N
+        -Wall
+        -Werror
+        -Wno-x-partial
     hs-source-dirs: tests
     main-is: Tests.hs
     other-modules:
         Test.Config
         Test.Queue
         Test.Connector
+        Test.Connector.MySQL
+        Test.Connector.PostgreSQL
         Test.Emulator
         Test.OnDemand
         Test.Warden
         Test.Utils.OnDemand
         Test.Utils.Docker
+        Test.Utils.SQL
     type:    exitcode-stdio-1.0
     build-depends:
         base

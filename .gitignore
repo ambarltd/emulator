@@ -1,3 +1,6 @@
 dist-newstyle
 tags
 tmp
+
+# local project configuration. Mostly library path mapping.
+cabal.project.local

@@ -1,11 +1,10 @@
 module Ambar.Emulator.Connector.Postgres
   ( PostgreSQL(..)
   , PostgreSQLState
-  , UnsupportedType(..)
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
-import Control.Exception (Exception, bracket, throwIO, ErrorCall(..))
+import Control.Exception (bracket, throwIO, ErrorCall(..))
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
@@ -89,9 +88,6 @@ data PgType
   | PgText
   deriving (Show, Eq)
 
-data UnsupportedType = UnsupportedType String
-  deriving (Show, Exception)
-
 instance P.FromField PgType where
   fromField t d = do
     str <- P.fromField t d
@@ -107,7 +103,7 @@ instance P.FromField PgType where
       "timestamp" -> return PgTimestamp
       "timestamptz" -> return PgTimestamptz
       "text" -> return PgText
-      _ -> P.conversionError $ UnsupportedType str
+      _ -> P.conversionError $ C.UnsupportedType str
 
 -- | Opaque serializable connector state
 newtype PostgreSQLState = PostgreSQLState BoundaryTracker
