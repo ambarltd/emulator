@@ -4,6 +4,10 @@ A local version of Ambar for testing and initial integration.
 
 Connect your databases to multiple consumers with minimal configuration and no libraries needed.
 
+Currently supported databases:
+- PostgreSQL
+- MySQL
+
 ## Configuration
 
 A YAML configuration file should describe all sources and destinations to be used.
@@ -12,6 +16,8 @@ A YAML configuration file should describe all sources and destinations to be use
 # Connections to your databases.
 # The Emulator will read data from those dbs.
 data_sources:
+
+  # Connect to a PostgreSQL database
   - id: postgres_source
     description: Main events store
     type: postgres
@@ -27,6 +33,24 @@ data_sources:
       - sequence_number
       - payload
     serialColumn: id
+    partitioningColumn: aggregate_id
+
+  # Connect to a MySQL database
+  - id: postgres_source
+    description: Main events store
+    type: mysql
+    host: localhost
+    port: 5432
+    username: my_user
+    password: my_pass
+    database: my_db
+    table: events_table
+    columns:
+      - id
+      - aggregate_id
+      - sequence_number
+      - payload
+    autoIncrementingColumn: id
     partitioningColumn: aggregate_id
 
 # Connections to your endpoint.

@@ -16,6 +16,7 @@ import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
 import Ambar.Emulator.Connector.Postgres (PostgreSQLState)
+import Ambar.Emulator.Connector.MySQL (MySQLState)
 import Ambar.Emulator.Connector (Connector(..), connect, partitioner, encoder)
 
 import qualified Ambar.Emulator.Projector as Projector
@@ -94,6 +95,7 @@ emulate logger_ config env = do
   initialStateFor source =
     case s_source source of
       SourcePostgreSQL _ -> StatePostgres def
+      SourceMySQL _ ->  StateMySQL def
       SourceFile _ -> StateFile ()
 
   projectAll queue = forConcurrently_ (c_destinations env) (project queue)
@@ -131,6 +133,7 @@ newtype EmulatorState = EmulatorState
 
 data SavedState
   = StatePostgres PostgreSQLState
+  | StateMySQL MySQLState
   | StateFile ()
   deriving (Generic)
   deriving anyclass (ToJSON, FromJSON)
@@ -151,6 +154,11 @@ toConnectorConfig source sstate =
       case sstate of
         StatePostgres state ->
           return $ ConnectorConfig source psql state StatePostgres
+        _ -> incompatible
+    SourceMySQL msql ->
+      case sstate of
+        StateMySQL state ->
+          return $ ConnectorConfig source msql state StateMySQL
         _ -> incompatible
     SourceFile path ->
       case sstate of
