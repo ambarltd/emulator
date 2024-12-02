@@ -29,7 +29,7 @@ jobs:
           postgres-version: "16"
           database: 'postgres'
           username: 'postgres'
-          password: ${{ env.PGPASSWORD }}
+          password: 'postgres'
 
       - name: Setup - MySQL
         id: mysql-setup
