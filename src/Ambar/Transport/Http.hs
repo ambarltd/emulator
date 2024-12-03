@@ -62,7 +62,8 @@ instance Transport HttpTransport where
       req = base
         { Http.requestBody = Http.RequestBodyBS bs
         , Http.method = "POST"
-        , Http.requestHeaders = [("Content-Type", "application/json")]
+        , Http.requestHeaders =
+            [("Content-Type", "application/json")] <> Http.requestHeaders base
         }
 
       decode :: ByteString -> Maybe SubmissionError
