@@ -116,6 +116,7 @@ test-suite emulator-tests
         Test.Connector.PostgreSQL
         Test.Emulator
         Test.OnDemand
+        Test.Transport
         Test.Warden
         Test.Utils.OnDemand
         Test.Utils.Docker
@@ -133,6 +134,7 @@ test-suite emulator-tests
         , filepath
         , hspec
         , hspec-expectations
+        , http-types
         , HUnit
         , postgresql-simple
         , process
@@ -144,6 +146,9 @@ test-suite emulator-tests
         , time
         , text
         , unordered-containers
+        , wai
+        , wai-extra
+        , warp
 
 benchmark emulator-bench
   import: common

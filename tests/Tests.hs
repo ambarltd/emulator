@@ -4,6 +4,7 @@ import Test.Hspec (hspec, parallel)
 
 import Test.Config (testConfig)
 import Test.Emulator (testEmulator)
+import Test.Transport (testTransport)
 import Test.Queue (testQueues)
 import Test.Connector (testConnectors, withDatabases, Databases(..))
 import Test.OnDemand (testOnDemand)
@@ -27,5 +28,6 @@ main =
     testWarden
     testConfig
     testQueues
+    testTransport
     testEmulator pcreds
     testConnectors dbs
