@@ -15,6 +15,7 @@ import qualified Data.Map.Strict as Map
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import Data.Void (Void)
 import Data.Word (Word16)
 import GHC.Generics (Generic)
@@ -26,6 +27,8 @@ import Database.MicrosoftSQLServer
   , ConnectionInfo(..)
   , withConnection
   , RowParser
+  , FieldParser
+  , fieldParser
   )
 import qualified Database.MicrosoftSQLServer as M
 
@@ -33,7 +36,7 @@ import qualified Ambar.Emulator.Connector as C
 import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..))
 import qualified Ambar.Emulator.Connector.Poll as Poll
 import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
-import Ambar.Record (Record(..), Value(..), Type(..))
+import Ambar.Record (Record(..), Value(..), Type(..), Bytes(..), TimeStamp(..))
 import qualified Ambar.Record.Encoding as Encoding
 
 import Utils.Delay (Duration, millis, seconds)
@@ -152,7 +155,6 @@ connect config@SQLServer{..} logger (SQLServerState tracker) producer f =
 
 newtype Schema = Schema (Map Text Type)
 
-
 validate :: SQLServer -> Schema -> IO ()
 validate _ _ = do
   -- TODO: Validate
@@ -180,18 +182,36 @@ columns SQLServer{..} =
   [c_incrementingColumn, c_partitioningColumn] <>
     ((c_columns \\ [c_incrementingColumn]) \\ [c_partitioningColumn])
 
-
 mkParser :: [Text] -> Schema -> RowParser SQLServerRow
 mkParser cols (Schema schema) = do
-  values <- mapM parse cols
+  values <- mapM (M.parseFieldWith . parse) cols
   return $ SQLServerRow $ Record $ zip cols values
   where
-  parse :: Text -> RowParser Value
+  parse :: Text -> FieldParser Value
   parse cname = do
-    _ty <- case Map.lookup cname schema of
+    ty <- case Map.lookup cname schema of
       Nothing -> fail $ "unknown column: " <> Text.unpack cname
       Just v -> return v
-    M.parseFieldWith $ do
-      M.Field _meta _bytes <- M.fieldInfo
-      error "TODO"
+    M.Field _ mbytes <- M.fieldInfo
+    case mbytes of
+      Nothing -> return Null
+      Just _ -> parseFieldWithType ty
 
+  parseFieldWithType :: Type -> FieldParser Value
+  parseFieldWithType = \case
+    TBoolean -> Boolean <$> fieldParser
+    TUInteger -> UInt . fromInteger <$> fieldParser
+    TInteger -> Int . fromInteger <$> fieldParser
+    TReal -> Real <$> fieldParser
+    TString -> String <$> fieldParser
+    TBytes -> Binary . Bytes <$> fieldParser
+    TJSON -> do
+      txt <- fieldParser
+      value <- case Aeson.eitherDecode' $ LB.fromStrict $ Text.encodeUtf8 txt of
+        Right r -> return r
+        Left err -> fail $ "Invalid JSON: " <> err
+      return $ Json txt value
+    TDateTime -> do
+      txt <- fieldParser
+      utc <- fieldParser
+      return $ DateTime $ TimeStamp txt utc

@@ -1,3 +1,4 @@
+{-# LANGUAGE UndecidableInstances #-}
 
 module Database.MicrosoftSQLServer
   ( Connection
@@ -20,12 +21,14 @@ module Database.MicrosoftSQLServer
   )
   where
 
-import Control.Exception (SomeException, Exception, bracket, throwIO, toException, ErrorCall(..))
+import Control.Exception (Exception, ErrorCall(..), bracket, throwIO, try, evaluate)
 import Control.Applicative (Alternative(..))
+import Data.ByteString.Lazy (ByteString)
 import qualified Data.Text as Text
 import Data.String (IsString)
 import Data.Text (Text)
 import Data.Word (Word16)
+import System.IO.Unsafe (unsafePerformIO)
 
 import Database.MSSQLServer.Connection (Connection)
 import qualified Database.MSSQLServer.Connection as M
@@ -71,16 +74,17 @@ queryWith parser conn (Query q) = do
 parseRow :: RowParser a -> Row -> IO a
 parseRow (RowParser parser) row =
   case snd <$> parser row of
-    Left (Unexpected err) -> throwIO err
+    Left (Unexpected err) -> throwIO (ErrorCall err)
     Right v -> return v
 
-data Field = Field M.MetaColumnData M.RawBytes
 newtype Row = Row [Field]
+
+data Field = Field M.MetaColumnData (Maybe ByteString)
 
 instance M.Row Row where
   fromListOfRawBytes rawdata bytes = Row (zipWith Field rawdata bytes)
 
-data ParseFailure = Unexpected SomeException
+data ParseFailure = Unexpected String
   deriving (Show)
   deriving anyclass (Exception)
 
@@ -116,26 +120,6 @@ instance MonadFail RowParser where
 class FromRow r where
   rowParser :: RowParser r
 
-instance (FromField a, FromField b) =>
-  FromRow (a,b) where
-  rowParser = (,) <$> parseField <*> parseField
-
-instance (FromField a , FromField b, FromField c) =>
-    FromRow (a,b,c) where
-  rowParser = (,,) <$> parseField <*> parseField <*> parseField
-
-instance (FromField a , FromField b, FromField c, FromField d) =>
-    FromRow (a,b,c,d) where
-  rowParser = (,,,) <$> parseField <*> parseField <*> parseField <*> parseField
-
-instance (FromField a , FromField b, FromField c, FromField d, FromField e) =>
-    FromRow (a,b,c,d,e) where
-  rowParser = (,,,,) <$> parseField <*> parseField <*> parseField <*> parseField <*> parseField
-
-instance (FromField a , FromField b, FromField c, FromField d, FromField e, FromField f) =>
-    FromRow (a,b,c,d,e,f) where
-  rowParser = (,,,,,) <$> parseField <*> parseField <*> parseField <*> parseField <*> parseField <*> parseField
-
 newtype FieldParser a = FieldParser
   { unFieldParser :: Field -> Either ParseFailure a
   }
@@ -158,10 +142,37 @@ instance Monad FieldParser where
         in g x
 
 instance MonadFail FieldParser where
-  fail str = parseFailure (ErrorCall str)
+  fail str = parseFailure str
 
 class FromField r where
   fieldParser :: FieldParser r
+
+instance (FromField a, FromField b) =>
+  FromRow (a,b) where
+  rowParser = (,) <$> parseField <*> parseField
+
+instance (FromField a , FromField b, FromField c) =>
+    FromRow (a,b,c) where
+  rowParser = (,,) <$> parseField <*> parseField <*> parseField
+
+instance (FromField a , FromField b, FromField c, FromField d) =>
+    FromRow (a,b,c,d) where
+  rowParser = (,,,) <$> parseField <*> parseField <*> parseField <*> parseField
+
+instance (FromField a , FromField b, FromField c, FromField d, FromField e) =>
+    FromRow (a,b,c,d,e) where
+  rowParser = (,,,,) <$> parseField <*> parseField <*> parseField <*> parseField <*> parseField
+
+instance (FromField a , FromField b, FromField c, FromField d, FromField e, FromField f) =>
+    FromRow (a,b,c,d,e,f) where
+  rowParser = (,,,,,) <$> parseField <*> parseField <*> parseField <*> parseField <*> parseField <*> parseField
+
+instance {-# OVERLAPPABLE #-} M.Data r => FromField r where
+  fieldParser  = do
+    Field (M.MetaColumnData _ _ tinfo _ _) mbs <- fieldInfo
+    case unsafePerformIO $ try $ evaluate $ M.fromRawBytes tinfo mbs of
+      Left (ErrorCall msg) -> FieldParser $ \_ -> Left (Unexpected msg)
+      Right v -> return v
 
 parseField :: FromField r => RowParser r
 parseField = parseFieldWith fieldParser
@@ -169,7 +180,7 @@ parseField = parseFieldWith fieldParser
 parseFieldWith :: FieldParser a -> RowParser a
 parseFieldWith parser = RowParser $ \(Row row) ->
   case row of
-    [] -> Left $ Unexpected $ toException $ ErrorCall "insufficient values"
+    [] -> Left $ Unexpected "insufficient values"
     x : row' -> fmap (Row row',) (unFieldParser parser x)
 
 -- | Parse a row as a list of values.
@@ -186,5 +197,5 @@ isEndOfRow  = RowParser $ \(Row xs) -> Right (Row xs, null xs)
 fieldInfo :: FieldParser Field
 fieldInfo = FieldParser $ \x -> Right x
 
-parseFailure :: Exception e => e -> FieldParser a
-parseFailure e = FieldParser $ \_ -> Left (Unexpected $ toException e)
+parseFailure :: String -> FieldParser a
+parseFailure str = FieldParser $ \_ -> Left (Unexpected str)
