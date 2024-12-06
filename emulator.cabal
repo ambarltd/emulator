@@ -45,6 +45,7 @@ library emulator-lib
         Ambar.Emulator.Connector.File
         Ambar.Emulator.Connector.Poll
         Ambar.Emulator.Connector.Postgres
+        Ambar.Emulator.Connector.MicrosoftSQLServer
         Ambar.Emulator.Connector.MySQL
         Ambar.Emulator.Projector
         Ambar.Emulator.Queue
@@ -58,6 +59,7 @@ library emulator-lib
         Ambar.Transport.Http
         Ambar.Transport.File
         Database.MySQL
+        Database.MicrosoftSQLServer
         Utils.Async
         Utils.Delay
         Utils.Directory
@@ -86,6 +88,8 @@ library emulator-lib
         , http-client
         , http-client-tls
         , http-types
+        , ms-tds
+        , mssql-simple
         , mysql
         , mysql-simple
         , postgresql-simple
