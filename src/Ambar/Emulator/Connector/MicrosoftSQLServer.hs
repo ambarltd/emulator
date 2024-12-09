@@ -101,9 +101,6 @@ connect config@SQLServer{..} logger (SQLServerState tracker) producer f =
     , conn_database = c_database
     }
 
-  fetchSchema :: Text -> Connection -> IO Schema
-  fetchSchema _ _ = return $ Schema (error "TODO")
-
   consume
      :: Connection
      -> Schema
@@ -154,6 +151,32 @@ connect config@SQLServer{..} logger (SQLServerState tracker) producer f =
            ]
 
 newtype Schema = Schema (Map Text Type)
+
+newtype MSSQLType = MSSQLType Text
+
+fetchSchema :: Text -> Connection -> IO Schema
+fetchSchema table conn = do
+  cols <- M.queryWith parser conn query
+  return $ Schema $ Map.fromList cols
+  where
+  parser :: RowParser (Text, Type)
+  parser = do
+    (colName, colTy) <- M.rowParser
+    case toExpectedType (MSSQLType colTy) of
+      Just ty -> return (colName, ty)
+      Nothing -> fail $
+        "unsupported Microsoft SQL Server type: '" <> Text.unpack colTy <> "'"
+
+  query = fromString $ unwords
+    [ "select COLUMN_NAME,DATA_TYPE"
+    , "from INFORMATION_SCHEMA.COLUMNS"
+    , "where TABLE_NAME='" <> Text.unpack table <> "'"
+    ]
+
+toExpectedType :: MSSQLType -> Maybe Type
+toExpectedType (MSSQLType ty) = case Text.toUpper ty of
+  "TEXT" -> Just TString
+  _ -> Nothing
 
 validate :: SQLServer -> Schema -> IO ()
 validate _ _ = do
