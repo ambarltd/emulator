@@ -24,11 +24,10 @@ module Database.MicrosoftSQLServer
   where
 
 import Control.Applicative (Alternative(..))
-import Control.Concurrent (MVar, newEmptyMVar, putMVar, takeMVar, tryPutMVar)
-import Control.Exception (SomeException, Exception, ErrorCall(..), bracket, throwIO, try, evaluate)
-import Control.Monad (forever)
+import Control.Exception (Exception, ErrorCall(..), throwIO, try, evaluate)
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.Text as Text
+import Data.Pool as Pool
 import Data.String (IsString)
 import Data.Text (Text)
 import Data.Word (Word16)
@@ -38,9 +37,6 @@ import qualified Database.MSSQLServer.Connection as M
 import qualified Database.MSSQLServer.Query as M
 import qualified Database.Tds.Message as M
 
-import Utils.Exception (tryAll)
-import Utils.Async (withAsyncThrow)
-
 data ConnectionInfo = ConnectionInfo
   { conn_host :: Text
   , conn_port :: Word16
@@ -49,35 +45,20 @@ data ConnectionInfo = ConnectionInfo
   , conn_database :: Text
   }
 
--- Run an action in the connection thread.
+-- Run an action with one of the active connections.
 newtype Connection = Connection (forall a. (M.Connection -> IO a) -> IO a)
 
 -- | The underlying SQL Server library only accepts one operation per connection.
 withConnection :: ConnectionInfo -> (Connection -> IO a) -> IO a
 withConnection ConnectionInfo{..} f = do
-  varAction <- newEmptyMVar
-  r <- withAsyncThrow (worker varAction) $ f (Connection (run varAction))
-  _ <- tryPutMVar varAction (\_ -> return ())
-  return r
+  let idleKill = 10.0 -- seconds to wait before killing an idle connection
+      maxConnections = 10
+      config = Pool.defaultPoolConfig connect disconnect idleKill maxConnections
+  pool <- Pool.newPool config
+  let run :: forall b. (M.Connection -> IO b) -> IO b
+      run = Pool.withResource pool
+  f $ Connection run
   where
-  run :: MVar (M.Connection -> IO ()) -> (forall a. (M.Connection -> IO a) -> IO a)
-  run varAction act = do
-    varResult :: MVar (Either SomeException a) <- newEmptyMVar
-    putMVar varAction $ \conn -> do
-      r <- tryAll (act conn)
-      putMVar varResult r
-    r <- takeMVar varResult
-    case r of
-      Right v -> return v
-      Left err -> throwIO err
-
-  worker :: MVar (M.Connection -> IO ()) -> IO ()
-  worker varAction =
-    bracket connect disconnect $ \conn -> do
-    forever $ do
-      act <- takeMVar varAction
-      act conn
-
   connect =
     M.connect M.defaultConnectInfo
       { M.connectHost = Text.unpack conn_host

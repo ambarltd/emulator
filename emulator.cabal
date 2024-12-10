@@ -95,6 +95,7 @@ library emulator-lib
         , postgresql-simple
         , prettyprinter
         , random
+        , resource-pool
         , stm
         , text
         , time

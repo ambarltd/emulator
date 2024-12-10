@@ -122,13 +122,9 @@ testGenericSQL od withConnection mkConfig conf = do
     let partitions = 5
     with (PartitionCount partitions) $ \conn table topic connected -> do
       let count = 1_000
-          write = do
-            putStrLn "Starting writes"
-            mapConcurrently_ id
+          write = mapConcurrently_ id
               [ insert conn table (take count $ mocks table !! partition)
               | partition <- [1..partitions] ]
-            putStrLn "Finished writes"
-      write
       connected $ deadline (seconds 1) $
         Topic.withConsumer topic group $ \consumer -> do
         -- write and consume concurrently
