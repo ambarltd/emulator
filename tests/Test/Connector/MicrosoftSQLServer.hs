@@ -123,7 +123,9 @@ withMicrosoftSQLServer f = do
         }
   r <- withDocker False "MicrosoftSQLServer" cmd $ \h -> do
     waitTillReady h
-    f creds
+    r <- f creds
+    putStrLn "Shutting down MicrosoftSQLServer"
+    return r
   return r
   where
   waitTillReady h = do

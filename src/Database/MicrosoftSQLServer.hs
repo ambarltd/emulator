@@ -23,8 +23,10 @@ module Database.MicrosoftSQLServer
   )
   where
 
-import Control.Exception (Exception, ErrorCall(..), bracket, throwIO, try, evaluate)
 import Control.Applicative (Alternative(..))
+import Control.Concurrent (MVar, newEmptyMVar, putMVar, takeMVar, tryPutMVar)
+import Control.Exception (SomeException, Exception, ErrorCall(..), bracket, throwIO, try, evaluate)
+import Control.Monad (forever)
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.Text as Text
 import Data.String (IsString)
@@ -32,10 +34,12 @@ import Data.Text (Text)
 import Data.Word (Word16)
 import System.IO.Unsafe (unsafePerformIO)
 
-import Database.MSSQLServer.Connection (Connection)
 import qualified Database.MSSQLServer.Connection as M
 import qualified Database.MSSQLServer.Query as M
 import qualified Database.Tds.Message as M
+
+import Utils.Exception (tryAll)
+import Utils.Async (withAsyncThrow)
 
 data ConnectionInfo = ConnectionInfo
   { conn_host :: Text
@@ -45,11 +49,35 @@ data ConnectionInfo = ConnectionInfo
   , conn_database :: Text
   }
 
+-- Run an action in the connection thread.
+newtype Connection = Connection (forall a. (M.Connection -> IO a) -> IO a)
 
+-- | The underlying SQL Server library only accepts one operation per connection.
 withConnection :: ConnectionInfo -> (Connection -> IO a) -> IO a
-withConnection ConnectionInfo{..} f =
-  bracket connect disconnect f
+withConnection ConnectionInfo{..} f = do
+  varAction <- newEmptyMVar
+  r <- withAsyncThrow (worker varAction) $ f (Connection (run varAction))
+  _ <- tryPutMVar varAction (\_ -> return ())
+  return r
   where
+  run :: MVar (M.Connection -> IO ()) -> (forall a. (M.Connection -> IO a) -> IO a)
+  run varAction act = do
+    varResult :: MVar (Either SomeException a) <- newEmptyMVar
+    putMVar varAction $ \conn -> do
+      r <- tryAll (act conn)
+      putMVar varResult r
+    r <- takeMVar varResult
+    case r of
+      Right v -> return v
+      Left err -> throwIO err
+
+  worker :: MVar (M.Connection -> IO ()) -> IO ()
+  worker varAction =
+    bracket connect disconnect $ \conn -> do
+    forever $ do
+      act <- takeMVar varAction
+      act conn
+
   connect =
     M.connect M.defaultConnectInfo
       { M.connectHost = Text.unpack conn_host
@@ -70,11 +98,11 @@ query :: FromRow a => Connection -> Query -> IO [a]
 query conn q = queryWith rowParser conn q
 
 execute :: Connection -> Query -> IO ()
-execute conn (Query q) = M.sql conn q
+execute (Connection run) (Query q) = run $ \conn -> M.sql conn q
 
 queryWith :: RowParser a -> Connection -> Query -> IO [a]
-queryWith parser conn (Query q) = do
-  rows <- M.sql conn q
+queryWith parser (Connection run) (Query q) = do
+  rows <- run $ \conn -> M.sql conn q
   traverse (parseRow parser) rows
 
 parseRow :: RowParser a -> Row -> IO a
