@@ -24,12 +24,14 @@ module Database.MicrosoftSQLServer
   , asList
   , isEndOfRow
   , fieldInfo
+  , rawBytes
   , ToField(..)
   , ToRow
   , Only(..)
   )
   where
 
+import Control.Exception (SomeException)
 import Control.Applicative (Alternative(..))
 import Control.Concurrent (newMVar, withMVar)
 import Control.Exception (Exception, ErrorCall(..), throwIO, try, evaluate, bracket)
@@ -42,6 +44,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import qualified Database.MSSQLServer.Connection as M
 import qualified Database.MSSQLServer.Query as M
 import qualified Database.Tds.Message as M
+import Utils.Exception (annotateWith)
 
 data ConnectionInfo = ConnectionInfo
   { conn_host :: Text
@@ -80,9 +83,13 @@ class ToField a where
   toField :: a -> Text
 
 instance ToField Text where toField txt = "'" <> txt <> "'"
-instance ToField String where toField = Text.pack
-instance ToField Int where toField = toField . show
-instance ToField Double where toField = toField . show
+instance ToField String where toField = toField . Text.pack
+instance ToField Int where toField = Text.pack . show
+instance ToField Double where toField = Text.pack . show
+instance ToField a => ToField (Maybe a) where
+  toField = \case
+    Nothing -> "Null"
+    Just v -> toField v
 
 class ToRow a where
   toRow :: a -> [Text]
@@ -124,12 +131,12 @@ mkQuery args_raw body = Query merged
   argsFound = length args
 
 mkQueryMany :: ToRow args => [args] -> Text -> Query
-mkQueryMany args q = Query $ Text.unlines $
+mkQueryMany args q = Query $ Text.unwords $
   ["BEGIN TRAN;"] ++
   fmap asQuery args ++
   ["COMMIT TRAN;"]
   where
-  asQuery a = txt
+  asQuery a = txt <> ";"
     where Query txt = mkQuery a q
 
 interleave :: [a] -> [a] -> [a]
@@ -145,7 +152,8 @@ execute :: Connection -> Query -> IO ()
 execute (Connection run) (Query q) = run $ \conn -> M.sql conn q
 
 queryWith :: RowParser a -> Connection -> Query -> IO [a]
-queryWith parser (Connection run) (Query q) = do
+queryWith parser (Connection run) (Query q) =
+  annotateWith (\(_:: SomeException) -> Text.unpack q) $ do
   rows <- run $ \conn -> M.sql conn q
   traverse (parseRow parser) rows
 
@@ -251,6 +259,13 @@ instance {-# OVERLAPPABLE #-} M.Data r => FromField r where
     case unsafePerformIO $ try $ evaluate $ M.fromRawBytes tinfo mbs of
       Left (ErrorCall msg) -> FieldParser $ \_ -> Left (Unexpected msg)
       Right v -> return v
+
+rawBytes :: FieldParser ByteString
+rawBytes = do
+ Field _ mbytes  <- fieldInfo
+ case mbytes of
+   Nothing -> fail "no bytes"
+   Just bs -> return bs
 
 parseField :: FromField r => RowParser r
 parseField = parseFieldWith fieldParser

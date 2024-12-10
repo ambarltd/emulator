@@ -90,11 +90,13 @@ library emulator-lib
         , http-types
         , ms-tds
         , mssql-simple
+        , ms-tds
         , mysql
         , mysql-simple
         , postgresql-simple
         , prettyprinter
         , random
+        , scientific
         , stm
         , text
         , time

@@ -9,14 +9,16 @@ import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LB
 import Data.Default (Default(..))
+import Data.Fixed (Fixed(MkFixed), E0)
 import Data.List ((\\))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Scientific (Scientific, toBoundedRealFloat)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import Data.Void (Void)
-import Data.Word (Word16)
+import Data.Word (Word8, Word16)
 import GHC.Generics (Generic)
 import qualified Prettyprinter as Pretty
 import Prettyprinter (pretty, (<+>))
@@ -29,7 +31,9 @@ import Database.MicrosoftSQLServer
   , FieldParser
   , fieldParser
   , mkQuery_
+  , rawBytes
   )
+import qualified Database.Tds.Message as Tds
 import qualified Database.MicrosoftSQLServer as M
 
 import qualified Ambar.Emulator.Connector as C
@@ -177,8 +181,17 @@ fetchSchema table conn = do
 
 toExpectedType :: MSSQLType -> Maybe Type
 toExpectedType (MSSQLType ty) = case Text.toUpper ty of
-  "TEXT" -> Just TString
-  "INT" -> Just TInteger
+  "TEXT"       -> Just TString
+  "INT"        -> Just TInteger
+  "TINYINT"    -> Just TInteger
+  "SMALLINT"   -> Just TInteger
+  "BIGINT"     -> Just TInteger
+  "DECIMAL"    -> Just TReal
+  "NUMERIC"    -> Just TReal
+  "REAL"       -> Just TReal
+  "MONEY"      -> Just TReal
+  "FLOAT"      -> Just TReal
+  "SMALLMONEY" -> Just TReal
   _ -> Nothing
 
 validate :: SQLServer -> Schema -> IO ()
@@ -218,26 +231,106 @@ mkParser cols (Schema schema) = do
     ty <- case Map.lookup cname schema of
       Nothing -> fail $ "unknown column: " <> Text.unpack cname
       Just v -> return v
-    M.Field _ mbytes <- M.fieldInfo
+    M.Field (Tds.MetaColumnData _ _ tinfo _ _) mbytes <- M.fieldInfo
     case mbytes of
       Nothing -> return Null
-      Just _ -> parseFieldWithType ty
+      Just _ -> convertTo ty =<< parseAsValue tinfo
 
-  parseFieldWithType :: Type -> FieldParser Value
-  parseFieldWithType = \case
-    TBoolean -> Boolean <$> fieldParser
-    TUInteger -> UInt . fromInteger <$> fieldParser
-    TInteger -> Int . fromInteger <$> fieldParser
-    TReal -> Real <$> fieldParser
-    TString -> String <$> fieldParser
-    TBytes -> Binary . Bytes <$> fieldParser
-    TJSON -> do
-      txt <- fieldParser
-      value <- case Aeson.eitherDecode' $ LB.fromStrict $ Text.encodeUtf8 txt of
-        Right r -> return r
-        Left err -> fail $ "Invalid JSON: " <> err
-      return $ Json txt value
-    TDateTime -> do
-      txt <- fieldParser
-      utc <- fieldParser
-      return $ DateTime $ TimeStamp txt utc
+  convertTo :: Type -> Value -> FieldParser Value
+  convertTo ty val = case val of
+    Boolean _ -> case ty of
+      TBoolean -> return val
+      _ -> unsupported
+    UInt _ ->  case ty of
+      TUInteger -> return val
+      _ -> unsupported
+    Int _ -> case ty of
+      TInteger -> return val
+      _ -> unsupported
+    Real _ -> case ty of
+      TReal -> return val
+      _ -> unsupported
+    String _ -> case ty of
+      TString -> return val
+      _ -> unsupported
+    Binary _ -> case ty of
+      TBytes -> return val
+      _ -> unsupported
+    Json _ _ -> case ty of
+      TJSON -> return val
+      _ -> unsupported
+    DateTime _ -> case ty of
+      TDateTime -> return val
+      _ -> unsupported
+    Null -> return val
+    where
+    unsupported = fail $
+      Text.unpack $ renderPretty $
+      "Cannot convert " <> pretty (show val) <> " to " <> pretty (show ty)
+
+  parseAsValue :: Tds.TypeInfo -> FieldParser Value
+  parseAsValue tinfo = case tinfo of
+    Tds.TINull -> return Null
+    Tds.TIInt1 -> parseInt
+    Tds.TIInt2 -> parseInt
+    Tds.TIInt4 -> parseInt
+    Tds.TIInt8 -> parseInt
+    Tds.TIIntN1 -> parseInt
+    Tds.TIIntN2 -> parseInt
+    Tds.TIIntN4 -> parseInt
+    Tds.TIIntN8 -> parseInt
+    Tds.TIDateTime4 -> String <$> fieldParser
+    Tds.TIDateTime8 -> String <$> fieldParser
+    Tds.TIFlt4 -> Real <$> fieldParser
+    Tds.TIFlt8 -> Real <$> fieldParser
+    Tds.TIMoney4 -> parseMoney
+    Tds.TIMoney8 -> parseMoney
+    Tds.TIMoneyN4 -> parseMoney
+    Tds.TIMoneyN8 -> parseMoney
+    Tds.TIDateTimeN4 -> parseDateTime
+    Tds.TIDateTimeN8 -> parseDateTime
+    Tds.TIFltN4 -> Real <$> fieldParser
+    Tds.TIFltN8 -> Real <$> fieldParser
+    Tds.TIGUID -> error "TODO"
+    Tds.TIDecimalN _ scale -> parseScientific scale
+    Tds.TINumericN _ scale -> parseScientific scale
+    Tds.TIChar _ -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
+    Tds.TIVarChar _ -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
+    Tds.TIBigChar _ _collation -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
+    Tds.TIBigVarChar _ _collation -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
+    Tds.TIText _ _collation -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
+    Tds.TINChar _ _collation -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
+    Tds.TINVarChar _ _collation -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
+    Tds.TINText _ _collation -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
+    Tds.TIBit -> Binary . Bytes . LB.toStrict <$> rawBytes
+    Tds.TIBitN -> Binary . Bytes . LB.toStrict <$> rawBytes
+    Tds.TIBinary _ -> Binary . Bytes . LB.toStrict <$> rawBytes
+    Tds.TIVarBinary _ -> Binary . Bytes . LB.toStrict <$> rawBytes
+    Tds.TIBigBinary _ -> Binary . Bytes . LB.toStrict <$> rawBytes
+    Tds.TIBigVarBinary _ -> Binary . Bytes . LB.toStrict <$> rawBytes
+    Tds.TIImage _ -> unsupported
+    where
+    unsupported = fail $ "type '" <> show tinfo <> "' not supported"
+
+  parseInt :: FieldParser Value
+  parseInt = Int . fromIntegral @Int <$> fieldParser
+
+  parseScientific :: Word8 -> FieldParser Value
+  parseScientific scale = do
+    MkFixed n <- fieldParser @(Fixed E0)
+    let num = fromIntegral n / (10 ^ scale) :: Scientific
+    case toBoundedRealFloat num of
+      Left _ -> fail $ "Number outside of valid Double scale: " <> show num
+      Right x -> return $ Real x
+
+  parseMoney :: FieldParser Value
+  parseMoney = do
+    Tds.Money n <- fieldParser
+    return $ Real $ realToFrac n
+
+  parseDateTime :: FieldParser Value
+  parseDateTime = do
+    txt <- fieldParser
+    utc <- fieldParser
+    return $ DateTime $ TimeStamp txt utc
+

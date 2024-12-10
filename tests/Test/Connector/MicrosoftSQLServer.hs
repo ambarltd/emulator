@@ -8,14 +8,19 @@ module Test.Connector.MicrosoftSQLServer
 
 import Control.Exception (bracket)
 import Control.Monad (void)
+import Data.Aeson (FromJSON)
 import Data.List (isInfixOf)
 import qualified Data.Text as Text
 import System.IO (hGetLine)
 import Test.Hspec
   ( Spec
   , describe
+  , shouldBe
+  , it
   )
 
+import qualified Ambar.Emulator.Queue.Topic as Topic
+import Ambar.Emulator.Queue.Topic (PartitionCount(..))
 import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServer(..))
 import Database.MicrosoftSQLServer as S
 
@@ -25,8 +30,13 @@ import Test.Utils.SQL
   ( EventsTable(..)
   , Table(..)
   , Event(..)
+  , TTable(..)
+  , TEntry(..)
   , testGenericSQL
   , mkTableName
+  , withConnector
+  , readEntry
+  , group
   )
 
 import Utils.Delay (deadline, seconds)
@@ -35,6 +45,39 @@ testMicrosoftSQLServer :: OnDemand MicrosoftSQLServerCreds -> Spec
 testMicrosoftSQLServer od = do
   describe "MicrosoftSQLServer" $ do
     testGenericSQL @(EventsTable SQLServer) od withConnection mkConnector ()
+    describe "decodes" $ do
+      supported "TINYINT"                 (1 :: Int)
+      supported "SMALLINT"                (1 :: Int)
+      supported "INT"                     (1 :: Int)
+      supported "BIGINT"                  (1 :: Int)
+      supported "DECIMAL"                 (1 :: Int)
+      supported "NUMERIC"                 (1 :: Int)
+      supported "REAL"                    (1.0 :: Double)
+      supported "MONEY"                   (1.0 :: Double)
+      supported "FLOAT"                   (1.0 :: Double)
+      supported "SMALLMONEY"              (1.0 :: Double)
+
+      --supported "BIT"                     (1 :: Int)
+      --supported "DATETIME"                (1 :: Int)
+      --supported "SMALLDATETIME"           (1 :: Int)
+      --supported "NULLTYPE"                _NULL
+  where
+  _NULL :: Maybe String
+  _NULL = Nothing
+
+  supported :: (FromField a, FromJSON a, ToField a, Show a, Eq a) => String -> a -> Spec
+  supported ty val = it ty $ roundTrip ty val
+
+  -- Write a value of a given type to a database table, then read it from the Topic.
+  roundTrip :: forall a. (FromField a, FromJSON a, ToField a, Show a, Eq a) => String -> a -> IO ()
+  roundTrip ty val =
+    withConnector @(TTable SQLServer a) od withConnection mkConnector (SQLServerType ty) (PartitionCount 1) $ \conn table topic connected -> do
+    let record = TEntry 1 1 1 val
+    insert conn table [record]
+    connected $ deadline (seconds 1) $ do
+      Topic.withConsumer topic group $ \consumer -> do
+        (entry, _) <- readEntry consumer
+        entry `shouldBe` record
 
 mkConnector :: Table t => ConnectionInfo -> t -> SQLServer
 mkConnector ConnectionInfo{..} table = SQLServer
@@ -87,6 +130,45 @@ instance Table (EventsTable SQLServer) where
         , ", sequence_number  INTEGER NOT NULL"
         , ")"
         ]
+
+newtype SQLServerType = SQLServerType String
+
+instance (ToField a, FromField a) => Table (TTable SQLServer a) where
+  type Entry (TTable SQLServer a) = TEntry a
+  type Config (TTable SQLServer a) = SQLServerType
+  type Connection (TTable SQLServer a) = S.Connection
+  tableName (TTable name _) = name
+  tableCols _ = ["id", "aggregate_id", "sequence_number", "value"]
+  mocks _ = error "no mock for TTable"
+  selectAll conn (TTable table _) =
+    S.query conn $ S.mkQuery_ $ "SELECT * FROM " <> table
+
+  insert conn (TTable table _) events =
+    void $ S.execute conn $ mkQueryMany args q
+    where
+    args = [(agg_id, seq_num, val) | TEntry _ agg_id seq_num val <- events ]
+    q = Text.pack $ unwords
+      [ "INSERT INTO", table
+      ,"(aggregate_id, sequence_number, value)"
+      ,"VALUES (?, ?, ?)"
+      ]
+
+  withTable (SQLServerType ty) conn f =
+    withSQLServerTable conn schema $ \name -> f (TTable name ty)
+    where
+    schema = unwords
+        [ "( id               INT IDENTITY(1,1) PRIMARY KEY"
+        , ", aggregate_id     INTEGER NOT NULL"
+        , ", sequence_number  INTEGER NOT NULL"
+        , ", value            " <> ty
+        , ")"
+        ]
+
+instance FromField a => FromRow (TEntry a) where
+  rowParser =
+    TEntry <$> parseField <*> parseField <*> parseField <*> parseField
+
+
 
 type Schema = String
 
