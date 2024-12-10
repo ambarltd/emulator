@@ -24,10 +24,10 @@ module Database.MicrosoftSQLServer
   where
 
 import Control.Applicative (Alternative(..))
-import Control.Exception (Exception, ErrorCall(..), throwIO, try, evaluate)
+import Control.Concurrent (newMVar, withMVar)
+import Control.Exception (Exception, ErrorCall(..), throwIO, try, evaluate, bracket)
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.Text as Text
-import Data.Pool as Pool
 import Data.String (IsString)
 import Data.Text (Text)
 import Data.Word (Word16)
@@ -50,14 +50,10 @@ newtype Connection = Connection (forall a. (M.Connection -> IO a) -> IO a)
 
 -- | The underlying SQL Server library only accepts one operation per connection.
 withConnection :: ConnectionInfo -> (Connection -> IO a) -> IO a
-withConnection ConnectionInfo{..} f = do
-  let idleKill = 10.0 -- seconds to wait before killing an idle connection
-      maxConnections = 10
-      config = Pool.defaultPoolConfig connect disconnect idleKill maxConnections
-  pool <- Pool.newPool config
-  let run :: forall b. (M.Connection -> IO b) -> IO b
-      run = Pool.withResource pool
-  f $ Connection run
+withConnection ConnectionInfo{..} f =
+  bracket connect disconnect $ \conn -> do
+    var <- newMVar conn
+    f $ Connection $ \g -> withMVar var g
   where
   connect =
     M.connect M.defaultConnectInfo
