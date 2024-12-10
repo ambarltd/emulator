@@ -5,6 +5,10 @@ module Database.MicrosoftSQLServer
   , ConnectionInfo(..)
   , withConnection
 
+  , Query
+  , mkQuery
+  , mkQuery_
+  , mkQueryMany
   , query
   , queryWith
   , execute
@@ -20,6 +24,9 @@ module Database.MicrosoftSQLServer
   , asList
   , isEndOfRow
   , fieldInfo
+  , ToField(..)
+  , ToRow
+  , Only(..)
   )
   where
 
@@ -28,7 +35,6 @@ import Control.Concurrent (newMVar, withMVar)
 import Control.Exception (Exception, ErrorCall(..), throwIO, try, evaluate, bracket)
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.Text as Text
-import Data.String (IsString)
 import Data.Text (Text)
 import Data.Word (Word16)
 import System.IO.Unsafe (unsafePerformIO)
@@ -69,7 +75,68 @@ withConnection ConnectionInfo{..} f =
 
 newtype Query = Query Text
   deriving (Show)
-  deriving newtype IsString
+
+class ToField a where
+  toField :: a -> Text
+
+instance ToField Text where toField txt = "'" <> txt <> "'"
+instance ToField String where toField = Text.pack
+instance ToField Int where toField = toField . show
+instance ToField Double where toField = toField . show
+
+class ToRow a where
+  toRow :: a -> [Text]
+
+data Only a = Only a
+
+instance ToRow () where toRow () = []
+instance ToField a =>
+  ToRow (Only a) where toRow (Only a) = [toField a]
+instance (ToField a, ToField b) =>
+  ToRow (a, b) where toRow (a, b) = [toField a, toField b]
+instance (ToField a, ToField b, ToField c) =>
+  ToRow (a, b, c) where toRow (a, b, c) = [toField a, toField b, toField c]
+instance (ToField a, ToField b, ToField c, ToField d) =>
+  ToRow (a, b, c, d) where toRow (a, b, c, d) = [toField a, toField b, toField c, toField d]
+instance (ToField a, ToField b, ToField c, ToField d, ToField e) =>
+  ToRow (a, b, c, d, e) where toRow (a, b, c, d, e) = [toField a, toField b, toField c, toField d, toField e]
+
+mkQuery_ :: String -> Query
+mkQuery_ = mkQuery () . Text.pack
+
+mkQuery :: ToRow args => args -> Text -> Query
+mkQuery args_raw body = Query merged
+  where
+  merged =
+    if argsFound /= argsExpected
+    then error $ unwords
+      [ "Invalid arguments for query. Expected "
+      , show argsExpected
+      , " but got "
+      , show argsFound
+      , " in:\n"
+      , Text.unpack body
+      ]
+    else Text.unwords $ interleave parts args
+  args = toRow args_raw
+  parts = Text.splitOn "?" body
+  argsExpected = length parts - 1
+  argsFound = length args
+
+mkQueryMany :: ToRow args => [args] -> Text -> Query
+mkQueryMany args q = Query $ Text.unlines $
+  ["BEGIN TRAN;"] ++
+  fmap asQuery args ++
+  ["COMMIT TRAN;"]
+  where
+  asQuery a = txt
+    where Query txt = mkQuery a q
+
+interleave :: [a] -> [a] -> [a]
+interleave [] ys = ys
+interleave xs [] = xs
+interleave (x:xs) (y:ys) = x : y : interleave xs ys
+
 
 query :: FromRow a => Connection -> Query -> IO [a]
 query conn q = queryWith rowParser conn q

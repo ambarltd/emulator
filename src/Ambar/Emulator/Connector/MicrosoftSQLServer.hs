@@ -12,7 +12,6 @@ import Data.Default (Default(..))
 import Data.List ((\\))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -29,6 +28,7 @@ import Database.MicrosoftSQLServer
   , RowParser
   , FieldParser
   , fieldParser
+  , mkQuery_
   )
 import qualified Database.MicrosoftSQLServer as M
 
@@ -126,7 +126,7 @@ connect config@SQLServer{..} logger (SQLServerState tracker) producer f =
       logDebug logger $ "results: " <> show (length results)
       return results
       where
-      query = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
+      query = mkQuery_ $ Text.unpack $ renderPretty $ Pretty.fillSep
          [ "SELECT" , commaSeparated $ map pretty $ columns config
          , "FROM" , pretty c_table
          , if null bs then "" else "WHERE" <> constraints
@@ -169,7 +169,7 @@ fetchSchema table conn = do
       Nothing -> fail $
         "unsupported Microsoft SQL Server type: '" <> Text.unpack colTy <> "'"
 
-  query = fromString $ unwords
+  query = mkQuery_ $ unwords
     [ "select COLUMN_NAME, DATA_TYPE"
     , "from INFORMATION_SCHEMA.COLUMNS"
     , "where TABLE_NAME='" <> Text.unpack table <> "'"

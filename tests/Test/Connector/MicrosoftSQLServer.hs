@@ -9,7 +9,6 @@ module Test.Connector.MicrosoftSQLServer
 import Control.Exception (bracket)
 import Control.Monad (void)
 import Data.List (isInfixOf)
-import Data.String (fromString)
 import qualified Data.Text as Text
 import System.IO (hGetLine)
 import Test.Hspec
@@ -64,22 +63,20 @@ instance Table (EventsTable SQLServer) where
     where err = error "aggregate id is determined by SQLServer"
 
   selectAll conn (EventsTable table) = do
-    rs <- S.query conn (fromString $ "SELECT * FROM " <> table)
+    let q = S.mkQuery_ $ "SELECT * FROM " <> table
+    rs <- S.query conn q
     return $ fmap (\(i, agg_id, seq_num) -> Event i agg_id seq_num) rs
 
   insert conn (EventsTable table) events =
     void $ S.execute conn q
     where
-    q = fromString $ unlines $
-      ["BEGIN TRAN;"] ++
-      [ unwords
-        [ "INSERT INTO", table
+    q = S.mkQueryMany
+      [(agg_id, seq_num) | Event _ agg_id seq_num <- events ]
+      $ Text.unlines $
+        [ "INSERT INTO", Text.pack table
         ,"(aggregate_id, sequence_number)"
-        ,"VALUES (", show agg_id, ", ", show seq_num, " );"
+        ,"VALUES ( ?, ? );"
         ]
-      | Event _ agg_id seq_num <- events
-      ] ++
-      ["COMMIT TRAN;"]
 
   withTable _ conn f =
     withSQLServerTable conn schema $ \name -> f (EventsTable name)
@@ -99,11 +96,11 @@ withSQLServerTable conn schema f = bracket create destroy f
   where
   create = do
     name <- mkTableName
-    execute conn $ fromString $ unwords [ "CREATE TABLE", name, schema ]
+    execute conn $ S.mkQuery_ $ unwords [ "CREATE TABLE", name, schema ]
     return name
 
   destroy name =
-    execute conn $ fromString $ "DROP TABLE " <> name
+    execute conn $ S.mkQuery_ $ "DROP TABLE " <> name
 
 type MicrosoftSQLServerCreds = ConnectionInfo
 
