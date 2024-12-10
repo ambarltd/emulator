@@ -151,6 +151,7 @@ connect config@SQLServer{..} logger (SQLServerState tracker) producer f =
            ]
 
 newtype Schema = Schema (Map Text Type)
+  deriving Show
 
 newtype MSSQLType = MSSQLType Text
 
@@ -161,14 +162,15 @@ fetchSchema table conn = do
   where
   parser :: RowParser (Text, Type)
   parser = do
-    (colName, colTy) <- M.rowParser
+    colName <- M.parseField
+    colTy <- M.parseField
     case toExpectedType (MSSQLType colTy) of
       Just ty -> return (colName, ty)
       Nothing -> fail $
         "unsupported Microsoft SQL Server type: '" <> Text.unpack colTy <> "'"
 
   query = fromString $ unwords
-    [ "select COLUMN_NAME,DATA_TYPE"
+    [ "select COLUMN_NAME, DATA_TYPE"
     , "from INFORMATION_SCHEMA.COLUMNS"
     , "where TABLE_NAME='" <> Text.unpack table <> "'"
     ]
@@ -176,6 +178,7 @@ fetchSchema table conn = do
 toExpectedType :: MSSQLType -> Maybe Type
 toExpectedType (MSSQLType ty) = case Text.toUpper ty of
   "TEXT" -> Just TString
+  "INT" -> Just TInteger
   _ -> Nothing
 
 validate :: SQLServer -> Schema -> IO ()

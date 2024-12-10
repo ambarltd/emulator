@@ -7,6 +7,7 @@ module Database.MicrosoftSQLServer
 
   , query
   , queryWith
+  , execute
   , FromRow(..)
   , Row(..)
   , RowParser
@@ -14,6 +15,7 @@ module Database.MicrosoftSQLServer
   , Field(..)
   , FieldParser
   , parseFieldWith
+  , parseField
 
   , asList
   , isEndOfRow
@@ -55,6 +57,7 @@ withConnection ConnectionInfo{..} f =
       , M.connectDatabase = Text.unpack conn_database
       , M.connectUser = Text.unpack conn_username
       , M.connectPassword = Text.unpack conn_password
+      , M.connectEncryption = 0x02
       }
 
   disconnect = M.close
@@ -65,6 +68,9 @@ newtype Query = Query Text
 
 query :: FromRow a => Connection -> Query -> IO [a]
 query conn q = queryWith rowParser conn q
+
+execute :: Connection -> Query -> IO ()
+execute conn (Query q) = M.sql conn q
 
 queryWith :: RowParser a -> Connection -> Query -> IO [a]
 queryWith parser conn (Query q) = do
@@ -115,7 +121,7 @@ instance Monad RowParser where
     return x
 
 instance MonadFail RowParser where
-  fail str = parseFieldWith (fail str)
+  fail str = RowParser $ \_ -> Left (Unexpected str)
 
 class FromRow r where
   rowParser :: RowParser r
@@ -180,7 +186,7 @@ parseField = parseFieldWith fieldParser
 parseFieldWith :: FieldParser a -> RowParser a
 parseFieldWith parser = RowParser $ \(Row row) ->
   case row of
-    [] -> Left $ Unexpected "insufficient values"
+    [] -> Left $ Unexpected $ "insufficient values"
     x : row' -> fmap (Row row',) (unFieldParser parser x)
 
 -- | Parse a row as a list of values.
