@@ -31,11 +31,13 @@ module Database.MicrosoftSQLServer
   )
   where
 
-import Control.Exception (SomeException)
 import Control.Applicative (Alternative(..))
 import Control.Concurrent (newMVar, withMVar)
 import Control.Exception (Exception, ErrorCall(..), throwIO, try, evaluate, bracket)
-import Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Base16 as Base16
+import qualified Data.Base16.Types as Base16
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as LB
 import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Word (Word16)
@@ -86,6 +88,9 @@ instance ToField Text where toField txt = "'" <> txt <> "'"
 instance ToField String where toField = toField . Text.pack
 instance ToField Int where toField = Text.pack . show
 instance ToField Double where toField = Text.pack . show
+instance ToField ByteString where
+  toField bs = "0x" <> Base16.extractBase16 (Base16.encodeBase16 bs)
+
 instance ToField a => ToField (Maybe a) where
   toField = \case
     Nothing -> "Null"
@@ -149,11 +154,13 @@ query :: FromRow a => Connection -> Query -> IO [a]
 query conn q = queryWith rowParser conn q
 
 execute :: Connection -> Query -> IO ()
-execute (Connection run) (Query q) = run $ \conn -> M.sql conn q
+execute (Connection run) (Query q) =
+  annotateWith (\(_:: M.QueryError) -> Text.unpack q) $
+  run $ \conn -> M.sql conn q
 
 queryWith :: RowParser a -> Connection -> Query -> IO [a]
 queryWith parser (Connection run) (Query q) =
-  annotateWith (\(_:: SomeException) -> Text.unpack q) $ do
+  annotateWith (\(_:: M.QueryError) -> Text.unpack q) $ do
   rows <- run $ \conn -> M.sql conn q
   traverse (parseRow parser) rows
 
@@ -165,7 +172,7 @@ parseRow (RowParser parser) row =
 
 newtype Row = Row [Field]
 
-data Field = Field M.MetaColumnData (Maybe ByteString)
+data Field = Field M.MetaColumnData (Maybe LB.ByteString)
 
 instance M.Row Row where
   fromListOfRawBytes rawdata bytes = Row (zipWith Field rawdata bytes)
@@ -227,6 +234,13 @@ instance Monad FieldParser where
         let FieldParser g = f v
         in g x
 
+instance Alternative FieldParser where
+  empty = FieldParser $ \_ -> Left (Unexpected "empty")
+  FieldParser f <|> FieldParser g = FieldParser $ \field ->
+    case f field of
+      Left _ -> g field
+      Right v -> pure v
+
 instance MonadFail FieldParser where
   fail str = parseFailure str
 
@@ -260,7 +274,7 @@ instance {-# OVERLAPPABLE #-} M.Data r => FromField r where
       Left (ErrorCall msg) -> FieldParser $ \_ -> Left (Unexpected msg)
       Right v -> return v
 
-rawBytes :: FieldParser ByteString
+rawBytes :: FieldParser LB.ByteString
 rawBytes = do
  Field _ mbytes  <- fieldInfo
  case mbytes of

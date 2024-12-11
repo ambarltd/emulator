@@ -8,7 +8,8 @@ module Test.Connector.MicrosoftSQLServer
 
 import Control.Exception (bracket)
 import Control.Monad (void)
-import Data.Aeson (FromJSON)
+import Data.Aeson (FromJSON, ToJSON)
+import qualified Data.ByteString as BS
 import Data.List (isInfixOf)
 import qualified Data.Text as Text
 import System.IO (hGetLine)
@@ -22,6 +23,7 @@ import Test.Hspec
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Emulator.Queue.Topic (PartitionCount(..))
 import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServer(..))
+import Ambar.Record (Bytes(..))
 import Database.MicrosoftSQLServer as S
 
 import Test.Utils.Docker (DockerCommand(..), withDocker)
@@ -46,21 +48,63 @@ testMicrosoftSQLServer od = do
   describe "MicrosoftSQLServer" $ do
     testGenericSQL @(EventsTable SQLServer) od withConnection mkConnector ()
     describe "decodes" $ do
+      -- Integers
       supported "TINYINT"                 (1 :: Int)
       supported "SMALLINT"                (1 :: Int)
       supported "INT"                     (1 :: Int)
       supported "BIGINT"                  (1 :: Int)
       supported "DECIMAL"                 (1 :: Int)
+      supported "DECIMAL(2)"              (1 :: Int)
+      supported "DECIMAL(2, 1)"           (1 :: Int)
       supported "NUMERIC"                 (1 :: Int)
+
+      -- Doubles
       supported "REAL"                    (1.0 :: Double)
       supported "MONEY"                   (1.0 :: Double)
       supported "FLOAT"                   (1.0 :: Double)
       supported "SMALLMONEY"              (1.0 :: Double)
 
-      --supported "BIT"                     (1 :: Int)
-      --supported "DATETIME"                (1 :: Int)
-      --supported "SMALLDATETIME"           (1 :: Int)
-      --supported "NULLTYPE"                _NULL
+      -- Binary
+      supported "UNIQUEIDENTIFIER"        (BytesRow (Bytes (BS.pack [1..16])))
+      supported "BIT"                     (BytesRow (Bytes (BS.pack [1])))
+      supported "BINARY"                  (BytesRow (Bytes "A"))
+      supported "BINARY(4)"               (BytesRow (Bytes "AAAA"))
+      supported "VARBINARY(64)"           (BytesRow (Bytes "AAAA"))
+
+      -- Strings
+      supported "TEXT"                    ("AAAA" :: String)
+      supported "NTEXT"                   ("AAAA" :: String)
+      supported "CHAR"                    ("A" :: String)
+      supported "CHAR(4)"                 ("AAAA" :: String)
+      supported "VARCHAR"                 ("A" :: String)
+      supported "VARCHAR(4)"              ("AAAA" :: String)
+      supported "NATIONAL CHAR"           ("A" :: String)
+      supported "NATIONAL CHARACTER"      ("A" :: String)
+      supported "NCHAR"                   ("A" :: String)
+      supported "NCHAR(4)"                ("AAAA" :: String)
+      supported "NATIONAL CHAR VARYING"   ("A" :: String)
+      supported "NATIONAL CHARACTER VARYING" ("A" :: String)
+      supported "NVARCHAR"                ("A" :: String)
+      supported "NVARCHAR(4)"             ("AAAA" :: String)
+      supported "XML"                     ("<xml><tag>wat</tag></xml>" :: String)
+
+      -- dates
+      supported "DATETIME"                ("1999-01-08T00:00:00Z" :: String)
+      supported "SMALLDATETIME"           ("1999-01-08T00:00:00Z" :: String)
+      supported "DATE"                    ("1999-01-08" :: String)
+      supported "TIME"                    ("04:05:06.7890000" :: String)
+      supported "TIME(3)"                 ("04:05:06.789" :: String)
+      supported "DATETIME2"               ("1999-01-08 00:00:00.0000000" :: String)
+      supported "DATETIMEOFFSET"          ("1999-01-08 00:00:00.0000000 +00:00" :: String)
+      supported "DATETIMEOFFSET(2)"       ("1999-01-08 00:00:00.00 +00:00" :: String)
+
+      -- JSON is still in preview mode in SQL server. I wasn't able to test it.
+      -- supported "JSON"                    ("{\"a\": 1}" :: String)
+      -- unsupported "CLR UDT"              _NULL
+      -- unsupported "IMAGE"                _NULL
+      -- unsupported "SQL_VARIANT"          _NULL
+
+
   where
   _NULL :: Maybe String
   _NULL = Nothing
@@ -78,6 +122,18 @@ testMicrosoftSQLServer od = do
       Topic.withConsumer topic group $ \consumer -> do
         (entry, _) <- readEntry consumer
         entry `shouldBe` record
+
+-- | Binary data saved in MySQL.
+-- Use it to read and write binary data. Does not perform base64 conversion.
+newtype BytesRow = BytesRow Bytes
+  deriving stock (Eq, Show)
+  deriving newtype (FromJSON, ToJSON)
+
+instance ToField BytesRow where
+  toField (BytesRow (Bytes bs)) = toField bs
+
+instance FromField BytesRow where
+  fieldParser = BytesRow . Bytes <$> fieldParser
 
 mkConnector :: Table t => ConnectionInfo -> t -> SQLServer
 mkConnector ConnectionInfo{..} table = SQLServer

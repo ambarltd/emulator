@@ -5,6 +5,8 @@ module Ambar.Emulator.Connector.MicrosoftSQLServer
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
+import Control.Exception (throwIO)
+import Control.Monad (forM)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LB
@@ -17,6 +19,7 @@ import Data.Scientific (Scientific, toBoundedRealFloat)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
+import Data.Time.Format.ISO8601 (iso8601Show)
 import Data.Void (Void)
 import Data.Word (Word8, Word16)
 import GHC.Generics (Generic)
@@ -29,6 +32,7 @@ import Database.MicrosoftSQLServer
   , withConnection
   , RowParser
   , FieldParser
+  , FromField
   , fieldParser
   , mkQuery_
   , rawBytes
@@ -157,30 +161,26 @@ connect config@SQLServer{..} logger (SQLServerState tracker) producer f =
 newtype Schema = Schema (Map Text Type)
   deriving Show
 
-newtype MSSQLType = MSSQLType Text
+newtype SQLServerType = SQLServerType Text
+  deriving newtype (FromField)
 
 fetchSchema :: Text -> Connection -> IO Schema
 fetchSchema table conn = do
-  cols <- M.queryWith parser conn query
-  return $ Schema $ Map.fromList cols
+  cols <- M.query conn query
+  cols' <- forM cols $ \(cname, SQLServerType cty) ->
+    case toExpectedType (SQLServerType cty) of
+      Just ty -> return (cname, ty)
+      Nothing -> throwIO $ C.UnsupportedType $ Text.unpack cty
+  return $ Schema $ Map.fromList cols'
   where
-  parser :: RowParser (Text, Type)
-  parser = do
-    colName <- M.parseField
-    colTy <- M.parseField
-    case toExpectedType (MSSQLType colTy) of
-      Just ty -> return (colName, ty)
-      Nothing -> fail $
-        "unsupported Microsoft SQL Server type: '" <> Text.unpack colTy <> "'"
-
   query = mkQuery_ $ unwords
     [ "select COLUMN_NAME, DATA_TYPE"
     , "from INFORMATION_SCHEMA.COLUMNS"
     , "where TABLE_NAME='" <> Text.unpack table <> "'"
     ]
 
-toExpectedType :: MSSQLType -> Maybe Type
-toExpectedType (MSSQLType ty) = case Text.toUpper ty of
+toExpectedType :: SQLServerType -> Maybe Type
+toExpectedType (SQLServerType ty) = case Text.toUpper ty of
   "TEXT"       -> Just TString
   "INT"        -> Just TInteger
   "TINYINT"    -> Just TInteger
@@ -192,6 +192,25 @@ toExpectedType (MSSQLType ty) = case Text.toUpper ty of
   "MONEY"      -> Just TReal
   "FLOAT"      -> Just TReal
   "SMALLMONEY" -> Just TReal
+  "BIT"              -> Just TBytes
+  "UNIQUEIDENTIFIER" -> Just TBytes
+  "CHAR"             -> Just TString
+  "VARCHAR"          -> Just TString
+  "BINARY"           -> Just TBytes
+  "VARBINARY"        -> Just TBytes
+  "CLR UDT"          -> Just TString
+  "NTEXT"            -> Just TString
+  "NVARCHAR"         -> Just TString
+  "NCHAR"            -> Just TString
+  "XML"              -> Just TString
+
+  "DATETIME"          -> Just TDateTime
+  "SMALLDATETIME"     -> Just TDateTime
+  "DATE"              -> Just TString
+  "TIME"              -> Just TString
+  "DATETIME2"         -> Just TString
+  "DATETIMEOFFSET"    -> Just TString
+
   _ -> Nothing
 
 validate :: SQLServer -> Schema -> IO ()
@@ -234,10 +253,10 @@ mkParser cols (Schema schema) = do
     M.Field (Tds.MetaColumnData _ _ tinfo _ _) mbytes <- M.fieldInfo
     case mbytes of
       Nothing -> return Null
-      Just _ -> convertTo ty =<< parseAsValue tinfo
+      Just _ -> convertTo tinfo ty =<< parseAsValue tinfo
 
-  convertTo :: Type -> Value -> FieldParser Value
-  convertTo ty val = case val of
+  convertTo :: Tds.TypeInfo -> Type -> Value -> FieldParser Value
+  convertTo tinfo ty val = case val of
     Boolean _ -> case ty of
       TBoolean -> return val
       _ -> unsupported
@@ -266,7 +285,12 @@ mkParser cols (Schema schema) = do
     where
     unsupported = fail $
       Text.unpack $ renderPretty $
-      "Cannot convert " <> pretty (show val) <> " to " <> pretty (show ty)
+      "Cannot convert "
+        <> pretty (show val)
+        <> " with type "
+        <> pretty (show tinfo)
+        <> " to "
+        <> pretty (show ty)
 
   parseAsValue :: Tds.TypeInfo -> FieldParser Value
   parseAsValue tinfo = case tinfo of
@@ -279,19 +303,15 @@ mkParser cols (Schema schema) = do
     Tds.TIIntN2 -> parseInt
     Tds.TIIntN4 -> parseInt
     Tds.TIIntN8 -> parseInt
-    Tds.TIDateTime4 -> String <$> fieldParser
-    Tds.TIDateTime8 -> String <$> fieldParser
     Tds.TIFlt4 -> Real <$> fieldParser
     Tds.TIFlt8 -> Real <$> fieldParser
     Tds.TIMoney4 -> parseMoney
     Tds.TIMoney8 -> parseMoney
     Tds.TIMoneyN4 -> parseMoney
     Tds.TIMoneyN8 -> parseMoney
-    Tds.TIDateTimeN4 -> parseDateTime
-    Tds.TIDateTimeN8 -> parseDateTime
     Tds.TIFltN4 -> Real <$> fieldParser
     Tds.TIFltN8 -> Real <$> fieldParser
-    Tds.TIGUID -> error "TODO"
+    Tds.TIGUID -> Binary . Bytes . LB.toStrict <$> rawBytes
     Tds.TIDecimalN _ scale -> parseScientific scale
     Tds.TINumericN _ scale -> parseScientific scale
     Tds.TIChar _ -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
@@ -299,9 +319,9 @@ mkParser cols (Schema schema) = do
     Tds.TIBigChar _ _collation -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
     Tds.TIBigVarChar _ _collation -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
     Tds.TIText _ _collation -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
-    Tds.TINChar _ _collation -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
-    Tds.TINVarChar _ _collation -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
-    Tds.TINText _ _collation -> String . Text.decodeUtf8 . LB.toStrict <$> rawBytes
+    Tds.TINChar _ _collation -> String <$> fieldParser
+    Tds.TINVarChar _ _collation -> String <$> fieldParser
+    Tds.TINText _ _collation -> String <$> fieldParser
     Tds.TIBit -> Binary . Bytes . LB.toStrict <$> rawBytes
     Tds.TIBitN -> Binary . Bytes . LB.toStrict <$> rawBytes
     Tds.TIBinary _ -> Binary . Bytes . LB.toStrict <$> rawBytes
@@ -309,6 +329,15 @@ mkParser cols (Schema schema) = do
     Tds.TIBigBinary _ -> Binary . Bytes . LB.toStrict <$> rawBytes
     Tds.TIBigVarBinary _ -> Binary . Bytes . LB.toStrict <$> rawBytes
     Tds.TIImage _ -> unsupported
+
+    Tds.TIDateTime4 -> do
+      utc <- fieldParser
+      return $ DateTime $ TimeStamp (Text.pack $ iso8601Show utc) utc
+    Tds.TIDateTime8 -> do
+      utc <- fieldParser
+      return $ DateTime $ TimeStamp (Text.pack $ iso8601Show utc) utc
+    Tds.TIDateTimeN4 -> parseDateTime
+    Tds.TIDateTimeN8 -> parseDateTime
     where
     unsupported = fail $ "type '" <> show tinfo <> "' not supported"
 
@@ -330,7 +359,7 @@ mkParser cols (Schema schema) = do
 
   parseDateTime :: FieldParser Value
   parseDateTime = do
-    txt <- fieldParser
     utc <- fieldParser
+    txt <- fieldParser
     return $ DateTime $ TimeStamp txt utc
 

@@ -74,6 +74,7 @@ library emulator-lib
         , aeson
         , aeson-pretty
         , async
+        , base16
         , base64
         , bytestring
         , binary
