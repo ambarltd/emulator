@@ -27,6 +27,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Yaml as Yaml
 
+import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServer(..))
 import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
 import Ambar.Emulator.Connector.MySQL (MySQL(..))
 import Ambar.Emulator.Connector.File (FileConnector(..))
@@ -60,6 +61,7 @@ data Source
   = SourceFile FileConnector
   | SourcePostgreSQL PostgreSQL
   | SourceMySQL MySQL
+  | SourceSQLServer SQLServer
 
 data DataDestination = DataDestination
   { d_id :: Id DataDestination
@@ -104,6 +106,7 @@ instance FromJSON DataSource where
       case t of
         "postgres" -> parsePostgreSQL o
         "mysql" -> parseMySQL o
+        "sqlserver" -> parseSQLServer o
         "file" -> parseFile o
         _ -> fail $ unwords
           [ "Invalid data source type: '" <> t <> "'."
@@ -134,6 +137,18 @@ instance FromJSON DataSource where
       c_partitioningColumn <- o .: "partitioningColumn"
       c_incrementingColumn <- o .: "autoIncrementingColumn"
       return $ SourceMySQL MySQL{..}
+
+    parseSQLServer o = do
+      c_host <- o .: "host"
+      c_port <- o .: "port"
+      c_username <- o .: "username"
+      c_password <- o .: "password"
+      c_database <- o .: "database"
+      c_table <- o .: "table"
+      c_columns <- o .: "columns"
+      c_partitioningColumn <- o .: "partitioningColumn"
+      c_incrementingColumn <- o .: "autoIncrementingColumn"
+      return $ SourceSQLServer SQLServer{..}
 
     parseFile o = SourceFile . FileConnector <$> (o .: "path")
 

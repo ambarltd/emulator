@@ -26,6 +26,7 @@ import GHC.Generics (Generic)
 import Ambar.Emulator.Config (Id(..), DataDestination, DataSource(..), Source(..))
 import Ambar.Emulator.Queue.Topic (Topic, ReadError(..), PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
+import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServer(..))
 import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
 import Ambar.Emulator.Connector.MySQL (MySQL(..))
 import Ambar.Transport (Transport)
@@ -117,6 +118,12 @@ relevantFields source (Payload value) = renderPretty $
       fillSep $
         [ pretty field <> ":" <+> prettyJSON v
         | field <- [c_serialColumn, c_partitioningColumn]
+        , Just v <- [KeyMap.lookup (fromString $ Text.unpack field) o]
+        ]
+    SourceSQLServer SQLServer{..} ->
+      fillSep $
+        [ pretty field <> ":" <+> prettyJSON v
+        | field <- [c_incrementingColumn, c_partitioningColumn]
         , Just v <- [KeyMap.lookup (fromString $ Text.unpack field) o]
         ]
   where
