@@ -107,10 +107,6 @@ newtype MySQLType = MySQLType { unMySQLType :: Text }
   deriving (Show, Eq)
   deriving newtype (FromField)
 
-newtype UnsupportedMySQLType = UnsupportedMySQLType String
-  deriving (Show)
-  deriving anyclass (Exception)
-
 connect
   :: MySQL
   -> SimpleLogger

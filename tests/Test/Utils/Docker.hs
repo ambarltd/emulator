@@ -3,8 +3,10 @@ module Test.Utils.Docker
   , withDocker
   ) where
 
+import Control.Concurrent.Async  (race, wait, withAsync)
 import Control.Concurrent (MVar, newMVar, modifyMVar)
-import Control.Exception (throwIO, ErrorCall(..))
+import Control.Concurrent.Async (race_)
+import Control.Exception (ErrorCall(..), throwIO)
 import Control.Monad (forM_)
 import System.Exit (ExitCode(..))
 import System.IO
@@ -22,12 +24,15 @@ import System.Process
   ( CreateProcess(..)
   , StdStream(..)
   , proc
-  , withCreateProcess
   , waitForProcess
   , createPipe
+  , cleanupProcess
+  , terminateProcess
+  , withCreateProcess
   )
 import System.IO.Unsafe (unsafePerformIO)
 import Utils.Async (withAsyncThrow)
+import Utils.Delay (delay, seconds)
 
 data DockerCommand
   = DockerRun
@@ -57,19 +62,31 @@ withDocker debug tag cmd act =
         , std_err = UseHandle hwrite
         , create_group = True
         }
-  withCreateProcess create $ \_ _ _ p ->
-    withAsyncThrow (wait name p) $
-    if debug
-      then tracing name hread act
-      else act hread
+  withCreateProcess create $ \stdin stdout stderr p -> do
+    let pinfo = (stdin, stdout, stderr, p)
+    withAsync (waitFor name pinfo) $ \a -> do
+      r <- race (wait a) $ if debug
+        then tracing name hread act
+        else act hread
+      terminate pinfo
+      case r of
+        Left _ -> error "impossible"
+        Right v -> return v
   where
+  terminate pinfo = race_ (cleanupProcess pinfo) (forceEnd pinfo)
+
+  forceEnd (_,_,_,p) = do
+    putStrLn $ "Forcing end of container: " <> tag
+    delay (seconds 5)
+    terminateProcess p
+
   withPipe f = do
     (hread, hwrite) <- createPipe
     hSetBuffering hread LineBuffering
     hSetBuffering hwrite LineBuffering
     f hread hwrite
 
-  wait name p = do
+  waitFor name (_,_,_,p) = do
     exit <- waitForProcess p
     throwIO $ ErrorCall $ case exit of
       ExitSuccess ->  "unexpected successful termination of container " <> name

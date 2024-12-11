@@ -16,7 +16,7 @@ module Test.Utils.SQL
   ) where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
-import Control.Concurrent.Async (mapConcurrently)
+import Control.Concurrent.Async (mapConcurrently_)
 import Control.Exception (throwIO, ErrorCall(..))
 import Control.Monad (replicateM, forM_)
 import qualified Data.Aeson as Aeson
@@ -122,9 +122,9 @@ testGenericSQL od withConnection mkConfig conf = do
     let partitions = 5
     with (PartitionCount partitions) $ \conn table topic connected -> do
       let count = 1_000
-          write = mapConcurrently id
-            [ insert conn table (take count $ mocks table !! partition)
-            | partition <- [1..partitions] ]
+          write = mapConcurrently_ id
+              [ insert conn table (take count $ mocks table !! partition)
+              | partition <- [1..partitions] ]
       connected $ deadline (seconds 1) $
         Topic.withConsumer topic group $ \consumer -> do
         -- write and consume concurrently
