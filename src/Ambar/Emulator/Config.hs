@@ -150,7 +150,11 @@ instance FromJSON DataSource where
       c_incrementingColumn <- o .: "autoIncrementingColumn"
       return $ SourceSQLServer SQLServer{..}
 
-    parseFile o = SourceFile . FileConnector <$> (o .: "path")
+    parseFile o = do
+      c_path <- o .: "path"
+      c_partitioningField <- o .: "partitioningField"
+      c_incrementingField <- o .: "incrementingField"
+      return $ SourceFile FileConnector{..}
 
 parseDataDestination
   :: Map (Id DataSource) DataSource
