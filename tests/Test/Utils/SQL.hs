@@ -29,7 +29,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import System.IO.Unsafe (unsafePerformIO)
-import Test.Hspec (Spec, it, shouldBe)
+import Test.Hspec (Spec, it, shouldBe, sequential)
 import Test.Hspec.Expectations.Contrib (annotate)
 
 import Ambar.Emulator.Connector (partitioner, encoder, Connector(..))
@@ -81,7 +81,7 @@ testGenericSQL
   -> (db -> table -> connector)
   -> Config table
   -> Spec
-testGenericSQL od withConnection mkConfig conf = do
+testGenericSQL od withConnection mkConfig conf = sequential $ do
   -- checks that our tests can connect to postgres
   it "connects" $
     with (PartitionCount 1) $ \conn table _ _ -> do

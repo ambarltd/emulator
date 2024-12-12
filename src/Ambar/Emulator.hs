@@ -15,9 +15,10 @@ import GHC.Generics (Generic)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
-import Ambar.Emulator.Connector.Postgres (PostgreSQLState)
-import Ambar.Emulator.Connector.MySQL (MySQLState)
 import Ambar.Emulator.Connector (Connector(..), connect, partitioner, encoder)
+import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServerState)
+import Ambar.Emulator.Connector.MySQL (MySQLState)
+import Ambar.Emulator.Connector.Postgres (PostgreSQLState)
 
 import qualified Ambar.Emulator.Projector as Projector
 import Ambar.Emulator.Projector (Projection(..))
@@ -96,6 +97,7 @@ emulate logger_ config env = do
     case s_source source of
       SourcePostgreSQL _ -> StatePostgres def
       SourceMySQL _ ->  StateMySQL def
+      SourceSQLServer _ -> StateSQLServer def
       SourceFile _ -> StateFile ()
 
   projectAll queue = forConcurrently_ (c_destinations env) (project queue)
@@ -134,6 +136,7 @@ newtype EmulatorState = EmulatorState
 data SavedState
   = StatePostgres PostgreSQLState
   | StateMySQL MySQLState
+  | StateSQLServer SQLServerState
   | StateFile ()
   deriving (Generic)
   deriving anyclass (ToJSON, FromJSON)
@@ -159,6 +162,11 @@ toConnectorConfig source sstate =
       case sstate of
         StateMySQL state ->
           return $ ConnectorConfig source msql state StateMySQL
+        _ -> incompatible
+    SourceSQLServer sqlserver ->
+      case sstate of
+        StateSQLServer state ->
+          return $ ConnectorConfig source sqlserver state StateSQLServer
         _ -> incompatible
     SourceFile path ->
       case sstate of

@@ -18,7 +18,7 @@ A YAML configuration file should describe all sources and destinations to be use
 data_sources:
 
   # Connect to a PostgreSQL database
-  - id: my_postgres_source
+  - id: postgres_source
     description: Main events store
     type: postgres
     host: localhost
@@ -36,11 +36,29 @@ data_sources:
     partitioningColumn: aggregate_id
 
   # Connect to a MySQL database
-  - id: my_mysql_source
+  - id: postgres_source
     description: Main events store
     type: mysql
     host: localhost
     port: 5432
+    username: my_user
+    password: my_pass
+    database: my_db
+    table: events_table
+    columns:
+      - id
+      - aggregate_id
+      - sequence_number
+      - payload
+    autoIncrementingColumn: id
+    partitioningColumn: aggregate_id
+
+  # Connect to an SQLServer database
+  - id: sqlserver_source
+    description: Main events store
+    type: sqlserver
+    host: localhost
+    port: 1433
     username: my_user
     password: my_pass
     database: my_db
@@ -66,8 +84,9 @@ data_destinations:
     password: password123
 
     sources:
-      - my_mysql_source
-      - my_postgres_source
+      - postgres_source
+      - sqlserver_source
+      - file_source
 
   # Send data to a file. One entry per line.
   - id: file_destination
@@ -76,8 +95,9 @@ data_destinations:
     path: ./temp.file
 
     sources:
-      - my_mysql_source
-      - my_postgres_source
+      - postgres_source
+      - sqlserver_source
+      - file_source
 ```
 
 ## Running the program

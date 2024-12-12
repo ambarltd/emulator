@@ -38,6 +38,24 @@ data_sources:
     autoIncrementingColumn: id
     partitioningColumn: aggregate_id
 
+  # Connect to an SQLServer database
+  - id: sqlserver_source
+    description: Main events store
+    type: sqlserver
+    host: localhost
+    port: 1433
+    username: my_user
+    password: my_pass
+    database: my_db
+    table: events_table
+    columns:
+      - id
+      - aggregate_id
+      - sequence_number
+      - payload
+    autoIncrementingColumn: id
+    partitioningColumn: aggregate_id
+
 # Connections to your endpoint.
 # The Emulator will send data read from the databases to these endpoints.
 data_destinations:
@@ -51,8 +69,9 @@ data_destinations:
     password: password123
 
     sources:
-      - postgres source
-      - file source
+      - postgres_source
+      - sqlserver_source
+      - file_source
 
   # Send data to a file. One entry per line.
   - id: file_destination
@@ -62,4 +81,5 @@ data_destinations:
 
     sources:
       - postgres_source
+      - sqlserver_source
       - file_source
