@@ -25,7 +25,6 @@ import Control.Concurrent.STM
   , modifyTVar
   , retry
   , takeTMVar
-  , writeTMVar
   , putTMVar
   )
 import Control.Exception (bracket)
@@ -125,7 +124,7 @@ readNext logger varState varReadHandle =
         , Text.unpack $ Text.decodeUtf8 bs
         ]
      Right v -> return v
-  let entrySize = fromIntegral (BS.length bs)
+  let entrySize = fromIntegral $ BS.length bs + BS.length "\n"
   atomically $ modifyTVar varState $ \state ->
     state { c_offset = c_offset state + entrySize }
   return value
@@ -133,12 +132,12 @@ readNext logger varState varReadHandle =
   withReadLock = bracket acquire release
     where
       acquire = atomically $ do
-        FileConnectorState size pos <- readTVar varState
-        when (pos == size) retry
+        FileConnectorState fsize pos <- readTVar varState
+        when (fsize <= pos) retry
         takeTMVar varReadHandle
 
       release readHandle = atomically $
-        writeTMVar varReadHandle readHandle
+        putTMVar varReadHandle readHandle
 
 data FileConnectorState = FileConnectorState
   { c_fileSize :: Integer
@@ -180,11 +179,11 @@ connect conn@(FileConnector {..}) logger initState producer f = do
     logResult record
 
   updateFileSize = forever $ do
-    delay _POLLING_INTERVAL
     newSize <- c_getFileSize
+    delay _POLLING_INTERVAL -- also serves to wait until any writing finishes
     atomically $ do
       FileConnectorState fsize offset <- readTVar c_state
-      when (fsize > newSize) $
+      when (fsize < newSize) $
         writeTVar c_state $ FileConnectorState newSize offset
 
   logResult record =

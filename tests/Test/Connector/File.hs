@@ -65,11 +65,13 @@ instance Table (EventsTable FileConnector) where
     name <- mkTableName
     let table = EventsTable name
     f table
+
   mocks _ =
     [ [ Event err agg_id seq_id | seq_id <- [0..] ]
       | agg_id <- [0..]
     ]
     where err = error "aggregate id is determined by mysql"
+
   insert (FileConnection connector varMaxId) _ events =
     forM_ events $ \(Event _ agg_id seq_id) -> do
       modifyMVar varMaxId $ \nxt -> do
