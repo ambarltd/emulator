@@ -102,6 +102,4 @@ jobs:
       # on the GH actions machines.
       - name: Benchmark
         if: github.ref == 'refs/heads/main'
-        env:
-          PGSERVICE: ${{ steps.postgres-setup.outputs.service-name }}
-        run: cabal run emulator-tests
+        run: cabal run emulator-bench
