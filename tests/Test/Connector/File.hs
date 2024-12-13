@@ -25,30 +25,30 @@ import Test.Utils.SQL
 testFileConnector :: Spec
 testFileConnector =
   describe "FileConnector" $ do
-    testGenericSQL with
-
-with
-  :: PartitionCount
-  -> (  FileConnection
-     -> EventsTable FileConnector
-     -> Topic
-     -> (forall b. IO b -> IO b)
-     -> IO a
-     )
-  -> IO a
-with partitions f =
-  withSystemTempFile "file-db" $ \path h -> do
-  hClose h
-  var <- newMVar 0
-  let connector = FileConnector path "aggregate_id" "sequence_number"
-      conn = FileConnection connector var
-  withFileTopic partitions $ \topic ->                                    -- create topic
-    Topic.withProducer topic partitioner encoder $ \producer ->           -- create topic producer
-    withTable () conn $ \table -> do
-    let logger = plainLogger Warn
-        connected :: forall a. IO a -> IO a
-        connected act = connect connector logger def producer (const act) -- setup connector
-    f conn table topic connected
+    testGenericSQL with_
+  where
+  with_
+    :: PartitionCount
+    -> (  FileConnection
+       -> EventsTable FileConnector
+       -> Topic
+       -> (IO b -> IO b)
+       -> IO a
+       )
+    -> IO a
+  with_ partitions f =
+    withSystemTempFile "file-db" $ \path h -> do
+    hClose h
+    var <- newMVar 0
+    let connector = FileConnector path "aggregate_id" "sequence_number"
+        conn = FileConnection connector var
+    withFileTopic partitions $ \topic ->                                    -- create topic
+      Topic.withProducer topic partitioner encoder $ \producer ->           -- create topic producer
+      withTable () conn $ \table -> do
+      let logger = plainLogger Warn
+          connected :: forall a. IO a -> IO a
+          connected act = connect connector logger def producer (const act) -- setup connector
+      f conn table topic connected
 
 data FileConnection = FileConnection
   { _connector :: FileConnector

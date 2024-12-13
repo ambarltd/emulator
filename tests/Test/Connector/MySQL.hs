@@ -169,7 +169,7 @@ testMySQL od = do
     -> ( Connection
       -> EventsTable MySQL
       -> Topic
-      -> (forall b. IO b -> IO b)
+      -> (IO b -> IO b)
       -> IO a )
     -> IO a
   with = withConnector od withConnection mkMySQL ()

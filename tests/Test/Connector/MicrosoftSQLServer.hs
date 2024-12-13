@@ -109,7 +109,7 @@ testMicrosoftSQLServer od = do
     -> ( S.Connection
       -> EventsTable SQLServer
       -> Topic
-      -> (forall b. IO b -> IO b)
+      -> (IO b -> IO b)
       -> IO a )
     -> IO a
   with = withConnector od withConnection mkConnector ()

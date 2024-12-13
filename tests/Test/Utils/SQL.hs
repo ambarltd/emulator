@@ -80,8 +80,8 @@ newtype EventsTable a = EventsTable String
 
 testGenericSQL
   :: Table table
-  => (forall a. PartitionCount
-      -> (Connection table -> table -> Topic -> (forall b. IO b -> IO b) -> IO a)
+  => (forall a b. PartitionCount
+      -> (Connection table -> table -> Topic -> (IO b -> IO b) -> IO a)
       -> IO a)
   -> Spec
 testGenericSQL with = sequential $ do
@@ -164,7 +164,7 @@ withConnector
   -> (db -> table -> connector)
   -> Config table
   -> PartitionCount
-  -> (Connection table -> table -> Topic -> (forall b. IO b -> IO b) -> IO a)
+  -> (Connection table -> table -> Topic -> (IO b -> IO b) -> IO a)
   -> IO a
 withConnector od withConnection mkConfig conf partitions f =
   OnDemand.with od $ \db ->                                          -- load db

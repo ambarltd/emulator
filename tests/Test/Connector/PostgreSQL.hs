@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
 module Test.Connector.PostgreSQL
   ( testPostgreSQL
 
@@ -12,16 +13,11 @@ module Test.Connector.PostgreSQL
   where
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
-import Control.Concurrent.Async (mapConcurrently)
 import Control.Exception (bracket, throwIO, ErrorCall(..), fromException)
-import Control.Monad (void, replicateM, forM_)
+import Control.Monad (void, forM_)
 import qualified Data.Aeson as Aeson
 import Data.Aeson (FromJSON)
-import qualified Data.ByteString.Lazy as LB
-import Data.Default (def)
-import Data.List (isInfixOf, sort, stripPrefix)
-import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
+import Data.List (isInfixOf)
 import Data.Scientific (Scientific)
 import Data.String (fromString)
 import qualified Data.Text as Text
@@ -34,87 +30,29 @@ import Test.Hspec
   , shouldBe
   , shouldThrow
   )
-import Test.Hspec.Expectations.Contrib (annotate)
 import qualified Database.PostgreSQL.Simple as P
 import qualified Database.PostgreSQL.Simple.ToField as P
-import GHC.Generics
+import qualified Database.PostgreSQL.Simple.FromField as P hiding (Binary)
 import System.IO.Unsafe (unsafePerformIO)
 import System.Exit (ExitCode(..))
 import System.Process (readProcessWithExitCode)
 
 import qualified Ambar.Emulator.Connector as Connector
-import Ambar.Emulator.Connector (partitioner, encoder)
 import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
 import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Record (Bytes(..))
-import Test.Queue (withFileTopic)
 import Test.Utils.Docker (DockerCommand(..), withDocker)
 import Test.Utils.OnDemand (OnDemand)
+import Test.Utils.SQL
 import qualified Test.Utils.OnDemand as OnDemand
 
-import Utils.Async (withAsyncThrow)
 import Utils.Delay (deadline, seconds, delay)
-import Utils.Logger (plainLogger, Severity(..))
 
 testPostgreSQL :: OnDemand PostgresCreds -> Spec
 testPostgreSQL p = do
   describe "PostgreSQL" $ do
-    -- checks that our tests can connect to postgres
-    it "connects" $
-      with (PartitionCount 1) $ \conn table _ _ -> do
-        insert conn table (take 10 $ head mocks)
-        rs <- P.query_ @Event conn (fromString $ "SELECT * FROM " <> tableName table)
-        length rs `shouldBe` 10
-
-    it "retrieves all events already in the db" $
-      with (PartitionCount 1) $ \conn table topic connected -> do
-        let count = 10
-        insert conn table (take count $ head mocks)
-        connected $
-          deadline (seconds 2) $
-          Topic.withConsumer topic group $ \consumer -> do
-          es <- replicateM count $ readEntry @Event consumer
-          length es `shouldBe` count
-
-    it "can retrieve a large number of events" $
-      with (PartitionCount 1) $ \conn table topic connected -> do
-        let count = 10_000
-        insert conn table (take count $ head mocks)
-        connected $ deadline (seconds 2) $
-          Topic.withConsumer topic group $ \consumer -> do
-          es <- replicateM count $ readEntry @Event consumer
-          length es `shouldBe` count
-
-    it "retrieves events added after initial snapshot" $
-      with (PartitionCount 1) $ \conn table topic connected -> do
-        let count = 10
-            write = insert conn table (take count $ head mocks)
-        connected $ deadline (seconds 1) $
-          Topic.withConsumer topic group $ \consumer ->
-          withAsyncThrow write $ do
-          es <- replicateM count $ readEntry @Event consumer
-          length es `shouldBe` count
-
-    it "maintains ordering through parallel writes" $ do
-      let partitions = 5
-      with (PartitionCount partitions) $ \conn table topic connected -> do
-        let count = 1_000
-            write = mapConcurrently id
-              [ insert conn table (take count $ mocks !! partition)
-              | partition <- [1..partitions] ]
-        connected $ deadline (seconds 1) $
-          Topic.withConsumer topic group $ \consumer -> do
-          -- write and consume concurrently
-          withAsyncThrow write $ do
-            es <- replicateM (count * partitions) $ readEntry consumer
-            let byAggregateId = Map.toList $ Map.fromListWith (flip (++))
-                    [ (e_aggregate_id, [e_sequence_number])
-                    | (Event{..}, _) <- es
-                    ]
-            forM_ byAggregateId $ \(a_id, seqs) ->
-              annotate ("ordered (" <> show a_id <> ")") $
-                sort seqs `shouldBe` seqs
+    testGenericSQL with
 
     -- Test that column types are supported/unsupported by
     -- creating database entries with the value and reporting
@@ -267,7 +205,15 @@ testPostgreSQL p = do
         unsupported "REGTYPE"                   ("integer" :: String)
         unsupported "PG_LSN"                    ("AAA/AAA" :: String)
   where
-  with = with_ ()
+  with
+    :: PartitionCount
+    -> ( P.Connection
+      -> EventsTable PostgreSQL
+      -> Topic
+      -> (IO b -> IO b)
+      -> IO a )
+    -> IO a
+  with = withConnector p withConnection mkPostgreSQL ()
 
   withType ty definition act =
     OnDemand.with p $ \creds ->
@@ -276,7 +222,7 @@ testPostgreSQL p = do
           destroy _ = P.execute_ conn $ "DROP TYPE " <> ty
       bracket create destroy (const act)
 
-  unsupported :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> Spec
+  unsupported :: ValidTy a => String -> a -> Spec
   unsupported ty val =
     it ("unsupported " <> ty) $
       roundTrip ty val `shouldThrow` unsupportedType
@@ -285,13 +231,13 @@ testPostgreSQL p = do
     | Just (Connector.UnsupportedType _) <- fromException e = True
     | otherwise = False
 
-  supported :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> Spec
+  supported :: ValidTy a => String -> a -> Spec
   supported ty val = it ty $ roundTrip ty val
 
   -- Write a value of a given type to a database table, then read it from the Topic.
-  roundTrip :: (FromJSON a, P.ToField a, Show a, Eq a) => String -> a -> IO ()
+  roundTrip :: forall a. ValidTy a => String -> a -> IO ()
   roundTrip ty val =
-    with_ (PostgresType ty) (PartitionCount 1) $ \conn table topic connected -> do
+    withConnector @(TTable PostgreSQL a) p withConnection mkPostgreSQL (PostgresType ty) (PartitionCount 1) $ \conn table topic connected -> do
     let record = TEntry 1 1 1 val
     insert conn table [record]
     connected $ deadline (seconds 1) $ do
@@ -299,31 +245,9 @@ testPostgreSQL p = do
         (entry, _) <- readEntry consumer
         entry `shouldBe` record
 
-  with_
-    :: Table t
-    => Config t
-    -> PartitionCount
-    -> (P.Connection -> t -> Topic -> (IO b -> IO b) -> IO a)
-    -> IO a
-  with_ conf partitions f =
-    OnDemand.with p $ \creds ->                                    -- load db
-    withConnection creds $ \conn ->
-    withTable conf conn $ \table ->                                -- create events table
-    withFileTopic partitions $ \topic ->                           -- create topic
-    let config = mkPostgreSQL creds table in
-    Topic.withProducer topic partitioner encoder $ \producer -> do -- create topic producer
-    let logger = plainLogger Warn
-        connected act = -- setup connector
-          Connector.connect config logger def producer (const act)
-    f conn table topic connected
+type ValidTy a = (FromJSON a, P.FromField a, P.ToField a, Show a, Eq a)
 
-readEntry :: Aeson.FromJSON a => Topic.Consumer -> IO (a, Topic.Meta)
-readEntry consumer = do
-  result <- Topic.read consumer
-  (bs, meta) <- either (throwIO . ErrorCall . show) return result
-  case Aeson.eitherDecode $ LB.fromStrict bs of
-    Left err -> throwIO $ ErrorCall $ "decoding error: " <> show err
-    Right val -> return (val, meta)
+
 
 mkPostgreSQL :: Table t => PostgresCreds -> t -> PostgreSQL
 mkPostgreSQL PostgresCreds{..} table = PostgreSQL
@@ -338,9 +262,6 @@ mkPostgreSQL PostgresCreds{..} table = PostgreSQL
   , c_serialColumn = "id"
   }
 
-group :: Topic.ConsumerGroupName
-group = Topic.ConsumerGroupName "test_group"
-
 data PostgresCreds = PostgresCreds
   { p_database :: String
   , p_username :: String
@@ -349,66 +270,25 @@ data PostgresCreds = PostgresCreds
   , p_port :: Word16
   }
 
-data Event = Event
-  { e_id :: Int
-  , e_aggregate_id :: Int
-  , e_sequence_number :: Int
-  }
-  deriving (Eq, Show, Generic, P.FromRow)
-
-instance Aeson.FromJSON Event where
-  parseJSON = Aeson.genericParseJSON opt
-    where
-    opt = Aeson.defaultOptions
-      { Aeson.fieldLabelModifier = \label ->
-        fromMaybe label (stripPrefix "e_" label)
-      }
-
-class Table a where
-  type Entry a = b | b -> a
-  type Config a = b | b -> a
-  withTable :: Config a -> P.Connection -> (a -> IO b) -> IO b
-  tableCols :: a -> [Text.Text]
-  tableName :: a -> String
-  -- Mock events to be added to the database.
-  -- Each sublist is an infinite list of events for the same aggregate.
-  mocks :: [[Entry a]]
-  insert :: P.Connection -> a -> [Entry a] -> IO ()
-
-data TTable a = TTable
-  { tt_name :: String
-  , _tt_tyName :: String
-  }
-
-data TEntry a = TEntry
-  { te_id :: Int
-  , te_aggregate_id :: Int
-  , te_sequence_number :: Int
-  , te_value :: a
-  }
-  deriving (Eq, Show, Generic, Functor)
-
-instance FromJSON a => FromJSON (TEntry a) where
-  parseJSON = Aeson.genericParseJSON opt
-    where
-    opt = Aeson.defaultOptions
-      { Aeson.fieldLabelModifier = \label ->
-        fromMaybe label (stripPrefix "te_" label)
-      }
-
 newtype PostgresType a = PostgresType String
 
-instance P.ToField a => Table (TTable a) where
-  type Entry (TTable a) = TEntry a
-  type Config (TTable a) = PostgresType a
+instance P.FromField a => P.FromRow (TEntry a)
+instance P.FromRow Event
+
+instance (P.FromField a, P.ToField a) => Table (TTable PostgreSQL a) where
+  type Entry (TTable PostgreSQL a) = TEntry a
+  type Config (TTable PostgreSQL a) = PostgresType a
+  type Connection (TTable PostgreSQL a) = P.Connection
   tableName (TTable name _) = name
   tableCols _ = ["id", "aggregate_id", "sequence_number", "value"]
   mocks = error "no mocks for TTable"
+  selectAll conn table =
+    P.query_ @(TEntry a) conn (fromString $ "SELECT * FROM " <> tableName table)
   insert conn t entries =
     void $ P.executeMany conn query [(agg_id, seq_num, val) | TEntry _ agg_id seq_num val <- entries ]
     where
     query = fromString $ unwords
-      [ "INSERT INTO", tt_name t
+      [ "INSERT INTO", tableName t
       ,"(aggregate_id, sequence_number, value)"
       ,"VALUES (?, ?, ?)"
       ]
@@ -425,19 +305,21 @@ instance P.ToField a => Table (TTable a) where
         , ")"
         ]
 
-newtype EventsTable = EventsTable String
-
-instance Table EventsTable where
-  type (Entry EventsTable) = Event
-  type (Config EventsTable) = ()
+instance Table (EventsTable PostgreSQL) where
+  type (Entry (EventsTable PostgreSQL)) = Event
+  type (Config (EventsTable PostgreSQL)) = ()
+  type (Connection (EventsTable PostgreSQL)) = P.Connection
   tableName (EventsTable name) = name
   tableCols _ = ["id", "aggregate_id", "sequence_number"]
-  mocks =
+  mocks _ =
     -- the aggregate_id is given when the records are inserted into the database
     [ [ Event err agg_id seq_id | seq_id <- [0..] ]
       | agg_id <- [0..]
     ]
     where err = error "aggregate id is determined by postgres"
+
+  selectAll conn table =
+    P.query_ @Event conn (fromString $ "SELECT * FROM " <> tableName table)
 
   insert conn (EventsTable table) events =
     void $ P.executeMany conn query [(agg_id, seq_num) | Event _ agg_id seq_num <- events ]
@@ -460,7 +342,7 @@ instance Table EventsTable where
         , ")"
         ]
 
-withEventsTable :: PostgresCreds -> (P.Connection -> EventsTable -> IO a) -> IO a
+withEventsTable :: PostgresCreds -> (P.Connection -> EventsTable PostgreSQL -> IO a) -> IO a
 withEventsTable creds f =
   withConnection creds $ \conn ->
   withTable () conn $ \table ->
@@ -478,6 +360,9 @@ newtype BytesRow = BytesRow Bytes
 
 instance P.ToField BytesRow where
   toField (BytesRow (Bytes bs)) = P.toField (P.Binary bs)
+
+instance P.FromField BytesRow where
+  fromField = error "not used"
 
 type Schema = String
 
