@@ -101,5 +101,5 @@ jobs:
       # We run this only when a PR is merged so we can see how things are performing
       # on the GH actions machines.
       - name: Benchmark
-        # if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main'
         run: cabal run emulator-bench
