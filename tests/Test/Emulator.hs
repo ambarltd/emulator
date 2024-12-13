@@ -28,9 +28,11 @@ import Ambar.Emulator.Config
   , Source(..)
   )
 import Ambar.Emulator.Projector (Message(..), Payload(..))
+import Ambar.Emulator.Connector.Postgres (PostgreSQL)
 
 import Test.Connector.PostgreSQL (PostgresCreds, Event(..), mocks)
 import qualified Test.Connector.PostgreSQL as C
+import Test.Utils.SQL (EventsTable)
 import Test.Utils.OnDemand (OnDemand)
 import qualified Test.Utils.OnDemand as OnDemand
 import Utils.Async (withAsyncThrow)
@@ -41,10 +43,10 @@ testEmulator :: OnDemand PostgresCreds -> Spec
 testEmulator p = describe "emulator" $ do
     it "retrieves data in a PostgreSQL db" $
       withConfig $ \config ->
-      withPostgresSource $ \insert source -> do
+      withPostgresSource $ \table insert source -> do
       (out, dest) <- funDestination [source]
       let env = mkEnv [source] [dest]
-          events = addIds $ take 10 $ head mocks
+          events = addIds $ take 10 $ head (mocks table)
       insert events
       withAsyncThrow (emulate logger config env) $
         deadline (seconds 5) $ do
@@ -53,10 +55,10 @@ testEmulator p = describe "emulator" $ do
 
     it "resumes from last index" $
       withConfig $ \config ->
-      withPostgresSource $ \insert source -> do
+      withPostgresSource $ \table insert source -> do
       (out, dest) <- funDestination [source]
       let env = mkEnv [source] [dest]
-          events = addIds $ take 10 $ head mocks
+          events = addIds $ take 10 $ head (mocks table)
           (before, after) = splitAt 5 events
 
       -- insert and consume 'before'
@@ -118,7 +120,12 @@ testEmulator p = describe "emulator" $ do
         , c_dataPath = path
         }
 
-    withPostgresSource :: (([Event] -> IO ()) -> DataSource -> IO a) -> IO a
+    withPostgresSource ::
+      (    EventsTable PostgreSQL
+        -> ([Event] -> IO ())
+        -> DataSource
+        -> IO a )
+      -> IO a
     withPostgresSource f =
       OnDemand.with p $ \creds ->
       C.withEventsTable creds $ \conn table -> do
@@ -129,7 +136,7 @@ testEmulator p = describe "emulator" $ do
             , s_source = SourcePostgreSQL config
             }
           insert events = C.insert conn table events
-      f insert source
+      f table insert source
 
     -- Add ids to the events we chose to use
     addIds :: [Event] -> [Event]

@@ -30,7 +30,6 @@ import qualified Data.Yaml as Yaml
 import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServer(..))
 import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
 import Ambar.Emulator.Connector.MySQL (MySQL(..))
-import Ambar.Emulator.Connector.File (FileConnector(..))
 import Ambar.Transport (SubmissionError)
 import Ambar.Transport.Http (Endpoint, User, Password)
 
@@ -58,7 +57,7 @@ data DataSource = DataSource
   }
 
 data Source
-  = SourceFile FileConnector
+  = SourceFile { sf_path :: FilePath, sf_partitioningField :: Text, sf_incrementingField :: Text }
   | SourcePostgreSQL PostgreSQL
   | SourceMySQL MySQL
   | SourceSQLServer SQLServer
@@ -150,7 +149,11 @@ instance FromJSON DataSource where
       c_incrementingColumn <- o .: "autoIncrementingColumn"
       return $ SourceSQLServer SQLServer{..}
 
-    parseFile o = SourceFile . FileConnector <$> (o .: "path")
+    parseFile o = do
+      sf_path <- o .: "path"
+      sf_partitioningField <- o .: "partitioningField"
+      sf_incrementingField <- o .: "incrementingField"
+      return $ SourceFile{..}
 
 parseDataDestination
   :: Map (Id DataSource) DataSource

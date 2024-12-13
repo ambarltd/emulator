@@ -20,7 +20,7 @@ import Control.Concurrent.Async (mapConcurrently_)
 import Control.Exception (throwIO, ErrorCall(..))
 import Control.Monad (replicateM, forM_)
 import qualified Data.Aeson as Aeson
-import Data.Aeson (FromJSON)
+import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.ByteString.Lazy as LB
 import Data.Default (Default, def)
 import Data.List (sort, stripPrefix)
@@ -64,24 +64,27 @@ data Event = Event
   }
   deriving (Eq, Show, Generic)
 
+instance ToJSON Event where
+  toJSON = Aeson.genericToJSON eventJSONOptions
+
 instance FromJSON Event where
-  parseJSON = Aeson.genericParseJSON opt
-    where
-    opt = Aeson.defaultOptions
-      { Aeson.fieldLabelModifier = \label ->
-        fromMaybe label (stripPrefix "e_" label)
-      }
+  parseJSON = Aeson.genericParseJSON eventJSONOptions
+
+eventJSONOptions :: Aeson.Options
+eventJSONOptions = Aeson.defaultOptions
+  { Aeson.fieldLabelModifier = \label ->
+    fromMaybe label (stripPrefix "e_" label)
+  }
 
 newtype EventsTable a = EventsTable String
 
 testGenericSQL
-  :: (Table table, Connector connector, Default (ConnectorState connector))
-  => OnDemand db
-  -> (forall x. db -> (Connection table -> IO x) -> IO x)
-  -> (db -> table -> connector)
-  -> Config table
+  :: Table table
+  => (forall a b. PartitionCount
+      -> (Connection table -> table -> Topic -> (IO b -> IO b) -> IO a)
+      -> IO a)
   -> Spec
-testGenericSQL od withConnection mkConfig conf = sequential $ do
+testGenericSQL with = sequential $ do
   -- checks that our tests can connect to postgres
   it "connects" $
     with (PartitionCount 1) $ \conn table _ _ -> do
@@ -137,8 +140,6 @@ testGenericSQL od withConnection mkConfig conf = sequential $ do
           forM_ byAggregateId $ \(a_id, seqs) ->
             annotate ("ordered (" <> show a_id <> ")") $
               sort seqs `shouldBe` seqs
-  where
-  with = withConnector od withConnection mkConfig conf
 
 -- | A generic consumer group
 group :: Topic.ConsumerGroupName
@@ -173,6 +174,7 @@ withConnector od withConnection mkConfig conf partitions f =
   Topic.withProducer topic partitioner encoder $ \producer -> do     -- create topic producer
   let logger = plainLogger Warn
       config = mkConfig db table
+      connected :: forall x. IO x -> IO x
       connected act = connect config logger def producer (const act) -- setup connector
   f conn table topic connected
 

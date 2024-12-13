@@ -6,6 +6,10 @@ module Ambar.Emulator.Queue.Partition.File
   , close
   , OpenError(..)
   , WriteError(..)
+
+  , openNonLockingWritableFD
+  , closeNonLockingWritableFD
+  , writeFD
   ) where
 
 import Control.Concurrent (MVar, newMVar, withMVarMasked, modifyMVar_)

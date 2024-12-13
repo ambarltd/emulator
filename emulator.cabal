@@ -119,6 +119,7 @@ test-suite emulator-tests
         Test.Config
         Test.Queue
         Test.Connector
+        Test.Connector.File
         Test.Connector.MySQL
         Test.Connector.PostgreSQL
         Test.Connector.MicrosoftSQLServer

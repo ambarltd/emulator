@@ -21,7 +21,7 @@ import Test.Hspec
   )
 
 import qualified Ambar.Emulator.Queue.Topic as Topic
-import Ambar.Emulator.Queue.Topic (PartitionCount(..))
+import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServer(..))
 import Ambar.Record (Bytes(..))
 import Database.MicrosoftSQLServer as S
@@ -46,7 +46,7 @@ import Utils.Delay (deadline, seconds)
 testMicrosoftSQLServer :: OnDemand MicrosoftSQLServerCreds -> Spec
 testMicrosoftSQLServer od = do
   describe "MicrosoftSQLServer" $ do
-    testGenericSQL @(EventsTable SQLServer) od withConnection mkConnector ()
+    testGenericSQL with
     describe "decodes" $ do
       -- Integers
       supported "TINYINT"                 (1 :: Int)
@@ -103,9 +103,17 @@ testMicrosoftSQLServer od = do
       -- unsupported "CLR UDT"              _NULL
       -- unsupported "IMAGE"                _NULL
       -- unsupported "SQL_VARIANT"          _NULL
-
-
   where
+  with
+    :: PartitionCount
+    -> ( S.Connection
+      -> EventsTable SQLServer
+      -> Topic
+      -> (IO b -> IO b)
+      -> IO a )
+    -> IO a
+  with = withConnector od withConnection mkConnector ()
+
   _NULL :: Maybe String
   _NULL = Nothing
 

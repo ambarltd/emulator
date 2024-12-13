@@ -41,6 +41,7 @@ import Database.MySQL
    , withConnection
    , defaultConnectionInfo
    )
+import Ambar.Emulator.Queue.Topic (Topic)
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Emulator.Queue.Topic (PartitionCount(..))
 import Ambar.Record (Bytes(..))
@@ -53,9 +54,9 @@ import qualified Test.Utils.SQL as TS
 type MySQLCreds = ConnectionInfo
 
 testMySQL :: OnDemand MySQLCreds -> Spec
-testMySQL c = do
+testMySQL od = do
   describe "MySQL" $ do
-    testGenericSQL @(EventsTable MySQL) c withConnection mkMySQL ()
+    testGenericSQL with
 
     -- Test that column types are supported/unsupported by
     -- creating database entries with the value and reporting
@@ -163,6 +164,16 @@ testMySQL c = do
       describe "JSON" $ do
         supported "JSON"                         ("{\"a\": 1}" :: String)
   where
+  with
+    :: PartitionCount
+    -> ( Connection
+      -> EventsTable MySQL
+      -> Topic
+      -> (IO b -> IO b)
+      -> IO a )
+    -> IO a
+  with = withConnector od withConnection mkMySQL ()
+
   _NULL :: Maybe String
   _NULL = Nothing
 
@@ -181,7 +192,7 @@ testMySQL c = do
   -- Write a value of a given type to a database table, then read it from the Topic.
   roundTrip :: forall a. (FromField a, FromJSON a, ToField a, Show a, Eq a) => String -> a -> IO ()
   roundTrip ty val =
-    withConnector @(TTable MySQL a) c withConnection mkMySQL (MySQLType ty) (PartitionCount 1) $ \conn table topic connected -> do
+    withConnector @(TTable MySQL a) od withConnection mkMySQL (MySQLType ty) (PartitionCount 1) $ \conn table topic connected -> do
     let record = TEntry 1 1 1 val
     insert conn table [record]
     connected $ deadline (seconds 1) $ do
