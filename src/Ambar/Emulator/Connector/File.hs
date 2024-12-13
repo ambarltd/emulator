@@ -1,6 +1,7 @@
 module Ambar.Emulator.Connector.File
   ( FileConnector(..)
   , FileConnectorState(..)
+  , FileRecord
   ) where
 
 {-| File connector.

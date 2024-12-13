@@ -20,7 +20,7 @@ import Control.Concurrent.Async (mapConcurrently_)
 import Control.Exception (throwIO, ErrorCall(..))
 import Control.Monad (replicateM, forM_)
 import qualified Data.Aeson as Aeson
-import Data.Aeson (FromJSON)
+import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.ByteString.Lazy as LB
 import Data.Default (Default, def)
 import Data.List (sort, stripPrefix)
@@ -64,13 +64,17 @@ data Event = Event
   }
   deriving (Eq, Show, Generic)
 
+instance ToJSON Event where
+  toJSON = Aeson.genericToJSON eventJSONOptions
+
 instance FromJSON Event where
-  parseJSON = Aeson.genericParseJSON opt
-    where
-    opt = Aeson.defaultOptions
-      { Aeson.fieldLabelModifier = \label ->
-        fromMaybe label (stripPrefix "e_" label)
-      }
+  parseJSON = Aeson.genericParseJSON eventJSONOptions
+
+eventJSONOptions :: Aeson.Options
+eventJSONOptions = Aeson.defaultOptions
+  { Aeson.fieldLabelModifier = \label ->
+    fromMaybe label (stripPrefix "e_" label)
+  }
 
 newtype EventsTable a = EventsTable String
 

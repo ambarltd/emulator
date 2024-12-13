@@ -11,6 +11,7 @@ import Test.Hspec
   , shouldBe
   )
 import Ambar.Emulator.Connector.Poll (Boundaries(..), mark, boundaries, cleanup)
+import Test.Connector.File (FileConnectorInfo, testFileConnector, withFileConnectorInfo)
 import Test.Connector.PostgreSQL (PostgresCreds, testPostgreSQL, withPostgreSQL)
 import Test.Connector.MySQL (MySQLCreds, testMySQL, withMySQL)
 import Test.Connector.MicrosoftSQLServer (MicrosoftSQLServerCreds, testMicrosoftSQLServer, withMicrosoftSQLServer)
@@ -22,18 +23,21 @@ data Databases = Databases
   (OnDemand PostgresCreds)
   (OnDemand MySQLCreds)
   (OnDemand MicrosoftSQLServerCreds)
+  (OnDemand FileConnectorInfo)
 
 withDatabases :: (Databases -> IO a) -> IO a
 withDatabases f =
   OnDemand.withLazy withPostgreSQL $ \pcreds ->
   OnDemand.withLazy withMySQL $ \mcreds ->
   OnDemand.withLazy withMicrosoftSQLServer $ \screds ->
-    f (Databases pcreds mcreds screds)
+  OnDemand.withLazy withFileConnectorInfo $ \finfo ->
+    f (Databases pcreds mcreds screds finfo)
 
 testConnectors :: Databases -> Spec
-testConnectors (Databases pcreds mcreds screds) = do
+testConnectors (Databases pcreds mcreds screds finfo) = do
   describe "connector" $ do
     testPollingConnector
+    testFileConnector finfo
     testPostgreSQL pcreds
     testMySQL mcreds
     testMicrosoftSQLServer screds
@@ -74,4 +78,3 @@ testPollingConnector = describe "Poll" $
 
     it "cleanup doesn't remove ranges ending higher than time given" $ do
       (boundaries . cleanup 2 . bs) [1 ,2, 5, 3] `shouldBe` Boundaries [(1,3), (5,5)]
-
