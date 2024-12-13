@@ -79,13 +79,12 @@ eventJSONOptions = Aeson.defaultOptions
 newtype EventsTable a = EventsTable String
 
 testGenericSQL
-  :: (Table table, Connector connector, Default (ConnectorState connector))
-  => OnDemand db
-  -> (forall x. db -> (Connection table -> IO x) -> IO x)
-  -> (db -> table -> connector)
-  -> Config table
+  :: Table table
+  => (forall a. PartitionCount
+      -> (Connection table -> table -> Topic -> (forall b. IO b -> IO b) -> IO a)
+      -> IO a)
   -> Spec
-testGenericSQL od withConnection mkConfig conf = sequential $ do
+testGenericSQL with = sequential $ do
   -- checks that our tests can connect to postgres
   it "connects" $
     with (PartitionCount 1) $ \conn table _ _ -> do
@@ -141,8 +140,6 @@ testGenericSQL od withConnection mkConfig conf = sequential $ do
           forM_ byAggregateId $ \(a_id, seqs) ->
             annotate ("ordered (" <> show a_id <> ")") $
               sort seqs `shouldBe` seqs
-  where
-  with = withConnector od withConnection mkConfig conf
 
 -- | A generic consumer group
 group :: Topic.ConsumerGroupName
@@ -167,7 +164,7 @@ withConnector
   -> (db -> table -> connector)
   -> Config table
   -> PartitionCount
-  -> (Connection table -> table -> Topic -> (IO b -> IO b) -> IO a)
+  -> (Connection table -> table -> Topic -> (forall b. IO b -> IO b) -> IO a)
   -> IO a
 withConnector od withConnection mkConfig conf partitions f =
   OnDemand.with od $ \db ->                                          -- load db
@@ -177,6 +174,7 @@ withConnector od withConnection mkConfig conf partitions f =
   Topic.withProducer topic partitioner encoder $ \producer -> do     -- create topic producer
   let logger = plainLogger Warn
       config = mkConfig db table
+      connected :: forall x. IO x -> IO x
       connected act = connect config logger def producer (const act) -- setup connector
   f conn table topic connected
 

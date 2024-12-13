@@ -21,7 +21,7 @@ Example: match on test description
  -}
 main :: IO ()
 main =
-  withDatabases $ \dbs@(Databases pcreds _ _  _) ->
+  withDatabases $ \dbs@(Databases pcreds _ _ ) ->
   hspec $ parallel $ do
     -- unit tests use the projector library
     testOnDemand
