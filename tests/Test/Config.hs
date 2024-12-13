@@ -45,6 +45,42 @@ testConfig = do
             description: The file source
             type: file
             path: ./source.txt
+            incrementingField: id
+            partitioningField: aggregate_id
+
+          - id: mysql_source
+            description: Main events store
+            type: mysql
+            host: localhost
+            port: 5432
+            username: my_user
+            password: my_pass
+            database: my_db
+            table: events_table
+            columns:
+              - id
+              - aggregate_id
+              - sequence_number
+              - payload
+            autoIncrementingColumn: id
+            partitioningColumn: aggregate_id
+
+          - id: sqlserver_source
+            description: Main events store
+            type: sqlserver
+            host: localhost
+            port: 1433
+            username: my_user
+            password: my_pass
+            database: my_db
+            table: events_table
+            columns:
+              - id
+              - aggregate_id
+              - sequence_number
+              - payload
+            autoIncrementingColumn: id
+            partitioningColumn: aggregate_id
 
         data_destinations:
           - id: file_destination
@@ -55,6 +91,8 @@ testConfig = do
             sources:
               - postgres_source
               - file_source
+              - mysql_source
+              - sqlserver_source
 
           - id: HTTP_destination
             description: my projection 2
@@ -66,8 +104,10 @@ testConfig = do
             sources:
               - postgres_source
               - file_source
+              - mysql_source
+              - sqlserver_source
         |]
-      annotate "source count" $ Map.size (c_sources  config) `shouldBe` 2
+      annotate "source count" $ Map.size (c_sources  config) `shouldBe` 4
       annotate "source count" $ Map.size (c_destinations  config) `shouldBe` 2
 
     it "detects duplicate sources" $ do
@@ -77,11 +117,15 @@ testConfig = do
             description: The file source
             type: file
             path: ./source.txt
+            incrementingField: id
+            partitioningField: aggregate_id
 
           - id: source_1
             description: The file source
             type: file
             path: ./source.txt
+            incrementingField: id
+            partitioningField: aggregate_id
 
         data_destinations:
           - id: file_destination
@@ -100,6 +144,8 @@ testConfig = do
             description: The file source
             type: file
             path: ./source.txt
+            incrementingField: id
+            partitioningField: aggregate_id
 
         data_destinations:
           - id: dest_1

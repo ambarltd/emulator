@@ -21,7 +21,7 @@ data_sources:
     partitioningColumn: aggregate_id
 
   # Connect to a MySQL database
-  - id: postgres_source
+  - id: mysql_source
     description: Main events store
     type: mysql
     host: localhost
@@ -55,6 +55,16 @@ data_sources:
       - payload
     autoIncrementingColumn: id
     partitioningColumn: aggregate_id
+
+  # Use a plain text file as a data source.
+  # Each line must be a valid JSON object.
+  # Values are projected as they are added.
+  - id: file_source
+    description: My file JSON event store
+    type: file
+    path: ./path/to/source.file
+    incrementingField: id
+    partitioningField: aggregate_id
 
 # Connections to your endpoint.
 # The Emulator will send data read from the databases to these endpoints.
