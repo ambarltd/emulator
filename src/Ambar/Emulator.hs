@@ -16,7 +16,7 @@ import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
 import Ambar.Emulator.Connector (Connector(..), connect, partitioner, encoder)
-import Ambar.Emulator.Connector.File (FileConnectorState)
+import Ambar.Emulator.Connector.File (FileConnectorState, mkFileConnector)
 import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServerState)
 import Ambar.Emulator.Connector.MySQL (MySQLState)
 import Ambar.Emulator.Connector.Postgres (PostgreSQLState)
@@ -99,7 +99,7 @@ emulate logger_ config env = do
       SourcePostgreSQL _ -> StatePostgres def
       SourceMySQL _ ->  StateMySQL def
       SourceSQLServer _ -> StateSQLServer def
-      SourceFile _ -> StateFile def
+      SourceFile{} -> StateFile def
 
   projectAll queue = forConcurrently_ (c_destinations env) (project queue)
 
@@ -169,10 +169,11 @@ toConnectorConfig source sstate =
         StateSQLServer state ->
           return $ ConnectorConfig source sqlserver state StateSQLServer
         _ -> incompatible
-    SourceFile path ->
+    SourceFile path partitioningField incrementingField ->
       case sstate of
-        StateFile state ->
-          return $ ConnectorConfig source path state StateFile
+        StateFile state -> do
+          fileconn <- mkFileConnector path partitioningField incrementingField
+          return $ ConnectorConfig source fileconn state StateFile
         _ -> incompatible
     where
     incompatible = throwIO $ ErrorCall $

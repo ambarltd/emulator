@@ -107,7 +107,7 @@ relevantFields :: Source -> Payload -> Text
 relevantFields source (Payload value) = renderPretty $
   withObject $ \o ->
   case source of
-    SourceFile _ -> prettyJSON value
+    SourceFile{} -> prettyJSON value
     SourceMySQL MySQL{..} ->
       fillSep $
         [ pretty field <> ":" <+> prettyJSON v
