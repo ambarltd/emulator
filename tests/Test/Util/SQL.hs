@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -Wno-x-partial #-}
 -- | Utilities for testing SQL connectors
-module Test.Utils.SQL
+module Test.Util.SQL
   ( Table(..)
   , testGenericSQL
   , mkTableName
@@ -36,12 +36,12 @@ import Ambar.Emulator.Connector (partitioner, encoder, Connector(..))
 import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Test.Queue (withFileTopic)
-import Test.Utils.OnDemand (OnDemand)
-import qualified Test.Utils.OnDemand as OnDemand
+import Util.OnDemand (OnDemand)
+import qualified Util.OnDemand as OnDemand
 
-import Utils.Async (withAsyncThrow)
-import Utils.Delay (deadline, seconds)
-import Utils.Logger (plainLogger, Severity(..))
+import Util.Async (withAsyncThrow)
+import Util.Delay (deadline, seconds)
+import Util.Logger (plainLogger, Severity(..))
 
 -- An SQL table
 class Table a where

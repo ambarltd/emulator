@@ -19,8 +19,8 @@ import Ambar.Emulator.Connector.File (FileConnector, mkFileConnector, write, c_p
 
 
 import Test.Queue (withFileTopic)
-import Utils.Logger (plainLogger, Severity(..))
-import Test.Utils.SQL
+import Util.Logger (plainLogger, Severity(..))
+import Test.Util.SQL
 
 testFileConnector :: Spec
 testFileConnector =

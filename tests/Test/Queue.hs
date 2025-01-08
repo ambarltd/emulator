@@ -44,10 +44,10 @@ import qualified Ambar.Emulator.Queue.Topic as T
 import Ambar.Emulator.Queue.Partition (Partition, Position(..), Record(..))
 import qualified Ambar.Emulator.Queue.Partition as P
 import qualified Ambar.Emulator.Queue.Partition.File as FilePartition
-import Utils.Async (withAsyncThrow)
-import Utils.Some (Some(..))
-import Utils.Delay (delay, deadline, seconds, millis, hang)
-import Utils.Warden (withWarden)
+import Util.Async (withAsyncThrow)
+import Util.Some (Some(..))
+import Util.Delay (delay, deadline, seconds, millis, hang)
+import Util.Warden (withWarden)
 
 testQueues :: Spec
 testQueues = do

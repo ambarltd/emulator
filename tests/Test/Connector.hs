@@ -15,8 +15,8 @@ import Test.Connector.File (testFileConnector)
 import Test.Connector.PostgreSQL (PostgresCreds, testPostgreSQL, withPostgreSQL)
 import Test.Connector.MySQL (MySQLCreds, testMySQL, withMySQL)
 import Test.Connector.MicrosoftSQLServer (MicrosoftSQLServerCreds, testMicrosoftSQLServer, withMicrosoftSQLServer)
-import Test.Utils.OnDemand (OnDemand)
-import qualified Test.Utils.OnDemand as OnDemand
+import Util.OnDemand (OnDemand)
+import qualified Util.OnDemand as OnDemand
 
 -- | Info to connect to known databases.
 data Databases = Databases

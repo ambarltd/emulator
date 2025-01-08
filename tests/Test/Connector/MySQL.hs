@@ -46,10 +46,10 @@ import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Emulator.Queue.Topic (PartitionCount(..))
 import Ambar.Record (Bytes(..))
 
-import Utils.Delay (deadline, seconds)
-import Test.Utils.OnDemand (OnDemand)
-import Test.Utils.SQL hiding (Connection)
-import qualified Test.Utils.SQL as TS
+import Util.Delay (deadline, seconds)
+import Util.OnDemand (OnDemand)
+import Test.Util.SQL hiding (Connection)
+import qualified Test.Util.SQL as TS
 
 type MySQLCreds = ConnectionInfo
 

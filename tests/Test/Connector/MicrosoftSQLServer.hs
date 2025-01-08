@@ -26,9 +26,9 @@ import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServer(..))
 import Ambar.Record (Bytes(..))
 import Database.MicrosoftSQLServer as S
 
-import Test.Utils.Docker (DockerCommand(..), withDocker)
-import Test.Utils.OnDemand (OnDemand)
-import Test.Utils.SQL
+import Util.Docker (DockerCommand(..), withDocker)
+import Util.OnDemand (OnDemand)
+import Test.Util.SQL
   ( EventsTable(..)
   , Table(..)
   , Event(..)
@@ -41,7 +41,7 @@ import Test.Utils.SQL
   , group
   )
 
-import Utils.Delay (deadline, seconds)
+import Util.Delay (deadline, seconds)
 
 testMicrosoftSQLServer :: OnDemand MicrosoftSQLServerCreds -> Spec
 testMicrosoftSQLServer od = do

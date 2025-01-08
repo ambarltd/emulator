@@ -7,8 +7,6 @@ import Test.Emulator (testEmulator)
 import Test.Transport (testTransport)
 import Test.Queue (testQueues)
 import Test.Connector (testConnectors, withDatabases, Databases(..))
-import Test.OnDemand (testOnDemand)
-import Test.Warden (testWarden)
 
 {- | Note [How tests work]
 
@@ -24,8 +22,6 @@ main =
   withDatabases $ \dbs@(Databases pcreds _ _ ) ->
   hspec $ parallel $ do
     -- unit tests use the projector library
-    testOnDemand
-    testWarden
     testConfig
     testQueues
     testTransport
