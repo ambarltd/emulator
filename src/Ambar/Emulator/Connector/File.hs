@@ -44,6 +44,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import GHC.Generics (Generic)
 import GHC.IO.FD (FD)
+import GHC.IO.Handle (HandlePosn(..), hGetPosn)
 import System.Directory (getFileSize)
 import System.IO
   ( Handle
@@ -180,9 +181,8 @@ connect conn@(FileConnector {..}) logger initState producer f = do
           , Text.unpack $ Text.decodeUtf8 bs
           ]
        Right v -> return v
-    let entrySize = fromIntegral $ BS.length bs + BS.length "\n"
-    atomically $ modifyTVar c_state $ \state ->
-      state { c_offset = c_offset state + entrySize }
+    HandlePosn _ offset <- hGetPosn readHandle
+    atomically $ modifyTVar c_state $ \state -> state { c_offset = offset }
     return value
 
   withReadLock :: (Handle -> IO a) -> IO a
