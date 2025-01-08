@@ -156,6 +156,7 @@ benchmark emulator-bench
   main-is: benchmarks/Benchmarks.hs
   build-depends:
         base
+        , ambar-hs-utils
         , emulator-lib
         , async
         , bytestring
