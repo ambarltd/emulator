@@ -25,7 +25,7 @@ import GHC.Generics (Generic)
 import Prettyprinter (Pretty, pretty)
 
 import qualified Ambar.Emulator.Queue.Topic as Topic
-import Utils.Delay (Duration, delay, fromDiffTime, toDiffTime)
+import Util.Delay (Duration, delay, fromDiffTime, toDiffTime)
 
 -- | List of ID ranges to exclude
 newtype Boundaries = Boundaries [(EntryId, EntryId)]

@@ -27,9 +27,9 @@ import Ambar.Emulator.Queue.Partition
   , Record(..)
   , Position(..)
   )
-import Utils.STM (atomicallyNamed)
-import qualified Utils.Warden as Warden
-import Utils.Warden (Warden)
+import Util.STM (atomicallyNamed)
+import qualified Util.Warden as Warden
+import Util.Warden (Warden)
 
 import qualified Ambar.Emulator.Queue.Partition as Partition
 

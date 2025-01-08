@@ -58,8 +58,8 @@ import qualified Database.MySQL.Simple.Result as M (Result(..), ResultError(..))
 import qualified Database.MySQL.Simple.QueryResults as M
 import qualified Database.MySQL.Simple.QueryParams as M
 
-import Utils.Exception (annotateWith, tryAll)
-import Utils.Async (withAsyncBoundThrow)
+import Util.Exception (annotateWith, tryAll)
+import Util.Async (withAsyncBoundThrow)
 
 query :: (ToRow q, FromRow r) => Connection -> M.Query -> q -> IO [r]
 query (Connection run) q params =

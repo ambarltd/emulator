@@ -52,7 +52,7 @@ import System.Directory (doesFileExist, getFileSize, removeFile)
 import System.FilePath ((</>))
 
 import Ambar.Emulator.Queue.Partition
-import Utils.STM (atomicallyNamed)
+import Util.STM (atomicallyNamed)
 
 -- | A file-backed Partition for unformatted JSON entries.
 --

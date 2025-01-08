@@ -47,10 +47,10 @@ import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
 import Ambar.Record (Record(..), Value(..), Type(..), Bytes(..), TimeStamp(..))
 import qualified Ambar.Record.Encoding as Encoding
 
-import Utils.Delay (Duration, millis, seconds)
-import Utils.Async (withAsyncThrow)
-import Utils.Logger (SimpleLogger, logDebug, logInfo)
-import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
+import Util.Delay (Duration, millis, seconds)
+import Util.Async (withAsyncThrow)
+import Util.Logger (SimpleLogger, logDebug, logInfo)
+import Util.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
 
 _POLLING_INTERVAL :: Duration
 _POLLING_INTERVAL = millis 50

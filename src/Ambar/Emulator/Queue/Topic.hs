@@ -54,9 +54,9 @@ import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import System.Random (randomIO)
 
-import Utils.Some (Some(..))
-import Utils.STM (atomicallyNamed)
-import Utils.Warden (Warden)
+import Util.Some (Some(..))
+import Util.STM (atomicallyNamed)
+import Util.Warden (Warden)
 
 import Ambar.Emulator.Queue.Partition
   ( Partition

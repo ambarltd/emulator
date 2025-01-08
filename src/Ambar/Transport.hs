@@ -3,7 +3,7 @@ module Ambar.Transport where
 import Data.Text (Text)
 import Data.ByteString (ByteString)
 
-import Utils.Some (Some(..))
+import Util.Some (Some(..))
 
 -- | A transport is a way to send data to some destination.
 class Transport a where

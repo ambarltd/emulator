@@ -22,8 +22,8 @@ import Ambar.Emulator.Queue.Partition (Record(..), Position(..))
 import qualified Ambar.Emulator.Queue.Partition as P
 import Ambar.Emulator.Queue.Partition.File (FilePartition)
 import qualified Ambar.Emulator.Queue.Partition.File as F
-import Utils.Some (Some(..))
-import Utils.Warden as Warden
+import Util.Some (Some(..))
+import Util.Warden as Warden
 
 main :: IO ()
 main =

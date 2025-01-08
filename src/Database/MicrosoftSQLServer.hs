@@ -46,7 +46,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import qualified Database.MSSQLServer.Connection as M
 import qualified Database.MSSQLServer.Query as M
 import qualified Database.Tds.Message as M
-import Utils.Exception (annotateWith)
+import Util.Exception (annotateWith)
 
 data ConnectionInfo = ConnectionInfo
   { conn_host :: Text

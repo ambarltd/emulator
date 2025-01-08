@@ -31,8 +31,8 @@ import qualified Ambar.Transport.Http as HttpTransport
 import Ambar.Transport (Transport(..))
 import Ambar.Transport.Http (Endpoint(..), User(..), Password(..))
 
-import Utils.Async (withAsyncThrow)
-import Utils.Some (Some(..))
+import Util.Async (withAsyncThrow)
+import Util.Some (Some(..))
 
 testTransport :: Spec
 testTransport = describe "transport" $ do

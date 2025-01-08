@@ -32,12 +32,12 @@ import Ambar.Emulator.Connector.Postgres (PostgreSQL)
 
 import Test.Connector.PostgreSQL (PostgresCreds, Event(..), mocks)
 import qualified Test.Connector.PostgreSQL as C
-import Test.Utils.SQL (EventsTable)
-import Test.Utils.OnDemand (OnDemand)
-import qualified Test.Utils.OnDemand as OnDemand
-import Utils.Async (withAsyncThrow)
-import Utils.Delay (deadline, seconds)
-import Utils.Logger (plainLogger, Severity(..))
+import Test.Util.SQL (EventsTable)
+import Util.OnDemand (OnDemand)
+import qualified Util.OnDemand as OnDemand
+import Util.Async (withAsyncThrow)
+import Util.Delay (deadline, seconds)
+import Util.Logger (plainLogger, Severity(..))
 
 testEmulator :: OnDemand PostgresCreds -> Spec
 testEmulator p = describe "emulator" $ do

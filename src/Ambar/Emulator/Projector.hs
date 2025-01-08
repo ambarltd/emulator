@@ -31,10 +31,10 @@ import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
 import Ambar.Emulator.Connector.MySQL (MySQL(..))
 import Ambar.Transport (Transport)
 import qualified Ambar.Transport as Transport
-import Utils.Some (Some)
-import Utils.Logger (SimpleLogger, logFatal, logWarn, logInfo, fatal, annotate)
-import Utils.Delay (Duration, delay, millis, seconds)
-import Utils.Prettyprinter (prettyJSON, renderPretty)
+import Util.Some (Some)
+import Util.Logger (SimpleLogger, logFatal, logWarn, logInfo, fatal, annotate)
+import Util.Delay (Duration, delay, millis, seconds)
+import Util.Prettyprinter (prettyJSON, renderPretty)
 import Prettyprinter (pretty, fillSep, (<+>))
 
 data Projection = Projection

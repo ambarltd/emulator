@@ -42,12 +42,12 @@ import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
 import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Record (Bytes(..))
-import Test.Utils.Docker (DockerCommand(..), withDocker)
-import Test.Utils.OnDemand (OnDemand)
-import Test.Utils.SQL
-import qualified Test.Utils.OnDemand as OnDemand
+import Util.Docker (DockerCommand(..), withDocker)
+import Util.OnDemand (OnDemand)
+import Test.Util.SQL
+import qualified Util.OnDemand as OnDemand
 
-import Utils.Delay (deadline, seconds, delay)
+import Util.Delay (deadline, seconds, delay)
 
 testPostgreSQL :: OnDemand PostgresCreds -> Spec
 testPostgreSQL p = do

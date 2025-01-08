@@ -4,7 +4,7 @@ import Control.Concurrent.STM (STM)
 import Control.Exception (Exception)
 
 import Ambar.Emulator.Queue.Topic (Producer, Partitioner, Encoder)
-import Utils.Logger (SimpleLogger)
+import Util.Logger (SimpleLogger)
 
 class Connector a where
   type ConnectorState a = b | b -> a

@@ -24,6 +24,7 @@ executable emulator
     other-modules:
     build-depends:
         base
+        , ambar-hs-utils
         , directory
         , emulator-lib
         , filepath
@@ -60,17 +61,9 @@ library emulator-lib
         Ambar.Transport.File
         Database.MySQL
         Database.MicrosoftSQLServer
-        Utils.Async
-        Utils.Delay
-        Utils.Directory
-        Utils.Exception
-        Utils.Logger
-        Utils.Prettyprinter
-        Utils.STM
-        Utils.Some
-        Utils.Warden
     build-depends:
         base
+        , ambar-hs-utils
         , aeson
         , aeson-pretty
         , async
@@ -124,15 +117,12 @@ test-suite emulator-tests
         Test.Connector.PostgreSQL
         Test.Connector.MicrosoftSQLServer
         Test.Emulator
-        Test.OnDemand
         Test.Transport
-        Test.Warden
-        Test.Utils.OnDemand
-        Test.Utils.Docker
-        Test.Utils.SQL
+        Test.Util.SQL
     type:    exitcode-stdio-1.0
     build-depends:
         base
+        , ambar-hs-utils
         , emulator-lib
         , aeson
         , async
@@ -166,6 +156,7 @@ benchmark emulator-bench
   main-is: benchmarks/Benchmarks.hs
   build-depends:
         base
+        , ambar-hs-utils
         , emulator-lib
         , async
         , bytestring
