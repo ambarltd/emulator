@@ -37,11 +37,11 @@ import Ambar.Emulator.Config
   , DataDestination(..)
   , Destination(..)
   )
-import Utils.Delay (every, seconds)
-import Utils.Directory (writeAtomically)
-import Utils.Logger (SimpleLogger, annotate, logInfo, logDebugAction)
-import Utils.Some (Some(..))
-import Utils.STM (atomicallyNamed)
+import Util.Delay (every, seconds)
+import Util.Directory (writeAtomically)
+import Util.Logger (SimpleLogger, annotate, logInfo, logDebugAction)
+import Util.Some (Some(..))
+import Util.STM (atomicallyNamed)
 
 emulate :: SimpleLogger -> EmulatorConfig -> EnvironmentConfig -> IO ()
 emulate logger_ config env = do

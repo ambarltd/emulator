@@ -26,7 +26,7 @@ import qualified Database.PostgreSQL.Simple.Transaction as P
 import qualified Database.PostgreSQL.Simple.FromField as P
 import qualified Database.PostgreSQL.Simple.FromRow as P
 import GHC.Generics (Generic)
-import Utils.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
+import Util.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
 import Prettyprinter (pretty, (<+>))
 import qualified Prettyprinter as Pretty
 
@@ -36,9 +36,9 @@ import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(.
 import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
 import Ambar.Record (Record(..), Value(..), Bytes(..), TimeStamp(..))
 import qualified Ambar.Record.Encoding as Encoding
-import Utils.Async (withAsyncThrow)
-import Utils.Delay (Duration, millis, seconds)
-import Utils.Logger (SimpleLogger, logDebug, logInfo)
+import Util.Async (withAsyncThrow)
+import Util.Delay (Duration, millis, seconds)
+import Util.Logger (SimpleLogger, logDebug, logInfo)
 
 _POLLING_INTERVAL :: Duration
 _POLLING_INTERVAL = millis 50

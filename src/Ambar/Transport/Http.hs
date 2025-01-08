@@ -163,6 +163,7 @@ prettyHttpError httpErr = "*** HTTP Error: " <> case httpErr of
       "invalid proxy environment var: " <> var <> ": " <> val
     Http.ConnectionClosed -> "connection closed"
     Http.InvalidProxySettings _ -> "invalid proxy settings"
+    Http.TooManyHeaderFields -> "too many header fields"
 
 
 

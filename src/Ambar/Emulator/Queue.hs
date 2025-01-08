@@ -35,12 +35,12 @@ import Ambar.Emulator.Queue.Topic
 import qualified Ambar.Emulator.Queue.Topic as T
 import qualified Ambar.Emulator.Queue.Partition.File as FilePartition
 import Ambar.Emulator.Queue.Partition.File (FilePartition)
-import Utils.Async (withAsyncThrow)
-import Utils.Delay (every, seconds)
-import Utils.Directory (writeAtomically)
-import Utils.Some (Some(..))
-import Utils.Warden (Warden)
-import qualified Utils.Warden as Warden
+import Util.Async (withAsyncThrow)
+import Util.Delay (every, seconds)
+import Util.Directory (writeAtomically)
+import Util.Some (Some(..))
+import Util.Warden (Warden)
+import qualified Util.Warden as Warden
 
 data Queue = Queue
   { q_warden :: Warden

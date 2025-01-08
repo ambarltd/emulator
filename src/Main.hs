@@ -17,7 +17,7 @@ import System.Posix.Signals (installHandler, sigINT, sigTERM, Handler(Catch))
 
 import Ambar.Emulator (emulate)
 import Ambar.Emulator.Config (parseEnvConfigFile, EmulatorConfig(..))
-import Utils.Logger (plainLogger, Severity(..), logInfo)
+import Util.Logger (plainLogger, Severity(..), logInfo)
 
 
 _DEFAULT_PARTITIONS_PER_TOPIC :: Int

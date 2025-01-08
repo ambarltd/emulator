@@ -60,17 +60,9 @@ library emulator-lib
         Ambar.Transport.File
         Database.MySQL
         Database.MicrosoftSQLServer
-        Utils.Async
-        Utils.Delay
-        Utils.Directory
-        Utils.Exception
-        Utils.Logger
-        Utils.Prettyprinter
-        Utils.STM
-        Utils.Some
-        Utils.Warden
     build-depends:
         base
+        , ambar-hs-utils
         , aeson
         , aeson-pretty
         , async

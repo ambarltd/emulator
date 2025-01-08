@@ -65,10 +65,10 @@ import Ambar.Emulator.Queue.Partition.File
 import Ambar.Emulator.Queue.Topic (modPartitioner)
 import Ambar.Emulator.Queue.Topic (Producer)
 import qualified Ambar.Emulator.Queue.Topic as Topic
-import Utils.Async (withAsyncThrow)
-import Utils.Logger (SimpleLogger, fatal, logInfo)
-import Utils.Delay (Duration, delay, millis)
-import Utils.Prettyprinter (prettyJSON, renderPretty, commaSeparated)
+import Util.Async (withAsyncThrow)
+import Util.Logger (SimpleLogger, fatal, logInfo)
+import Util.Delay (Duration, delay, millis)
+import Util.Prettyprinter (prettyJSON, renderPretty, commaSeparated)
 
 _POLLING_INTERVAL :: Duration
 _POLLING_INTERVAL = millis 50
