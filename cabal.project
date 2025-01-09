@@ -3,5 +3,12 @@ packages: .
 
 source-repository-package
     type: git
-    location: https://github.com/ambarltd/ambar-hs-utils
-    tag: 55334ab4af375ac19f4bbbd1a20071998f9b2306
+    location: https://github.com/ambarltd/haskell-libs
+    subdir: ambar-hs-utils
+    tag: 175aae291acd4996aa9b2bae3120ccf9cd32fef3
+
+source-repository-package
+    type: git
+    location: https://github.com/ambarltd/haskell-libs
+    subdir: ambar-sqlserver
+    tag: 175aae291acd4996aa9b2bae3120ccf9cd32fef3

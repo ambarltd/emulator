@@ -24,7 +24,7 @@ import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServer(..))
 import Ambar.Record (Bytes(..))
-import Database.MicrosoftSQLServer as S
+import Database.SQLServer as S
 
 import Util.Docker (DockerCommand(..), withDocker)
 import Util.OnDemand (OnDemand)

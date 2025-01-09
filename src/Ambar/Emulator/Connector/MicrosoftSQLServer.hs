@@ -26,7 +26,7 @@ import GHC.Generics (Generic)
 import qualified Prettyprinter as Pretty
 import Prettyprinter (pretty, (<+>))
 
-import Database.MicrosoftSQLServer
+import Database.SQLServer
   ( Connection
   , ConnectionInfo(..)
   , withConnection
@@ -38,7 +38,7 @@ import Database.MicrosoftSQLServer
   , rawBytes
   )
 import qualified Database.Tds.Message as Tds
-import qualified Database.MicrosoftSQLServer as M
+import qualified Database.SQLServer as M
 
 import qualified Ambar.Emulator.Connector as C
 import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..))
