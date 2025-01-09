@@ -1,6 +1,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 
-module Database.MicrosoftSQLServer
+module Database.SQLServer
   ( Connection
   , ConnectionInfo(..)
   , withConnection

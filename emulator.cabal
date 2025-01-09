@@ -60,10 +60,10 @@ library emulator-lib
         Ambar.Transport.Http
         Ambar.Transport.File
         Database.MySQL
-        Database.MicrosoftSQLServer
     build-depends:
         base
         , ambar-hs-utils
+        , ambar-sqlserver
         , aeson
         , aeson-pretty
         , async
@@ -123,6 +123,7 @@ test-suite emulator-tests
     build-depends:
         base
         , ambar-hs-utils
+        , ambar-sqlserver
         , emulator-lib
         , aeson
         , async
