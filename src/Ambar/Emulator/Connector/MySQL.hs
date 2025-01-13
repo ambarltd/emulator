@@ -259,7 +259,7 @@ parseWithType field content expected = case expected of
         , M.errFieldName = Text.unpack $ Text.decodeUtf8 $ M.fieldName field
         , M.errMessage = "Unable to decode JSON input: " <> err
         }
-      Right v -> return $ Json (Text.decodeUtf8 content) v
+      Right v -> return $ Json v
 
   ifType_ :: FieldParser Value -> [M.Type] -> FieldParser Value
   ifType_ parser xs =
