@@ -223,10 +223,10 @@ mkParser cols (TableSchema schema) = Record . zip cols <$> traverse (parser . ge
     PgFloat8 -> fmap Real <$> P.field
     PgBool -> fmap Boolean <$> P.field
     PgJson -> do
-      mvalue <- P.field
-      return $ flip fmap mvalue $ \value ->
-        let txt = Text.decodeUtf8 $ LB.toStrict $ Aeson.encode value in
-        Json txt value
+      -- this JSON type is untyped and therefore is conveyed as string
+      val <- P.field @Aeson.Value
+      let txt = Text.decodeUtf8 $ LB.toStrict $ Aeson.encode val
+      return (Just $ String txt)
     PgBytea -> fmap (Binary . Bytes . P.fromBinary) <$> P.field
     PgTimestamp -> fmap DateTime <$> P.fieldWith (P.optionalField parserTimeStamp)
     PgTimestamptz -> fmap DateTime <$> P.fieldWith (P.optionalField parserTimeStampTZ)

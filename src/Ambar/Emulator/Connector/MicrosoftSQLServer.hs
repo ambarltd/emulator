@@ -275,7 +275,7 @@ mkParser cols (Schema schema) = do
     Binary _ -> case ty of
       TBytes -> return val
       _ -> unsupported
-    Json _ _ -> case ty of
+    Json _ -> case ty of
       TJSON -> return val
       _ -> unsupported
     DateTime _ -> case ty of

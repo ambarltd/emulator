@@ -11,7 +11,9 @@ module Test.Connector.MySQL
 import Control.Exception (bracket, throwIO, ErrorCall(..), uninterruptibleMask_, fromException)
 import Control.Monad (void, forM_)
 import Data.Aeson (FromJSON, ToJSON)
+import qualified Data.Aeson as Aeson
 import qualified Data.ByteString as BS
+import Data.Maybe (fromJust)
 import Data.String (fromString)
 import qualified Data.Text as Text
 import System.Exit (ExitCode(..))
@@ -162,7 +164,7 @@ testMySQL od = do
        unsupported "GEOMETRYCOLLECTION"          _NULL
 
       describe "JSON" $ do
-        supported "JSON"                         ("{\"a\": 1}" :: String)
+        supported "JSON"                         (fromJust $ Aeson.decode "{\"a\": 1}" :: Aeson.Value)
   where
   with
     :: PartitionCount

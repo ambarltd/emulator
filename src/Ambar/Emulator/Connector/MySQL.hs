@@ -39,7 +39,6 @@ import Database.MySQL
   , FieldParser
 
   , fieldInfo
-  , fieldParseError
   , parseFailure
   , parseFieldWith
   , withConnection
@@ -251,15 +250,7 @@ parseWithType field content expected = case expected of
     utc <- fieldParser
     return $ DateTime $ TimeStamp (Text.decodeUtf8 content) utc
 
-  json =
-    case Aeson.eitherDecode' $ LB.fromStrict content of
-      Left err -> fieldParseError $ M.ConversionFailed
-        { M.errSQLType = show sqlType
-        , M.errHaskellType = "Aeson.Value"
-        , M.errFieldName = Text.unpack $ Text.decodeUtf8 $ M.fieldName field
-        , M.errMessage = "Unable to decode JSON input: " <> err
-        }
-      Right v -> return $ Json (Text.decodeUtf8 content) v
+  json = Json <$> fieldParser
 
   ifType_ :: FieldParser Value -> [M.Type] -> FieldParser Value
   ifType_ parser xs =
