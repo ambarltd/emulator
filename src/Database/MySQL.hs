@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | A thread-safe wrapper around the mysql and mysql-simple libraries.
@@ -42,10 +43,13 @@ import Control.Concurrent (MVar, newMVar, newEmptyMVar, putMVar, takeMVar, tryPu
 import Control.Exception (Exception, SomeException, ErrorCall(..), toException, bracket, throwIO, try, evaluate)
 import Control.Applicative (Alternative(..))
 import Control.Monad (unless, forever)
+import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as LB
 import Data.Int (Int64)
 import qualified Data.Text as Text
 import Data.Text (Text)
+import qualified Data.Text.Encoding as Text
 import Data.Word (Word16)
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -334,6 +338,26 @@ instance {-# OVERLAPPABLE #-} M.Result r => FromField r where
       Left (err :: M.ResultError) ->
         FieldParser $ \_ _ -> Left (ParseError err)
       Right v -> return v
+
+instance FromField Aeson.Value where
+  fieldParser = do
+    (field, mcontent) <- fieldInfo
+    case mcontent of
+      Nothing -> return Aeson.Null
+      Just content ->
+        case Aeson.eitherDecode' $ LB.fromStrict content of
+          Left err -> fieldParseError $ M.ConversionFailed
+            { M.errSQLType = show $ M.fieldType field
+            , M.errHaskellType = "Aeson.Value"
+            , M.errFieldName = Text.unpack $ Text.decodeUtf8 $ M.fieldName field
+            , M.errMessage = "Unable to decode JSON input: " <> err
+            }
+          Right v -> return v
+
+instance M.ToField Aeson.Value where
+  toField = LB.toStrict . Aeson.encode
+
+instance M.Param Aeson.Value
 
 instance M.QueryResults Row where
   convertResults fs mbs = Row $ zip fs mbs
