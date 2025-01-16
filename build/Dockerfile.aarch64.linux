@@ -55,6 +55,7 @@ WORKDIR /opt/emulator
 # dependencies (unless the .cabal file changes)
 COPY ./emulator.cabal       /opt/emulator
 COPY ./cabal.project        /opt/emulator
+COPY ./deps                 /opt/emulator/deps
 RUN cabal build --dependencies-only +RTS -N
 
 # Add and build application code.
