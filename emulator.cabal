@@ -26,7 +26,7 @@ executable emulator
         base
         , ambar-hs-utils
         , directory
-        , emulator-lib
+        , emulator
         , filepath
         , prettyprinter
         , prettyprinter-ansi-terminal
@@ -35,7 +35,7 @@ executable emulator
         build-depends:
             unix
 
-library emulator-lib
+library
     import: common
     ghc-options: -Wall -Werror -fprof-auto
     hs-source-dirs: src
@@ -124,7 +124,7 @@ test-suite emulator-tests
         , ambar-hs-utils
         , ambar-record
         , ambar-sqlserver
-        , emulator-lib
+        , emulator
         , aeson
         , async
         , bytestring
@@ -158,7 +158,7 @@ benchmark emulator-bench
   build-depends:
         base
         , ambar-hs-utils
-        , emulator-lib
+        , emulator
         , async
         , bytestring
         , criterion

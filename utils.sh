@@ -1,7 +1,7 @@
 #! /bin/bash
 
 function build {
-  cabal build emulator-lib -j "${@}"
+  cabal build lib:emulator -j "${@}"
 }
 
 function run {
@@ -29,7 +29,7 @@ function bench-save {
 function typecheck {
   # Start fast type-checking of the library. (Everything but Main.hs)
   # Watches your files and type-checks on save
-  ghcid -c 'cabal v2-repl' emulator-lib "${@}"
+  ghcid -c 'cabal v2-repl' lib:emulator "${@}"
 }
 
 function typecheck-executable {
