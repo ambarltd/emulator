@@ -34,6 +34,7 @@ data_sources:
       - payload
     serialColumn: id
     partitioningColumn: aggregate_id
+    pollingInterval: 0.050
 
   # Connect to a MySQL database
   - id: mysql_source
@@ -52,6 +53,7 @@ data_sources:
       - payload
     autoIncrementingColumn: id
     partitioningColumn: aggregate_id
+    pollingInterval: 0.050
 
   # Connect to an SQLServer database
   - id: sqlserver_source
@@ -70,6 +72,7 @@ data_sources:
       - payload
     autoIncrementingColumn: id
     partitioningColumn: aggregate_id
+    pollingInterval: 0.050
 
   # Use a plain text file as a data source.
   # Each line must be a valid JSON object.
@@ -80,6 +83,7 @@ data_sources:
     path: ./path/to/source.file
     incrementingField: id
     partitioningField: aggregate_id
+    pollingInterval: 0.050
 
 # Connections to your endpoint.
 # The Emulator will send data read from the databases to these endpoints.

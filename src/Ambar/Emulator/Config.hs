@@ -16,7 +16,7 @@ module Ambar.Emulator.Config
 
 import Control.Monad (forM_, when, forM)
 import Control.Exception (throwIO, ErrorCall(..))
-import Data.Aeson (ToJSON, FromJSON, (.:), FromJSONKey, ToJSONKey)
+import Data.Aeson (ToJSON, FromJSON, (.:), (.:?), (.!=), FromJSONKey, ToJSONKey)
 import qualified Data.Aeson as Json
 import qualified Data.Aeson.Types as Json
 import Data.ByteString (ByteString)
@@ -27,6 +27,8 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Yaml as Yaml
 
+import Ambar.Emulator.Connector.Poll (PollingInterval(..))
+import Util.Delay (millis)
 import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServer(..))
 import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
 import Ambar.Emulator.Connector.MySQL (MySQL(..))
@@ -97,6 +99,9 @@ instance FromJSON EnvironmentConfig where
       return $ fmap head multimap
     return EnvironmentConfig{..}
 
+defaultPollingInterval :: PollingInterval
+defaultPollingInterval = PollingInterval (millis 50)
+
 instance FromJSON DataSource where
   parseJSON = Json.withObject "DataSource" $ \o -> do
     s_id <- o .: "id"
@@ -123,6 +128,7 @@ instance FromJSON DataSource where
       c_columns <- o .: "columns"
       c_partitioningColumn <- o .: "partitioningColumn"
       c_serialColumn <- o .: "serialColumn"
+      c_pollingInterval <- o .:? "pollingInterval" .!= defaultPollingInterval
       return $ SourcePostgreSQL PostgreSQL{..}
 
     parseMySQL o = do
@@ -135,6 +141,7 @@ instance FromJSON DataSource where
       c_columns <- o .: "columns"
       c_partitioningColumn <- o .: "partitioningColumn"
       c_incrementingColumn <- o .: "autoIncrementingColumn"
+      c_pollingInterval <- o .:? "pollingInterval" .!= defaultPollingInterval
       return $ SourceMySQL MySQL{..}
 
     parseSQLServer o = do
@@ -147,6 +154,7 @@ instance FromJSON DataSource where
       c_columns <- o .: "columns"
       c_partitioningColumn <- o .: "partitioningColumn"
       c_incrementingColumn <- o .: "autoIncrementingColumn"
+      c_pollingInterval <- o .:? "pollingInterval" .!= defaultPollingInterval
       return $ SourceSQLServer SQLServer{..}
 
     parseFile o = do

@@ -17,7 +17,9 @@ import System.Posix.Signals (installHandler, sigINT, sigTERM, Handler(Catch))
 
 import Ambar.Emulator (emulate)
 import Ambar.Emulator.Config (parseEnvConfigFile, EmulatorConfig(..))
+import Ambar.Emulator.Connector.Poll (PollingInterval(..))
 import Util.Logger (plainLogger, Severity(..), logInfo)
+import Util.Delay (fromDiffTime)
 
 
 _DEFAULT_PARTITIONS_PER_TOPIC :: Int
@@ -73,6 +75,7 @@ data Command
     , o_statePath :: Maybe FilePath
     , o_configPath :: FilePath
     , o_verbose :: Bool
+    , o_overridePollingInterval :: Maybe PollingInterval
     }
   | CmdVersion
 
@@ -103,6 +106,12 @@ cliOptions = O.info (O.simpleVersioner _VERSION <*> O.helper <*> parser) $ mconc
           [ O.long "partitions-per-topic"
           , O.metavar "INT"
           , O.help "How many partitions should newly created topics have."
+          ]
+      o_overridePollingInterval <-
+        fmap (fmap $ PollingInterval . fromDiffTime . realToFrac @Double) $ optional $ O.option O.auto $ mconcat
+          [ O.long "override-polling-interval"
+          , O.metavar "SECONDS"
+          , O.help "Override the polling interval for all polled data sources."
           ]
       o_statePath <- optional $ O.strOption $ mconcat
           [ O.long "data-path"

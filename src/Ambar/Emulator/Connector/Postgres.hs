@@ -32,7 +32,7 @@ import qualified Prettyprinter as Pretty
 
 import qualified Ambar.Emulator.Connector.Poll as Poll
 import qualified Ambar.Emulator.Connector as C
-import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream)
+import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream, PollingInterval)
 import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
 import Ambar.Record (Record(..), Value(..), Bytes(..), TimeStamp(..))
 import qualified Ambar.Record.Encoding as Encoding
@@ -46,6 +46,7 @@ _POLLING_INTERVAL = millis 50
 _MAX_TRANSACTION_TIME :: Duration
 _MAX_TRANSACTION_TIME = seconds 120
 
+
 data PostgreSQL = PostgreSQL
   { c_host :: Text
   , c_port :: Word16
@@ -56,6 +57,7 @@ data PostgreSQL = PostgreSQL
   , c_columns :: [Text]
   , c_partitioningColumn :: Text
   , c_serialColumn :: Text
+  , c_pollingInterval :: PollingInterval
   }
 
 instance C.Connector PostgreSQL where
@@ -124,7 +126,7 @@ connect config@PostgreSQL{..} logger (PostgreSQLState tracker) producer f =
    validate config schema
    trackerVar <- newTVarIO tracker
    let readState = PostgreSQLState <$> readTVar trackerVar
-   withAsyncThrow (consume conn schema trackerVar) (f readState)
+   withAsyncThrow (consume conn c_pollingInterval schema trackerVar) (f readState)
    where
    open = P.connect P.ConnectInfo
       { P.connectHost = Text.unpack c_host
@@ -136,15 +138,16 @@ connect config@PostgreSQL{..} logger (PostgreSQLState tracker) producer f =
 
    consume
       :: P.Connection
+      -> PollingInterval
       -> TableSchema
       -> TVar BoundaryTracker
       -> IO Void
-   consume conn schema trackerVar = Poll.connect trackerVar pc
+   consume conn interval schema trackerVar = Poll.connect trackerVar pc
      where
      pc = Poll.PollingConnector
         { Poll.c_getId = entryId
         , Poll.c_poll = run
-        , Poll.c_pollingInterval = _POLLING_INTERVAL
+        , Poll.c_pollingInterval = interval
         , Poll.c_maxTransactionTime = _MAX_TRANSACTION_TIME
         , Poll.c_producer = producer
         }
