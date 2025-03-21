@@ -27,6 +27,7 @@ import Test.Hspec
   )
 
 import Ambar.Emulator.Connector as Connector
+import Ambar.Emulator.Connector.Poll (PollingInterval(..))
 import Ambar.Emulator.Connector.MySQL (MySQL(..))
 import Database.MySQL
    ( ConnectionInfo(..)
@@ -48,7 +49,7 @@ import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Emulator.Queue.Topic (PartitionCount(..))
 import Ambar.Record (Bytes(..))
 
-import Util.Delay (deadline, seconds)
+import Util.Delay (deadline, seconds, millis)
 import Util.OnDemand (OnDemand)
 import Test.Util.SQL hiding (Connection)
 import qualified Test.Util.SQL as TS
@@ -213,6 +214,7 @@ mkMySQL ConnectionInfo{..} table = MySQL
   , c_columns = tableCols table
   , c_partitioningColumn = "aggregate_id"
   , c_incrementingColumn = "id"
+  , c_pollingInterval = PollingInterval (millis 10)
   }
 
 -- | Binary data saved in MySQL.

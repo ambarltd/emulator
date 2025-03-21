@@ -25,7 +25,7 @@ import qualified Prettyprinter as Pretty
 import Prettyprinter (pretty, (<+>))
 
 import qualified Ambar.Emulator.Connector as C
-import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream)
+import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream, PollingInterval)
 import qualified Ambar.Emulator.Connector.Poll as Poll
 import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
 import Ambar.Record (Record(..), Value(..), Bytes(..), TimeStamp(..), Type(..))
@@ -44,13 +44,10 @@ import Database.MySQL
   , withConnection
   )
 import qualified Database.MySQL as M
-import Util.Delay (Duration, millis, seconds)
+import Util.Delay (Duration, seconds)
 import Util.Async (withAsyncThrow)
 import Util.Logger (SimpleLogger, logDebug, logInfo)
 import Util.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
-
-_POLLING_INTERVAL :: Duration
-_POLLING_INTERVAL = millis 50
 
 _MAX_TRANSACTION_TIME :: Duration
 _MAX_TRANSACTION_TIME = seconds 120
@@ -65,6 +62,7 @@ data MySQL = MySQL
   , c_columns :: [Text]
   , c_partitioningColumn :: Text
   , c_incrementingColumn :: Text
+  , c_pollingInterval :: PollingInterval
   }
 
 newtype MySQLState = MySQLState BoundaryTracker
@@ -119,7 +117,7 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
   validate config schema
   trackerVar <- newTVarIO tracker
   let readState = MySQLState <$> readTVar trackerVar
-  withAsyncThrow (consume conn schema trackerVar) (f readState)
+  withAsyncThrow (consume conn c_pollingInterval schema trackerVar) (f readState)
   where
   cinfo = ConnectionInfo
     { conn_host = c_host
@@ -142,15 +140,16 @@ connect config@MySQL{..} logger (MySQLState tracker) producer f =
 
   consume
      :: Connection
+     -> PollingInterval
      -> Schema
      -> TVar BoundaryTracker
      -> IO Void
-  consume conn schema trackerVar = Poll.connect trackerVar pc
+  consume conn interval schema trackerVar = Poll.connect trackerVar pc
     where
     pc = Poll.PollingConnector
        { Poll.c_getId = entryId
        , Poll.c_poll = run
-       , Poll.c_pollingInterval = _POLLING_INTERVAL
+       , Poll.c_pollingInterval = interval
        , Poll.c_maxTransactionTime = _MAX_TRANSACTION_TIME
        , Poll.c_producer = producer
        }

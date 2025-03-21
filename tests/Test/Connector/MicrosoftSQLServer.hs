@@ -22,6 +22,7 @@ import Test.Hspec
 
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
+import Ambar.Emulator.Connector.Poll (PollingInterval(..))
 import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServer(..))
 import Ambar.Record (Bytes(..))
 import Database.SQLServer as S
@@ -41,7 +42,7 @@ import Test.Util.SQL
   , group
   )
 
-import Util.Delay (deadline, seconds)
+import Util.Delay (deadline, seconds, millis)
 
 testMicrosoftSQLServer :: OnDemand MicrosoftSQLServerCreds -> Spec
 testMicrosoftSQLServer od = do
@@ -154,6 +155,7 @@ mkConnector ConnectionInfo{..} table = SQLServer
   , c_columns = tableCols table
   , c_partitioningColumn = "aggregate_id"
   , c_incrementingColumn = "id"
+  , c_pollingInterval = PollingInterval (millis 10)
   }
 
 instance Table (EventsTable SQLServer) where

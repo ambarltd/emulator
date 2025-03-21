@@ -9,6 +9,7 @@ module Ambar.Emulator.Connector.Poll
    , cleanup
    , Stream
    , streamed
+   , PollingInterval(..)
    ) where
 
 {-| General polling connector -}
@@ -16,8 +17,10 @@ module Ambar.Emulator.Connector.Poll
 import Control.Monad (foldM)
 import Control.Concurrent.STM (TVar, atomically, readTVarIO, modifyTVar)
 import Data.Aeson (ToJSON, FromJSON, FromJSONKey, ToJSONKey)
+import qualified Data.Aeson as Aeson
 import Data.Default (Default)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
+import Data.Time.Clock (nominalDiffTimeToSeconds, secondsToNominalDiffTime)
 import Data.Void (Void)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -38,11 +41,26 @@ newtype EntryId = EntryId Integer
 instance Pretty EntryId where
    pretty (EntryId n) = pretty n
 
+-- | Maximum interval between polling requests
+-- Encoded and decoded as seconds in JSON
+newtype PollingInterval = PollingInterval Duration
+   deriving (Show)
+   deriving newtype (Eq)
+
+instance FromJSON PollingInterval where
+  parseJSON value = parse <$> Aeson.parseJSON value
+    where
+    parse = PollingInterval . fromDiffTime . secondsToNominalDiffTime
+
+instance ToJSON PollingInterval where
+  toJSON (PollingInterval duration) =
+    Aeson.toJSON $ nominalDiffTimeToSeconds $ toDiffTime duration
+
 data PollingConnector entry = PollingConnector
    { c_getId :: entry -> EntryId
    , c_poll :: Boundaries -> Stream entry
       -- ^ run query, optionally streaming results.
-   , c_pollingInterval :: Duration
+   , c_pollingInterval :: PollingInterval
    , c_maxTransactionTime :: Duration
    , c_producer :: Topic.Producer entry
    }
@@ -56,7 +74,7 @@ streamed act acc f = do
    foldM f acc xs
 
 connect :: TVar BoundaryTracker -> PollingConnector entry -> IO Void
-connect trackerVar (PollingConnector getId poll interval maxTransTime producer) = do
+connect trackerVar (PollingConnector getId poll (PollingInterval interval) maxTransTime producer) = do
    loop
    where
    diff = toDiffTime maxTransTime

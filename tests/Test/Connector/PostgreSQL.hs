@@ -39,6 +39,7 @@ import System.Process (readProcessWithExitCode)
 
 import qualified Ambar.Emulator.Connector as Connector
 import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
+import Ambar.Emulator.Connector.Poll (PollingInterval(..))
 import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Record (Bytes(..))
@@ -47,7 +48,7 @@ import Util.OnDemand (OnDemand)
 import Test.Util.SQL
 import qualified Util.OnDemand as OnDemand
 
-import Util.Delay (deadline, seconds, delay)
+import Util.Delay (deadline, seconds, delay, millis)
 
 testPostgreSQL :: OnDemand PostgresCreds -> Spec
 testPostgreSQL p = do
@@ -260,6 +261,7 @@ mkPostgreSQL PostgresCreds{..} table = PostgreSQL
   , c_columns = tableCols table
   , c_partitioningColumn = "aggregate_id"
   , c_serialColumn = "id"
+  , c_pollingInterval = PollingInterval (millis 10)
   }
 
 data PostgresCreds = PostgresCreds

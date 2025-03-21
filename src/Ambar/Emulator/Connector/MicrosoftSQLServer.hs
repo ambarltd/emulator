@@ -41,19 +41,16 @@ import qualified Database.Tds.Message as Tds
 import qualified Database.SQLServer as M
 
 import qualified Ambar.Emulator.Connector as C
-import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..))
+import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), PollingInterval)
 import qualified Ambar.Emulator.Connector.Poll as Poll
 import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
 import Ambar.Record (Record(..), Value(..), Type(..), Bytes(..), TimeStamp(..))
 import qualified Ambar.Record.Encoding as Encoding
 
-import Util.Delay (Duration, millis, seconds)
+import Util.Delay (Duration, seconds)
 import Util.Async (withAsyncThrow)
 import Util.Logger (SimpleLogger, logDebug, logInfo)
 import Util.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
-
-_POLLING_INTERVAL :: Duration
-_POLLING_INTERVAL = millis 50
 
 _MAX_TRANSACTION_TIME :: Duration
 _MAX_TRANSACTION_TIME = seconds 120
@@ -68,6 +65,7 @@ data SQLServer = SQLServer
   , c_columns :: [Text]
   , c_partitioningColumn :: Text
   , c_incrementingColumn :: Text
+  , c_pollingInterval :: PollingInterval
   }
 
 newtype SQLServerState = SQLServerState BoundaryTracker
@@ -99,7 +97,7 @@ connect config@SQLServer{..} logger (SQLServerState tracker) producer f =
   validate config schema
   trackerVar <- newTVarIO tracker
   let readState = SQLServerState <$> readTVar trackerVar
-  withAsyncThrow (consume conn schema trackerVar) (f readState)
+  withAsyncThrow (consume conn c_pollingInterval schema trackerVar) (f readState)
   where
   cinfo = ConnectionInfo
     { conn_host = c_host
@@ -111,15 +109,16 @@ connect config@SQLServer{..} logger (SQLServerState tracker) producer f =
 
   consume
      :: Connection
+     -> PollingInterval
      -> Schema
      -> TVar BoundaryTracker
      -> IO Void
-  consume conn schema trackerVar = Poll.connect trackerVar pc
+  consume conn interval schema trackerVar = Poll.connect trackerVar pc
     where
     pc = Poll.PollingConnector
        { Poll.c_getId = entryId
        , Poll.c_poll = \bs -> Poll.streamed (run bs)
-       , Poll.c_pollingInterval = _POLLING_INTERVAL
+       , Poll.c_pollingInterval = interval
        , Poll.c_maxTransactionTime = _MAX_TRANSACTION_TIME
        , Poll.c_producer = producer
        }
