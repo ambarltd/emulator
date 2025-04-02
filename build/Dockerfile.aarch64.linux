@@ -66,7 +66,7 @@ COPY ./benchmarks   /opt/emulator/benchmarks
 RUN cabal build \
     --enable-executable-static \
     --ghc-options='-optl-lpq -optl-lssl -optl-lcrypto -optl-lpgcommon -optl-lpgport -optl-lzstd -optl-llz4 -optl-lxml2 -optl-lssl -optl-lcrypto -optl-lz -optl-lreadline -optl-lm' \
-    emulator
+    exe:emulator
 
 # Add executable to PATH as 'emulator'
 RUN ln -s $(cabal list-bin emulator) /usr/local/bin/emulator
