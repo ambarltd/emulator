@@ -77,3 +77,6 @@ testPollingConnector = describe "Poll" $
 
     it "compact doesn't remove ranges ending higher than time given" $ do
       (boundaries . compact 2 . bs) [1 ,2, 5, 3] `shouldBe` Boundaries [(1,3), (5,5)]
+
+    it "can compact empty boundaries" $ do
+      (boundaries . compact 2 . bs) [] `shouldBe` Boundaries []

@@ -18,11 +18,12 @@ import Control.Monad (foldM)
 import Control.Concurrent.STM (TVar, atomically, readTVarIO, modifyTVar)
 import Data.Aeson (ToJSON, FromJSON, FromJSONKey, ToJSONKey, toJSON)
 import Data.Default (Default(..))
+import Data.List (maximumBy)
 import qualified Data.Aeson as Aeson
+import Data.Ord (comparing)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import Data.Time.Clock (nominalDiffTimeToSeconds, secondsToNominalDiffTime)
 import Data.Void (Void)
-import Data.Maybe (fromMaybe)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
@@ -91,18 +92,10 @@ connect trackerVar (PollingConnector getId poll (PollingInterval interval) maxTr
       loop
 
 -- | Boundary tracker for enumerable ids. Takes advantage of ranges.
-data BoundaryTracker
-  = EmptyTracker
-  | BoundaryTracker
-     { b_lowest   :: EntryId -- ^ the lowest entry we ever saw
-     , b_baseline :: Maybe EntryId -- ^ we only care about ids higher than this
-     , b_ranges :: Map EntryId Range -- ^ Map by range's low Id
-     }
+newtype BoundaryTracker = BoundaryTracker (Map EntryId Range) -- ^ Map by range's low Id
      deriving (Generic, Show)
+     deriving newtype (Default)
      deriving anyclass (FromJSON, ToJSON)
-
-instance Default BoundaryTracker where
-  def = EmptyTracker
 
 data Range = Range
    { _r_low :: EntryId
@@ -113,30 +106,23 @@ data Range = Range
    deriving anyclass (FromJSON, ToJSON)
 
 mark :: POSIXTime -> EntryId -> BoundaryTracker -> BoundaryTracker
-mark time el EmptyTracker =
-  BoundaryTracker el Nothing (Map.singleton el (Range el el time))
-mark time el (BoundaryTracker lowest baseline m) =
-  if el < fromMaybe el baseline
-  then BoundaryTracker (min lowest el) baseline m
-  else BoundaryTracker (min lowest el) baseline rangeMap
+mark time el (BoundaryTracker m) = BoundaryTracker $
+  case Map.lookupLE el m of
+    Nothing -> checkAbove
+    Just (_, Range low high _)
+        -- already in range
+        | el <= high -> m
+        | el == succ high ->
+           case Map.lookup (succ el) m of
+              Just (Range _ h t) ->
+                 -- join ranges
+                 Map.insert low (Range low h t) $
+                 Map.delete (succ el) m
+              Nothing ->
+                 -- extend range upwards
+                 Map.insert low (Range low el time) m
+        | otherwise -> checkAbove
   where
-  rangeMap =
-      case Map.lookupLE el m of
-        Nothing -> checkAbove
-        Just (_, Range low high _)
-            -- already in range
-            | el <= high -> m
-            | el == succ high ->
-               case Map.lookup (succ el) m of
-                  Just (Range _ h t) ->
-                     -- join ranges
-                     Map.insert low (Range low h t) $
-                     Map.delete (succ el) m
-                  Nothing ->
-                     -- extend range upwards
-                     Map.insert low (Range low el time) m
-            | otherwise -> checkAbove
-
   checkAbove =
      case Map.lookupGT el m of
         Nothing ->
@@ -152,36 +138,23 @@ mark time el (BoundaryTracker lowest baseline m) =
              Map.insert el (Range el el time) m
 
 boundaries :: BoundaryTracker -> Boundaries
-boundaries EmptyTracker = Boundaries []
-boundaries (BoundaryTracker lowest baseline m) = Boundaries $
-  case [(l, h) | Range l h _ <- Map.elems m] of
-    [] ->
-      case baseline of
-        Nothing -> [(lowest, lowest)]
-        Just b -> [(lowest, b)]
-    (low, high) : xs ->
-      case baseline of
-        Nothing -> (lowest, high) : xs
-        Just b
-          | low <= succ b -> (lowest, high) : xs
-          | otherwise -> (lowest, b) : (low, high) : xs
+boundaries (BoundaryTracker m) =
+  Boundaries [(l, h) | Range l h _ <- Map.elems m]
 
 -- | To avoid having our list of ranges grow indefinitely, we will
 -- clean it up by ignoring all range gaps below some safe time boundary.
 compact :: POSIXTime -> BoundaryTracker -> BoundaryTracker
-compact _ EmptyTracker = EmptyTracker
-compact bound (BoundaryTracker lowest baseline m) =
-  BoundaryTracker lowest newBaseline (Map.fromList over)
+compact bound (BoundaryTracker m) =
+  if Map.null m
+  then BoundaryTracker m
+  else BoundaryTracker $ Map.fromList $ base : over
   where
   -- split between ranges where the high's value was collected under or over the time boundary.
   (under, over) = span (\(_, range) -> r_highTime range <= bound) $ Map.toList m
 
-  newBaseline =
-    if null under
-    then baseline
-    else
-      let maxUnder = maximum $ fmap (r_high . snd) under in
-      case baseline of
-        Nothing -> Just maxUnder
-        Just b -> Just $ max b maxUnder
-
+  base = (lowest, Range lowest baseline basetime)
+  lowest = minimum $ [low | Range low _ _ <- Map.elems m]
+  (baseline, basetime) =
+    case under of
+      [] -> (lowest, bound)
+      xs -> maximumBy (comparing fst) [ (high, htime) | (_, Range _ high htime) <- xs ]
