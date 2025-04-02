@@ -10,13 +10,14 @@ import Test.Hspec
   , describe
   , shouldBe
   )
-import Ambar.Emulator.Connector.Poll (Boundaries(..), mark, boundaries, cleanup)
+import Ambar.Emulator.Connector.Poll (Boundaries(..), mark, boundaries, compact)
 import Test.Connector.File (testFileConnector)
 import Test.Connector.PostgreSQL (PostgresCreds, testPostgreSQL, withPostgreSQL)
 import Test.Connector.MySQL (MySQLCreds, testMySQL, withMySQL)
 import Test.Connector.MicrosoftSQLServer (MicrosoftSQLServerCreds, testMicrosoftSQLServer, withMicrosoftSQLServer)
 import Util.OnDemand (OnDemand)
 import qualified Util.OnDemand as OnDemand
+import Data.Default
 
 -- | Info to connect to known databases.
 data Databases = Databases
@@ -43,9 +44,9 @@ testConnectors (Databases pcreds mcreds screds) = do
 testPollingConnector :: Spec
 testPollingConnector = describe "Poll" $
   describe "rangeTracker" $ do
-    let bs xs = foldr (uncurry mark) mempty $ reverse $ zip [0, 1..] xs
+    let bs xs = foldr (uncurry mark) def $ reverse $ zip [0, 1..] xs
     it "one id" $ do
-      boundaries (mark 1 1 mempty) `shouldBe` Boundaries [(1,1)]
+      boundaries (mark 1 1 def) `shouldBe` Boundaries [(1,1)]
 
     it "disjoint ranges" $ do
       (boundaries . bs) [1, 3] `shouldBe` Boundaries [(1,1), (3,3)]
@@ -71,8 +72,8 @@ testPollingConnector = describe "Poll" $
     it "tracks multiple ranges" $ do
       (boundaries . bs) [10, 1,5,3,2,4] `shouldBe` Boundaries [(1,5), (10,10)]
 
-    it "cleanup removes ranges with ending lower than time given" $ do
-      (boundaries . cleanup 2 . bs) [1 ,3, 5, 7] `shouldBe` Boundaries [(5,5), (7,7)]
+    it "compact removes ranges with ending lower than time given" $ do
+      (boundaries . compact 2 . bs) [1, 5, 3, 7] `shouldBe` Boundaries [(1,5), (7,7)]
 
-    it "cleanup doesn't remove ranges ending higher than time given" $ do
-      (boundaries . cleanup 2 . bs) [1 ,2, 5, 3] `shouldBe` Boundaries [(1,3), (5,5)]
+    it "compact doesn't remove ranges ending higher than time given" $ do
+      (boundaries . compact 2 . bs) [1 ,2, 5, 3] `shouldBe` Boundaries [(1,3), (5,5)]
