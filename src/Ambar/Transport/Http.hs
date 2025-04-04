@@ -48,9 +48,13 @@ new (Endpoint url) (User user) (Password pass) = do
         Just err -> prettyHttpError err
         Nothing -> Text.pack $ show ex
     Right req -> do
-      manager <- Http.newTlsManager
+      manager <- Http.newTlsManagerWith settings
       let base = Http.applyBasicAuth (Text.encodeUtf8 user) (Text.encodeUtf8 pass) req
       return $ HttpTransport base manager
+    where
+    settings = Http.tlsManagerSettings
+      { Http.managerResponseTimeout = oneMinute }
+    oneMinute = Http.responseTimeoutMicro $ 60 * 1_000_000
 
 instance Transport HttpTransport where
   send (HttpTransport base manager) bs = do
