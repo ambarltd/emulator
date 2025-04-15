@@ -257,7 +257,7 @@ parserTimeStamp = parser
       Just bs -> do
         let txt = Text.decodeUtf8 bs
         localTime <- P.fromField field mbs
-        return $ TimeStamp txt (localTimeToUTC utc localTime)
+        return $ TimeStamp txt $ Just $ localTimeToUTC utc localTime
 
 entryId :: Record -> EntryId
 entryId record = case serialValue record of

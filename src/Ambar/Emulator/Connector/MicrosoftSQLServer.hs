@@ -331,10 +331,10 @@ mkParser cols (Schema schema) = do
 
     Tds.TIDateTime4 -> do
       utc <- fieldParser
-      return $ DateTime $ TimeStamp (Text.pack $ iso8601Show utc) utc
+      return $ DateTime $ TimeStamp (Text.pack $ iso8601Show utc) (Just utc)
     Tds.TIDateTime8 -> do
       utc <- fieldParser
-      return $ DateTime $ TimeStamp (Text.pack $ iso8601Show utc) utc
+      return $ DateTime $ TimeStamp (Text.pack $ iso8601Show utc) (Just utc)
     Tds.TIDateTimeN4 -> parseDateTime
     Tds.TIDateTimeN8 -> parseDateTime
     where
