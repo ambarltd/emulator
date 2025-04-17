@@ -203,8 +203,7 @@ inventoryRelease (Store path) = do
   let lock = path </> "inventory.lock"
   removeFile lock
 
-getInfo :: Queue -> IO (HashMap TopicName PartitionCount)
+getInfo :: Queue -> IO (HashMap TopicName TopicState)
 getInfo queue = do
   topics <- readMVar (q_topics queue)
-  return $ flip fmap topics $ \tdata ->
-    PartitionCount $ HashMap.size (d_partitions tdata)
+  traverse (T.getState . d_topic) topics
