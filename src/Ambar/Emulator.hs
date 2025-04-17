@@ -21,6 +21,7 @@ import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServerState)
 import Ambar.Emulator.Connector.MySQL (MySQLState)
 import Ambar.Emulator.Connector.Postgres (PostgreSQLState)
 
+import qualified Ambar.Emulator.Server as Server
 import qualified Ambar.Emulator.Projector as Projector
 import Ambar.Emulator.Projector (Projection(..))
 import qualified Ambar.Transport.File as FileTransport
@@ -37,6 +38,7 @@ import Ambar.Emulator.Config
   , DataDestination(..)
   , Destination(..)
   )
+import Util.Async (withAsyncThrow)
 import Util.Delay (every, seconds)
 import Util.Directory (writeAtomically)
 import Util.Logger (SimpleLogger, annotate, logInfo, logDebugAction)
@@ -46,6 +48,7 @@ import Util.STM (atomicallyNamed)
 emulate :: SimpleLogger -> EmulatorConfig -> EnvironmentConfig -> IO ()
 emulate logger_ config env = do
   Queue.withQueue queuePath pcount $ \queue ->
+    withAsyncThrow (Server.run (Server.Port 8080) queue) $
     concurrently_ (connectAll queue) (projectAll queue)
   where
   queuePath = c_dataPath config </> "queues"

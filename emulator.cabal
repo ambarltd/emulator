@@ -54,6 +54,7 @@ library
         Ambar.Emulator.Queue.Partition
         Ambar.Emulator.Queue.Partition.File
         Ambar.Emulator.Queue.Partition.STMReader
+        Ambar.Emulator.Server
         Ambar.Transport
         Ambar.Transport.Http
         Ambar.Transport.File
@@ -95,6 +96,8 @@ library
         , time
         , unordered-containers
         , yaml
+        , warp
+        , wai
 
 test-suite emulator-tests
     import: common

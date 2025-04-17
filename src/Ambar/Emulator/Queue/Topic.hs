@@ -489,6 +489,7 @@ commit (Consumer cid _ var) (Meta pnumber offset) =
     STM.modifyTVar (r_committed r) $ \previous -> max previous (offset + 1)
 
 newtype PartitionCount = PartitionCount Int
+  deriving newtype (ToJSON)
 
 partitionCount :: Topic -> PartitionCount
 partitionCount topic = PartitionCount $ HashMap.size (t_partitions topic)
