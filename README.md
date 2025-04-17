@@ -114,6 +114,10 @@ data_destinations:
       - file_source
 ```
 
+## Projections info
+
+The emulator starts a server that provides information about projections progress on the `/projections` endpoint.
+
 ## Running the program
 
 You only need to provide the address of the configuration file and the emulator
@@ -128,6 +132,8 @@ will start streaming your data.
 You can see all commands available with the `--help` flag
 
 ``` bash
+$ emulator --help
+
 Ambar Emulator v0.0.1 - alpha release
 
   A local version of Ambar <https://ambar.cloud>
@@ -143,4 +149,31 @@ Available commands:
   run                      run the emulator
 
 More info at <https://github.com/ambarltd/emulator>
+```
+
+And these are the options for the `run` command.
+
+```
+$ emulator run --help
+
+Usage: emulator run [--partitions-per-topic INT] [--port INT]
+                    [--override-polling-interval SECONDS] [--data-path PATH]
+                    --config FILE [--verbose]
+
+  run the emulator
+
+Available options:
+  -h,--help                Show this help text
+  --partitions-per-topic INT
+                           How many partitions should newly created topics have.
+  --port INT               Port to attach projections info server to.
+                           (default: 8080)
+  --override-polling-interval SECONDS
+                           Override the polling interval for all polled data
+                           sources.
+  --data-path PATH         Where to put emulation data including file queues.
+                           Defaults to $XDG_DATA_HOME/ambar-emulator.
+  --config FILE            Yaml file with environment configuration. Spec at at
+                           <https://github.com/ambarltd/emulator>.
+  --verbose                Enable verbose logging.
 ```
