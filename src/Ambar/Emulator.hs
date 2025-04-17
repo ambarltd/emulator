@@ -186,7 +186,7 @@ toConnectorConfig source sstate =
       "Incompatible state for source: " <> show (s_id source)
 
 topicName :: Id DataSource -> TopicName
-topicName sid = TopicName $ "t-" <> unId sid
+topicName sid = TopicName $ unId sid
 
 projectionId :: Id DataDestination -> Id Projection
-projectionId (Id dst) = Id ("p-" <> dst)
+projectionId (Id dst) = Id dst
