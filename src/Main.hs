@@ -16,7 +16,7 @@ import System.Posix.Signals (installHandler, sigINT, sigTERM, Handler(Catch))
 #endif
 
 import Ambar.Emulator (emulate)
-import Ambar.Emulator.Config (parseEnvConfigFile, EmulatorConfig(..))
+import Ambar.Emulator.Config (parseEnvConfigFile, EmulatorConfig(..), Port(..))
 import Ambar.Emulator.Connector.Poll (PollingInterval(..))
 import Util.Logger (plainLogger, Severity(..), logInfo)
 import Util.Delay (fromDiffTime)
@@ -24,6 +24,9 @@ import Util.Delay (fromDiffTime)
 
 _DEFAULT_PARTITIONS_PER_TOPIC :: Int
 _DEFAULT_PARTITIONS_PER_TOPIC = 10
+
+_DEFAULT_PORT :: Port
+_DEFAULT_PORT = Port 8080
 
 -- | Version of the binary file
 _VERSION :: String
@@ -44,6 +47,7 @@ main = do
       queue <- maybe defaultStatePath return o_statePath
       let config = EmulatorConfig
             { c_partitionsPerTopic = fromMaybe _DEFAULT_PARTITIONS_PER_TOPIC o_partitionsPerTopic
+            , c_port = o_port
             , c_dataPath = queue
             }
 
@@ -75,6 +79,7 @@ data Command
     , o_statePath :: Maybe FilePath
     , o_configPath :: FilePath
     , o_verbose :: Bool
+    , o_port :: Port
     , o_overridePollingInterval :: Maybe PollingInterval
     }
   | CmdVersion
@@ -106,6 +111,13 @@ cliOptions = O.info (O.simpleVersioner _VERSION <*> O.helper <*> parser) $ mconc
           [ O.long "partitions-per-topic"
           , O.metavar "INT"
           , O.help "How many partitions should newly created topics have."
+          ]
+      o_port <- fmap Port $ O.option O.auto $ mconcat
+          [ O.long "port"
+          , O.metavar "INT"
+          , O.help "Port to attach projections info server to."
+          , O.value 8080
+          , O.showDefault
           ]
       o_overridePollingInterval <-
         fmap (fmap $ PollingInterval . fromDiffTime . realToFrac @Double) $ optional $ O.option O.auto $ mconcat

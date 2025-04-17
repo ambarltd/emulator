@@ -48,12 +48,15 @@ import Util.STM (atomicallyNamed)
 emulate :: SimpleLogger -> EmulatorConfig -> EnvironmentConfig -> IO ()
 emulate logger_ config env = do
   Queue.withQueue queuePath pcount $ \queue ->
-    withAsyncThrow (Server.run (Server.Port 8080) queue) $
+    withServer queue $
     concurrently_ (connectAll queue) (projectAll queue)
   where
   queuePath = c_dataPath config </> "queues"
   statePath = c_dataPath config </> "state.json"
   pcount = Topic.PartitionCount $ c_partitionsPerTopic config
+
+  withServer queue act =
+    withAsyncThrow (Server.run (c_port config) queue) act
 
   connectAll queue = do
     EmulatorState connectorStates <- load

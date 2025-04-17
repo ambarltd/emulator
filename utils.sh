@@ -35,7 +35,7 @@ function typecheck {
 function typecheck-executable {
   # Start fast type-checking of the executable. (Just Main.hs)
   # Watches your files and type-checks on save
-  ghcid -c 'cabal v2-repl' emulator "${@}"
+  ghcid -c 'cabal v2-repl' exe:emulator "${@}"
 }
 
 function typecheck-tests {
