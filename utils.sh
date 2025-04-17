@@ -17,7 +17,7 @@ function bench {
 }
 
 function build-docker {
-  docker build --file "./build/Dockerfile.aarch64.linux" -t emulator .
+  docker build --file "./build/Dockerfile.static" -t emulator .
 }
 
 # Save results of benchmarking
