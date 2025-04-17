@@ -5,12 +5,15 @@ module Ambar.Emulator.Server
 
 import Data.Aeson (encode)
 import Data.Void (Void)
+import Data.HashMap.Strict (HashMap)
 import qualified Network.Wai.Handler.Warp as Warp
 import Network.Wai (Application, Response, responseLBS, rawPathInfo)
 import Network.HTTP.Types (status200, status404, hContentType)
 import System.IO (hPutStrLn, stderr)
 
-import Ambar.Emulator.Queue (Queue, getInfo)
+import Ambar.Emulator.Queue (Queue, TopicName, getInfo)
+import Ambar.Emulator.Queue.Topic (ConsumerGroupName, PartitionNumber, TopicState(..))
+import Ambar.Emulator.Queue.Partition (Offset)
 
 newtype Port = Port Int
     deriving (Show, Eq, Read)
@@ -37,4 +40,8 @@ pageNotFound = responseLBS
 projections :: Queue -> IO Response
 projections queue = do
   info <- getInfo queue
-  return $ responseLBS status200 [(hContentType, "application/json")] (encode info)
+  let topics :: HashMap TopicName (
+                  HashMap ConsumerGroupName (
+                    HashMap PartitionNumber Offset))
+      topics = fmap s_consumers info
+  return $ responseLBS status200 [(hContentType, "application/json")] (encode topics)
