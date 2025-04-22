@@ -44,7 +44,7 @@ newtype Id a = Id { unId :: Text }
 -- | Configures the internals of the emulator
 data EmulatorConfig = EmulatorConfig
   { c_partitionsPerTopic :: Int
-  , c_port :: Port
+  , c_port :: Maybe Port
   , c_dataPath :: FilePath
   }
 

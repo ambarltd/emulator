@@ -79,7 +79,7 @@ data Command
     , o_statePath :: Maybe FilePath
     , o_configPath :: FilePath
     , o_verbose :: Bool
-    , o_port :: Port
+    , o_port :: Maybe Port
     , o_overridePollingInterval :: Maybe PollingInterval
     }
   | CmdVersion
@@ -112,12 +112,10 @@ cliOptions = O.info (O.simpleVersioner _VERSION <*> O.helper <*> parser) $ mconc
           , O.metavar "INT"
           , O.help "How many partitions should newly created topics have."
           ]
-      o_port <- fmap Port $ O.option O.auto $ mconcat
+      o_port <- fmap (fmap Port) $ optional $ O.option O.auto $ mconcat
           [ O.long "port"
           , O.metavar "INT"
           , O.help "Port to attach projections info server to."
-          , O.value 8080
-          , O.showDefault
           ]
       o_overridePollingInterval <-
         fmap (fmap $ PollingInterval . fromDiffTime . realToFrac @Double) $ optional $ O.option O.auto $ mconcat

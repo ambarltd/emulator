@@ -56,7 +56,9 @@ emulate logger_ config env = do
   pcount = Topic.PartitionCount $ c_partitionsPerTopic config
 
   withServer queue act =
-    withAsyncThrow (Server.run (c_port config) queue) act
+    case c_port config of
+      Nothing -> act
+      Just port -> withAsyncThrow (Server.run port queue) act
 
   connectAll queue = do
     EmulatorState connectorStates <- load

@@ -167,7 +167,6 @@ Available options:
   --partitions-per-topic INT
                            How many partitions should newly created topics have.
   --port INT               Port to attach projections info server to.
-                           (default: 8080)
   --override-polling-interval SECONDS
                            Override the polling interval for all polled data
                            sources.
