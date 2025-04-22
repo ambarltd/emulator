@@ -24,6 +24,7 @@ RUN apk add perl
 RUN apk add pkgconfig
 RUN apk add tar
 RUN apk add xz
+RUN apk add bash
 
 RUN curl --proto '=https' --tlsv1.3 -sSf https://get-ghcup.haskell.org | \
     BOOTSTRAP_HASKELL_NONINTERACTIVE=1 \

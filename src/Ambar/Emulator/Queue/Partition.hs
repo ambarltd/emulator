@@ -25,7 +25,7 @@ newtype Offset = Offset { unOffset :: Int }
 -- The total number of records in a partition.
 newtype Count = Count Int
   deriving (Show)
-  deriving newtype (Eq, Ord, Enum, Integral, Real, Num)
+  deriving newtype (Eq, Ord, Enum, Integral, Real, Num, ToJSON)
 
 newtype Record = Record { unRecord :: ByteString }
   deriving newtype (Eq, Ord, Show)
