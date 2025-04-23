@@ -21,6 +21,7 @@ import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServerState)
 import Ambar.Emulator.Connector.MySQL (MySQLState)
 import Ambar.Emulator.Connector.Postgres (PostgreSQLState)
 
+import qualified Ambar.Emulator.Server as Server
 import qualified Ambar.Emulator.Projector as Projector
 import Ambar.Emulator.Projector (Projection(..))
 import qualified Ambar.Transport.File as FileTransport
@@ -37,6 +38,7 @@ import Ambar.Emulator.Config
   , DataDestination(..)
   , Destination(..)
   )
+import Util.Async (withAsyncThrow)
 import Util.Delay (every, seconds)
 import Util.Directory (writeAtomically)
 import Util.Logger (SimpleLogger, annotate, logInfo, logDebugAction)
@@ -46,11 +48,17 @@ import Util.STM (atomicallyNamed)
 emulate :: SimpleLogger -> EmulatorConfig -> EnvironmentConfig -> IO ()
 emulate logger_ config env = do
   Queue.withQueue queuePath pcount $ \queue ->
+    withServer queue $
     concurrently_ (connectAll queue) (projectAll queue)
   where
   queuePath = c_dataPath config </> "queues"
   statePath = c_dataPath config </> "state.json"
   pcount = Topic.PartitionCount $ c_partitionsPerTopic config
+
+  withServer queue act =
+    case c_port config of
+      Nothing -> act
+      Just port -> withAsyncThrow (Server.run port queue) act
 
   connectAll queue = do
     EmulatorState connectorStates <- load
@@ -180,7 +188,7 @@ toConnectorConfig source sstate =
       "Incompatible state for source: " <> show (s_id source)
 
 topicName :: Id DataSource -> TopicName
-topicName sid = TopicName $ "t-" <> unId sid
+topicName sid = TopicName $ unId sid
 
 projectionId :: Id DataDestination -> Id Projection
-projectionId (Id dst) = Id ("p-" <> dst)
+projectionId (Id dst) = Id dst

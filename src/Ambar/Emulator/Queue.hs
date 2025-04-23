@@ -31,8 +31,10 @@ import Ambar.Emulator.Queue.Topic
   , TopicState(..)
   , PartitionNumber(..)
   , PartitionCount(..)
+  , ConsumerGroupName
   )
 import qualified Ambar.Emulator.Queue.Topic as T
+import Ambar.Emulator.Queue.Partition (Count, Offset)
 import qualified Ambar.Emulator.Queue.Partition.File as FilePartition
 import Ambar.Emulator.Queue.Partition.File (FilePartition)
 import Util.Async (withAsyncThrow)
@@ -203,8 +205,18 @@ inventoryRelease (Store path) = do
   let lock = path </> "inventory.lock"
   removeFile lock
 
-getInfo :: Queue -> IO (HashMap TopicName PartitionCount)
+type QueueInfo =
+  HashMap TopicName
+    ( HashMap PartitionNumber Count
+    , HashMap ConsumerGroupName (HashMap PartitionNumber Offset)
+    )
+
+getInfo :: Queue -> IO QueueInfo
 getInfo queue = do
   topics <- readMVar (q_topics queue)
-  return $ flip fmap topics $ \tdata ->
-    PartitionCount $ HashMap.size (d_partitions tdata)
+  forM topics $ \(TopicData topic partitions) -> do
+    consumers <- T.s_consumers <$> T.getState topic
+    counts <- traverse FilePartition.getRecordCount partitions
+    return (counts, consumers)
+
+

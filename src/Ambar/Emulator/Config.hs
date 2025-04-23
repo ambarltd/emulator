@@ -8,6 +8,7 @@ module Ambar.Emulator.Config
   , Source(..)
   , DataDestination(..)
   , Destination(..)
+  , Port(..)
   )
   where
 
@@ -28,6 +29,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Yaml as Yaml
 
 import Ambar.Emulator.Connector.Poll (PollingInterval(..))
+import Ambar.Emulator.Server (Port(..))
 import Util.Delay (millis)
 import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServer(..))
 import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
@@ -42,6 +44,7 @@ newtype Id a = Id { unId :: Text }
 -- | Configures the internals of the emulator
 data EmulatorConfig = EmulatorConfig
   { c_partitionsPerTopic :: Int
+  , c_port :: Maybe Port
   , c_dataPath :: FilePath
   }
 

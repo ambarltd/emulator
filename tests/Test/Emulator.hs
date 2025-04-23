@@ -118,6 +118,7 @@ testEmulator p = describe "emulator" $ do
       f EmulatorConfig
         { c_partitionsPerTopic = 5
         , c_dataPath = path
+        , c_port = Nothing
         }
 
     withPostgresSource ::

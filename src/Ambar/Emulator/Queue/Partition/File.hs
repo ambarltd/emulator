@@ -10,6 +10,7 @@ module Ambar.Emulator.Queue.Partition.File
   , openNonLockingWritableFD
   , closeNonLockingWritableFD
   , writeFD
+  , getRecordCount
   ) where
 
 import Control.Concurrent (MVar, newMVar, withMVarMasked, modifyMVar_)
@@ -198,6 +199,11 @@ openNonLockingWritableFD path = do
 
 closeNonLockingWritableFD :: FD -> IO ()
 closeNonLockingWritableFD = FD.close
+
+getRecordCount :: FilePartition -> IO Count
+getRecordCount (FilePartition{..}) = do
+  (count, _) <- STM.readTVarIO p_info
+  return count
 
 -- A single-threaded file readed.
 -- If you use it from multiple threads you will have problems.
