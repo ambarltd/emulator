@@ -1,10 +1,11 @@
 module Ambar.Emulator.Connector.Postgres
   ( PostgreSQL(..)
-  , PostgreSQLState
+  , PostgreSQLState(..)
   ) where
 
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
 import Control.Exception (bracket, throwIO, ErrorCall(..))
+import Control.Monad (foldM)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
@@ -45,6 +46,9 @@ _POLLING_INTERVAL = millis 50
 
 _MAX_TRANSACTION_TIME :: Duration
 _MAX_TRANSACTION_TIME = seconds 120
+
+_MAX_BOUNDARY_BATCH_SIZE :: Int
+_MAX_BOUNDARY_BATCH_SIZE = 500
 
 
 data PostgreSQL = PostgreSQL
@@ -164,31 +168,53 @@ connect config@PostgreSQL{..} logger (PostgreSQLState tracker) producer f =
 
      run :: Boundaries -> Stream Record
      run (Boundaries bs) acc0 emit = do
-       logDebug logger query
-       (acc, count) <- P.foldWithOptionsAndParser opts parser conn (fromString query) () (acc0, 0) $
-         \(acc, !count) record -> do
-           logResult record
-           acc' <- emit acc record
-           return (acc', succ count)
-       logDebug logger $ "results: " <> show @Int count
-       return acc
+       let batches = chunksOf _MAX_BOUNDARY_BATCH_SIZE bs
+       (acc, mLastUpper) <- foldM
+         (\(acc, mLower) batch -> do
+           let upper = snd (lastElem batch)
+           acc' <- runBatch mLower (Just upper) batch acc
+           return (acc', Just upper)
+         ) (acc0, Nothing) batches
+       runBatch mLastUpper Nothing [] acc
        where
-       query = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
-          [ "SELECT" , commaSeparated $ map pretty $ columns config
-          , "FROM" , pretty c_table
-          , if null bs then "" else "WHERE" <> constraints
-          , "ORDER BY" , pretty c_serialColumn
-          ]
+       runBatch mLower mUpper batchBs acc = do
+         logDebug logger batchQuery
+         (acc', count) <- P.foldWithOptionsAndParser opts parser conn (fromString batchQuery) () (acc, 0) $
+           \(a, !count) record -> do
+             logResult record
+             a' <- emit a record
+             return (a', succ count)
+         logDebug logger $ "results: " <> show @Int count
+         return acc'
+         where
+         batchQuery = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
+            [ "SELECT" , commaSeparated $ map pretty $ columns config
+            , "FROM" , pretty c_table
+            , if null allConstraints then "" else "WHERE" <+> sepBy "AND" allConstraints
+            , "ORDER BY" , pretty c_serialColumn
+            ]
 
-       constraints = sepBy "AND"
-          [ Pretty.fillSep
-             [ "("
-             , pretty c_serialColumn, "<", pretty low
-             , "OR"
-             ,  pretty high, "<", pretty c_serialColumn
-             , ")"]
-          | (EntryId low, EntryId high) <- bs
-          ]
+         allConstraints = lowerBound ++ upperBound ++ exclusions
+
+         lowerBound = case mLower of
+           Nothing -> []
+           Just (EntryId low) ->
+             [Pretty.fillSep [pretty low, "<", pretty c_serialColumn]]
+
+         upperBound = case mUpper of
+           Nothing -> []
+           Just (EntryId high) ->
+             [Pretty.fillSep [pretty c_serialColumn, "<=", pretty high]]
+
+         exclusions =
+            [ Pretty.fillSep
+               [ "("
+               , pretty c_serialColumn, "<", pretty low
+               , "OR"
+               ,  pretty high, "<", pretty c_serialColumn
+               , ")"]
+            | (EntryId low, EntryId high) <- batchBs
+            ]
 
        logResult row =
         logInfo logger $ renderPretty $
@@ -196,6 +222,15 @@ connect config@PostgreSQL{..} logger (PostgreSQLState tracker) producer f =
             [ "serial_value:" <+> prettyJSON (serialValue row)
             , "partitioning_value:" <+> prettyJSON (partitioningValue row)
             ]
+
+       chunksOf :: Int -> [a] -> [[a]]
+       chunksOf _ [] = []
+       chunksOf n xs = let (chunk, rest) = splitAt n xs in chunk : chunksOf n rest
+
+       lastElem :: [a] -> a
+       lastElem [] = error "lastElem: empty list"
+       lastElem [x] = x
+       lastElem (_:xs) = lastElem xs
 
 -- | Columns in the order they will be queried.
 columns :: PostgreSQL -> [Text]

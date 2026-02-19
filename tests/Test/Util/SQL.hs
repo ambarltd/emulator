@@ -5,6 +5,7 @@ module Test.Util.SQL
   , testGenericSQL
   , mkTableName
   , withConnector
+  , withConnectorState
   , group
   , readEntry
 
@@ -178,6 +179,28 @@ withConnector od withConnection mkConfig conf partitions f =
       connected act = connect config logger def producer (const act) -- setup connector
   f conn table topic connected
 
+-- | Like 'withConnector' but accepts an explicit initial 'ConnectorState'.
+withConnectorState
+  :: (Table table, Connector connector)
+  => OnDemand db
+  -> (forall x. db -> (Connection table -> IO x) -> IO x)
+  -> (db -> table -> connector)
+  -> Config table
+  -> PartitionCount
+  -> ConnectorState connector
+  -> (Connection table -> table -> Topic -> (IO b -> IO b) -> IO a)
+  -> IO a
+withConnectorState od withConnection mkConfig conf partitions state f =
+  OnDemand.with od $ \db ->
+  withConnection db $ \conn ->
+  withTable conf conn $ \table ->
+  withFileTopic partitions $ \topic ->
+  Topic.withProducer topic partitioner encoder $ \producer -> do
+  let logger = plainLogger Warn
+      config = mkConfig db table
+      connected :: forall x. IO x -> IO x
+      connected act = connect config logger state producer (const act)
+  f conn table topic connected
 
 {-# NOINLINE tableNumber #-}
 tableNumber :: MVar Int
