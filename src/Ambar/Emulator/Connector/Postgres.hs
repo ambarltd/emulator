@@ -19,6 +19,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Lazy qualified as LB
 import Data.Default (Default (..))
 import Data.List ((\\))
+import Data.List.Extra (chunksOf)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
@@ -50,9 +51,6 @@ _MAX_TRANSACTION_TIME = seconds 120
 _MAX_BOUNDARY_BATCH_SIZE :: Int
 _MAX_BOUNDARY_BATCH_SIZE = 500
 
-_USE_FIX :: Bool
-_USE_FIX = True
-
 data PostgreSQL = PostgreSQL
   { c_host :: Text,
     c_port :: Word16,
@@ -72,7 +70,7 @@ instance C.Connector PostgreSQL where
 
   partitioner = hashPartitioner partitioningValue
 
-  -- \| A rows gets saved in the database as a JSON object with
+  -- | A rows gets saved in the database as a JSON object with
   -- the columns specified in the config file as keys.
   encoder = LB.toStrict . Aeson.encode . Encoding.encode @Aeson.Value
 
@@ -163,96 +161,45 @@ connect config@PostgreSQL {..} logger (PostgreSQLState tracker) producer f =
 
         parser = mkParser (columns config) schema
 
-        opts =
-          P.FoldOptions
-            { P.fetchQuantity = P.Automatic,
-              P.transactionMode =
-                P.TransactionMode
-                  { P.isolationLevel = P.ReadCommitted,
-                    P.readWriteMode = P.ReadOnly
-                  }
-            }
-
         run :: Boundaries -> Stream Record
         run (Boundaries bs) acc0 emit =
-          if _USE_FIX
-            then run_new (Boundaries bs) acc0 emit
-            else run_old (Boundaries bs) acc0 emit
-
-        run_old :: Boundaries -> Stream Record
-        run_old (Boundaries bs) acc0 emit = do
-          logDebug logger query
-          (acc, count) <- P.foldWithOptionsAndParser opts parser conn (fromString query) () (acc0, 0) $
-            \(acc, !count) record -> do
-              logResult record
-              acc' <- emit acc record
-              return (acc', succ count)
-          logDebug logger $ "results: " <> show @Int count
-          return acc
+          P.withTransactionMode txMode conn $ do
+            let batches = chunksOf _MAX_BOUNDARY_BATCH_SIZE bs
+            case batches of
+              [] ->
+                runBatch Nothing Nothing [] acc0
+              _ -> do
+                let initBatches = init batches
+                    lastBatch = last batches
+                (acc, mLastUpper) <-
+                  foldM
+                    ( \(acc, mLower) batch -> do
+                        let upper = snd (last batch)
+                        acc' <- runBatch mLower (Just upper) batch acc
+                        return (acc', Just upper)
+                    )
+                    (acc0, Nothing)
+                    initBatches
+                -- last batch has no upper bound
+                runBatch mLastUpper Nothing lastBatch acc
           where
-            query =
-              fromString $
-                Text.unpack $
-                  renderPretty $
-                    Pretty.fillSep
-                      [ "SELECT",
-                        commaSeparated $ map pretty $ columns config,
-                        "FROM",
-                        pretty c_table,
-                        if null bs then "" else "WHERE" <> constraints,
-                        "ORDER BY",
-                        pretty c_serialColumn
-                      ]
+            txMode =
+              P.TransactionMode
+                { P.isolationLevel = P.ReadCommitted,
+                  P.readWriteMode = P.ReadOnly
+                }
 
-            constraints =
-              sepBy
-                "AND"
-                [ Pretty.fillSep
-                    [ "(",
-                      pretty c_serialColumn,
-                      "<",
-                      pretty low,
-                      "OR",
-                      pretty high,
-                      "<",
-                      pretty c_serialColumn,
-                      ")"
-                    ]
-                | (EntryId low, EntryId high) <- bs
-                ]
-
-            logResult row =
-              logInfo logger $
-                renderPretty $
-                  "ingested."
-                    <+> commaSeparated
-                      [ "serial_value:" <+> prettyJSON (serialValue row),
-                        "partitioning_value:" <+> prettyJSON (partitioningValue row)
-                      ]
-
-        run_new :: Boundaries -> Stream Record
-        run_new (Boundaries bs) acc0 emit = do
-          let batches = chunksOf _MAX_BOUNDARY_BATCH_SIZE bs
-          (acc, mLastUpper) <-
-            foldM
-              ( \(acc, mLower) batch -> do
-                  let upper = snd (lastElem batch)
-                  acc' <- runBatch mLower (Just upper) batch acc
-                  return (acc', Just upper)
-              )
-              (acc0, Nothing)
-              batches
-          runBatch mLastUpper Nothing [] acc
-          where
             runBatch mLower mUpper batchBs acc = do
               logDebug logger batchQuery
-              (acc', count) <- P.foldWithOptionsAndParser opts parser conn (fromString batchQuery) () (acc, 0) $
-                \(a, !count) record -> do
-                  logResult record
-                  a' <- emit a record
-                  return (a', succ count)
-              logDebug logger $ "results: " <> show @Int count
-              return acc'
+              rows <- P.queryWith_ parser conn (fromString batchQuery)
+              logDebug logger $ "results: " <> show (length rows)
+              foldM
+                ( \a record -> do
+                    logResult record
+                    emit a record
+                )
+                acc
+                rows
               where
                 batchQuery =
                   fromString $
@@ -303,15 +250,6 @@ connect config@PostgreSQL {..} logger (PostgreSQLState tracker) producer f =
                       [ "serial_value:" <+> prettyJSON (serialValue row),
                         "partitioning_value:" <+> prettyJSON (partitioningValue row)
                       ]
-
-            chunksOf :: Int -> [a] -> [[a]]
-            chunksOf _ [] = []
-            chunksOf n xs = let (chunk, rest) = splitAt n xs in chunk : chunksOf n rest
-
-            lastElem :: [a] -> a
-            lastElem [] = error "lastElem: empty list"
-            lastElem [x] = x
-            lastElem (_ : xs) = lastElem xs
 
 -- | Columns in the order they will be queried.
 columns :: PostgreSQL -> [Text]

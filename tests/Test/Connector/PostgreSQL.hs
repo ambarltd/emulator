@@ -38,8 +38,8 @@ import System.Exit (ExitCode(..))
 import System.Process (readProcessWithExitCode)
 
 import qualified Ambar.Emulator.Connector as Connector
-import Ambar.Emulator.Connector.Postgres (PostgreSQL(..), PostgreSQLState(..))
-import Ambar.Emulator.Connector.Poll (PollingInterval(..), BoundaryTracker, mark)
+import Ambar.Emulator.Connector.Postgres (PostgreSQL(..))
+import Ambar.Emulator.Connector.Poll (PollingInterval(..))
 import Ambar.Emulator.Queue.Topic (Topic, PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Record (Bytes(..))
@@ -48,8 +48,6 @@ import Util.OnDemand (OnDemand)
 import Test.Util.SQL
 import qualified Util.OnDemand as OnDemand
 
-import Data.Default (def)
-import Data.Time.Clock.POSIX (getPOSIXTime)
 import Util.Delay (deadline, seconds, delay, millis)
 
 testPostgreSQL :: OnDemand PostgresCreds -> Spec
@@ -58,17 +56,17 @@ testPostgreSQL p = do
     testGenericSQL with
 
     it "handles large boundary lists" $ do
-      now <- getPOSIXTime
-      let tracker = foldl (\t i -> mark now (i * 2 + 1) t) (def :: BoundaryTracker) [0..4999]
-          state = PostgreSQLState tracker
-      withConnectorState @(EventsTable PostgreSQL) p withConnection mkPostgreSQL () (PartitionCount 1) state $
-        \conn table topic connected -> do
-        -- Insert a row that will have a serial id beyond the boundary range
-        insert conn table (take 2 $ head $ mocks table)
+      with (PartitionCount 1) $ \conn table topic connected -> do
+        void $ P.execute_ conn
+          (fromString $ "ALTER SEQUENCE " <> tableName table <> "_id_seq INCREMENT BY 2")
+        let n = 10000
+        insert conn table (take n $ head $ mocks table)
         connected $
-          deadline (seconds 5) $
+          deadline (seconds 10) $
           Topic.withConsumer topic group $ \consumer -> do
-          void $ readEntry @Event consumer
+            forM_ [1..n] $ \_ -> void $ readEntry @Event consumer
+            insert conn table [head (mocks table !! 1)]
+            void $ readEntry @Event consumer
 
     -- Test that column types are supported/unsupported by
     -- creating database entries with the value and reporting
