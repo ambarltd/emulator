@@ -1,46 +1,46 @@
 module Ambar.Emulator.Connector.Postgres
-  ( PostgreSQL (..),
-    PostgreSQLState (..),
-  )
-where
+  ( PostgreSQL(..)
+  , PostgreSQLState
+  ) where
 
-import Ambar.Emulator.Connector qualified as C
-import Ambar.Emulator.Connector.Poll (Boundaries (..), BoundaryTracker, EntryId (..), PollingInterval, Stream)
-import Ambar.Emulator.Connector.Poll qualified as Poll
-import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
-import Ambar.Record (Bytes (..), Record (..), TimeStamp (..), Value (..))
-import Ambar.Record.Encoding qualified as Encoding
 import Control.Concurrent.STM (STM, TVar, newTVarIO, readTVar)
-import Control.Exception (ErrorCall (..), bracket, throwIO)
+import Control.Exception (bracket, throwIO, ErrorCall(..))
 import Control.Monad (foldM)
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Aeson qualified as Aeson
+import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
-import Data.ByteString.Lazy qualified as LB
-import Data.Default (Default (..))
+import qualified Data.ByteString.Lazy as LB
+import Data.Default (Default(..))
 import Data.List ((\\))
 import Data.List.Extra (chunksOf)
 import Data.Map.Strict (Map)
-import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
+import qualified Data.Map.Strict as Map
 import Data.String (fromString)
-import Data.Text (Text)
-import Data.Text qualified as Text
-import Data.Text.Encoding qualified as Text (decodeUtf8)
 import Data.Time.LocalTime (localTimeToUTC, utc)
+import Data.Text (Text)
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text (decodeUtf8)
 import Data.Void (Void)
 import Data.Word (Word16)
-import Database.PostgreSQL.Simple qualified as P
-import Database.PostgreSQL.Simple.FromField qualified as P
-import Database.PostgreSQL.Simple.FromRow qualified as P
-import Database.PostgreSQL.Simple.Transaction qualified as P
+import qualified Database.PostgreSQL.Simple as P
+import qualified Database.PostgreSQL.Simple.Transaction as P
+import qualified Database.PostgreSQL.Simple.FromField as P
+import qualified Database.PostgreSQL.Simple.FromRow as P
 import GHC.Generics (Generic)
+import Util.Prettyprinter (renderPretty, sepBy, commaSeparated, prettyJSON)
 import Prettyprinter (pretty, (<+>))
-import Prettyprinter qualified as Pretty
+import qualified Prettyprinter as Pretty
+
+import qualified Ambar.Emulator.Connector.Poll as Poll
+import qualified Ambar.Emulator.Connector as C
+import Ambar.Emulator.Connector.Poll (BoundaryTracker, Boundaries(..), EntryId(..), Stream, PollingInterval)
+import Ambar.Emulator.Queue.Topic (Producer, hashPartitioner)
+import Ambar.Record (Record(..), Value(..), Bytes(..), TimeStamp(..))
+import qualified Ambar.Record.Encoding as Encoding
 import Util.Async (withAsyncThrow)
 import Util.Delay (Duration, millis, seconds)
 import Util.Logger (SimpleLogger, logDebug, logInfo)
-import Util.Prettyprinter (commaSeparated, prettyJSON, renderPretty, sepBy)
 
 _POLLING_INTERVAL :: Duration
 _POLLING_INTERVAL = millis 50
@@ -52,16 +52,16 @@ _MAX_BOUNDARY_BATCH_SIZE :: Int
 _MAX_BOUNDARY_BATCH_SIZE = 500
 
 data PostgreSQL = PostgreSQL
-  { c_host :: Text,
-    c_port :: Word16,
-    c_username :: Text,
-    c_password :: Text,
-    c_database :: Text,
-    c_table :: Text,
-    c_columns :: [Text],
-    c_partitioningColumn :: Text,
-    c_serialColumn :: Text,
-    c_pollingInterval :: PollingInterval
+  { c_host :: Text
+  , c_port :: Word16
+  , c_username :: Text
+  , c_password :: Text
+  , c_database :: Text
+  , c_table :: Text
+  , c_columns :: [Text]
+  , c_partitioningColumn :: Text
+  , c_serialColumn :: Text
+  , c_pollingInterval :: PollingInterval
   }
 
 instance C.Connector PostgreSQL where
@@ -76,8 +76,8 @@ instance C.Connector PostgreSQL where
 
   connect = connect
 
-newtype TableSchema = TableSchema {unTableSchema :: Map Text PgType}
-  deriving (Show)
+newtype TableSchema = TableSchema { unTableSchema :: Map Text PgType }
+  deriving Show
 
 -- | Supported PostgreSQL types
 data PgType
@@ -117,151 +117,133 @@ newtype PostgreSQLState = PostgreSQLState BoundaryTracker
   deriving newtype (Default)
   deriving anyclass (FromJSON, ToJSON)
 
-connect ::
-  PostgreSQL ->
-  SimpleLogger ->
-  PostgreSQLState ->
-  Producer Record ->
-  (STM PostgreSQLState -> IO a) ->
-  IO a
-connect config@PostgreSQL {..} logger (PostgreSQLState tracker) producer f =
-  bracket open P.close $ \conn -> do
-    schema <- fetchSchema c_table conn
-    validate config schema
-    trackerVar <- newTVarIO tracker
-    let readState = PostgreSQLState <$> readTVar trackerVar
-    withAsyncThrow (consume conn c_pollingInterval schema trackerVar) (f readState)
-  where
-    open =
-      P.connect
-        P.ConnectInfo
-          { P.connectHost = Text.unpack c_host,
-            P.connectPort = c_port,
-            P.connectUser = Text.unpack c_username,
-            P.connectPassword = Text.unpack c_password,
-            P.connectDatabase = Text.unpack c_database
+connect
+  :: PostgreSQL
+  -> SimpleLogger
+  -> PostgreSQLState
+  -> Producer Record
+  -> (STM PostgreSQLState -> IO a)
+  -> IO a
+connect config@PostgreSQL{..} logger (PostgreSQLState tracker) producer f =
+   bracket open P.close $ \conn -> do
+   schema <- fetchSchema c_table conn
+   validate config schema
+   trackerVar <- newTVarIO tracker
+   let readState = PostgreSQLState <$> readTVar trackerVar
+   withAsyncThrow (consume conn c_pollingInterval schema trackerVar) (f readState)
+   where
+   open = P.connect P.ConnectInfo
+      { P.connectHost = Text.unpack c_host
+      , P.connectPort = c_port
+      , P.connectUser = Text.unpack c_username
+      , P.connectPassword = Text.unpack c_password
+      , P.connectDatabase = Text.unpack c_database
+      }
+
+   consume
+      :: P.Connection
+      -> PollingInterval
+      -> TableSchema
+      -> TVar BoundaryTracker
+      -> IO Void
+   consume conn interval schema trackerVar = Poll.connect trackerVar pc
+     where
+     pc = Poll.PollingConnector
+        { Poll.c_getId = entryId
+        , Poll.c_poll = run
+        , Poll.c_pollingInterval = interval
+        , Poll.c_maxTransactionTime = _MAX_TRANSACTION_TIME
+        , Poll.c_producer = producer
+        }
+
+     parser = mkParser (columns config) schema
+
+     run :: Boundaries -> Stream Record
+     run (Boundaries bs) acc0 emit =
+       P.withTransactionMode txMode conn $ do
+         let batches = chunksOf _MAX_BOUNDARY_BATCH_SIZE bs
+         case batches of
+           [] ->
+             runBatch Nothing Nothing [] acc0
+           _ -> do
+             let initBatches = init batches
+                 lastBatch = last batches
+             (acc, mLastUpper) <-
+               foldM
+                 (\(acc, mLower) batch -> do
+                     let upper = snd (last batch)
+                     acc' <- runBatch mLower (Just upper) batch acc
+                     return (acc', Just upper)
+                 )
+                 (acc0, Nothing)
+                 initBatches
+             -- last batch has no upper bound
+             runBatch mLastUpper Nothing lastBatch acc
+       where
+       txMode = P.TransactionMode
+          { P.isolationLevel = P.ReadCommitted
+          , P.readWriteMode = P.ReadOnly
           }
 
-    consume ::
-      P.Connection ->
-      PollingInterval ->
-      TableSchema ->
-      TVar BoundaryTracker ->
-      IO Void
-    consume conn interval schema trackerVar = Poll.connect trackerVar pc
-      where
-        pc =
-          Poll.PollingConnector
-            { Poll.c_getId = entryId,
-              Poll.c_poll = run,
-              Poll.c_pollingInterval = interval,
-              Poll.c_maxTransactionTime = _MAX_TRANSACTION_TIME,
-              Poll.c_producer = producer
-            }
+       runBatch mLower mUpper batchBs acc = do
+         logDebug logger batchQuery
+         rows <- P.queryWith_ parser conn (fromString batchQuery)
+         logDebug logger $ "results: " <> show (length rows)
+         foldM
+           (\a record -> do
+               logResult record
+               emit a record
+           )
+           acc
+           rows
+         where
+         batchQuery = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
+            [ "SELECT" , commaSeparated $ map pretty $ columns config
+            , "FROM" , pretty c_table
+            , if null allConstraints then "" else "WHERE" <+> sepBy "AND" allConstraints
+            , "ORDER BY" , pretty c_serialColumn
+            ]
 
-        parser = mkParser (columns config) schema
+         allConstraints = lowerBound ++ upperBound ++ exclusions
 
-        run :: Boundaries -> Stream Record
-        run (Boundaries bs) acc0 emit =
-          P.withTransactionMode txMode conn $ do
-            let batches = chunksOf _MAX_BOUNDARY_BATCH_SIZE bs
-            case batches of
-              [] ->
-                runBatch Nothing Nothing [] acc0
-              _ -> do
-                let initBatches = init batches
-                    lastBatch = last batches
-                (acc, mLastUpper) <-
-                  foldM
-                    ( \(acc, mLower) batch -> do
-                        let upper = snd (last batch)
-                        acc' <- runBatch mLower (Just upper) batch acc
-                        return (acc', Just upper)
-                    )
-                    (acc0, Nothing)
-                    initBatches
-                -- last batch has no upper bound
-                runBatch mLastUpper Nothing lastBatch acc
-          where
-            txMode =
-              P.TransactionMode
-                { P.isolationLevel = P.ReadCommitted,
-                  P.readWriteMode = P.ReadOnly
-                }
+         lowerBound = case mLower of
+           Nothing -> []
+           Just (EntryId low) ->
+             [Pretty.fillSep [pretty low, "<", pretty c_serialColumn]]
 
-            runBatch mLower mUpper batchBs acc = do
-              logDebug logger batchQuery
-              rows <- P.queryWith_ parser conn (fromString batchQuery)
-              logDebug logger $ "results: " <> show (length rows)
-              foldM
-                ( \a record -> do
-                    logResult record
-                    emit a record
-                )
-                acc
-                rows
-              where
-                batchQuery =
-                  fromString $
-                    Text.unpack $
-                      renderPretty $
-                        Pretty.fillSep
-                          [ "SELECT",
-                            commaSeparated $ map pretty $ columns config,
-                            "FROM",
-                            pretty c_table,
-                            if null allConstraints then "" else "WHERE" <+> sepBy "AND" allConstraints,
-                            "ORDER BY",
-                            pretty c_serialColumn
-                          ]
+         upperBound = case mUpper of
+           Nothing -> []
+           Just (EntryId high) ->
+             [Pretty.fillSep [pretty c_serialColumn, "<=", pretty high]]
 
-                allConstraints = lowerBound ++ upperBound ++ exclusions
+         exclusions =
+            [ Pretty.fillSep
+               [ "("
+               , pretty c_serialColumn, "<", pretty low
+               , "OR"
+               ,  pretty high, "<", pretty c_serialColumn
+               , ")"]
+            | (EntryId low, EntryId high) <- batchBs
+            ]
 
-                lowerBound = case mLower of
-                  Nothing -> []
-                  Just (EntryId low) ->
-                    [Pretty.fillSep [pretty low, "<", pretty c_serialColumn]]
-
-                upperBound = case mUpper of
-                  Nothing -> []
-                  Just (EntryId high) ->
-                    [Pretty.fillSep [pretty c_serialColumn, "<=", pretty high]]
-
-                exclusions =
-                  [ Pretty.fillSep
-                      [ "(",
-                        pretty c_serialColumn,
-                        "<",
-                        pretty low,
-                        "OR",
-                        pretty high,
-                        "<",
-                        pretty c_serialColumn,
-                        ")"
-                      ]
-                  | (EntryId low, EntryId high) <- batchBs
-                  ]
-
-            logResult row =
-              logInfo logger $
-                renderPretty $
-                  "ingested."
-                    <+> commaSeparated
-                      [ "serial_value:" <+> prettyJSON (serialValue row),
-                        "partitioning_value:" <+> prettyJSON (partitioningValue row)
-                      ]
+       logResult row =
+        logInfo logger $ renderPretty $
+          "ingested." <+> commaSeparated
+            [ "serial_value:" <+> prettyJSON (serialValue row)
+            , "partitioning_value:" <+> prettyJSON (partitioningValue row)
+            ]
 
 -- | Columns in the order they will be queried.
 columns :: PostgreSQL -> [Text]
-columns PostgreSQL {..} =
-  [c_serialColumn, c_partitioningColumn]
-    <> ((c_columns \\ [c_serialColumn]) \\ [c_partitioningColumn])
+columns PostgreSQL{..} =
+  [c_serialColumn, c_partitioningColumn] <>
+    ((c_columns \\ [c_serialColumn]) \\ [c_partitioningColumn])
 
 serialValue :: Record -> Value
 serialValue (Record row) =
   case row of
     [] -> error "serialValue: empty row"
-    (_, x) : _ -> x
+    (_,x):_ -> x
 
 partitioningValue :: Record -> Value
 partitioningValue (Record row) = snd $ row !! 1
@@ -269,86 +251,88 @@ partitioningValue (Record row) = snd $ row !! 1
 mkParser :: [Text] -> TableSchema -> P.RowParser Record
 mkParser cols (TableSchema schema) = Record . zip cols <$> traverse (parser . getType) cols
   where
-    getType col = schema Map.! col
+  getType col = schema Map.! col
 
-    parser :: PgType -> P.RowParser Value
-    parser ty = fmap (fromMaybe Null) $ case ty of
-      PgInt8 -> fmap Int <$> P.field
-      PgInt2 -> fmap Int <$> P.field
-      PgInt4 -> fmap Int <$> P.field
-      PgFloat4 -> fmap Real <$> P.field
-      PgFloat8 -> fmap Real <$> P.field
-      PgBool -> fmap Boolean <$> P.field
-      PgJson -> do
-        -- this JSON type is untyped and therefore is conveyed as string
-        val <- P.field @Aeson.Value
-        let txt = Text.decodeUtf8 $ LB.toStrict $ Aeson.encode val
-        return (Just $ String txt)
-      PgBytea -> fmap (Binary . Bytes . P.fromBinary) <$> P.field
-      PgTimestamp -> fmap DateTime <$> P.fieldWith (P.optionalField parserTimeStamp)
-      PgTimestamptz -> fmap DateTime <$> P.fieldWith (P.optionalField parserTimeStampTZ)
-      PgText -> fmap String <$> P.field
+  parser :: PgType -> P.RowParser Value
+  parser ty = fmap (fromMaybe Null) $ case ty of
+    PgInt8 -> fmap Int <$> P.field
+    PgInt2 -> fmap Int <$> P.field
+    PgInt4 -> fmap Int <$> P.field
+    PgFloat4 -> fmap Real <$> P.field
+    PgFloat8 -> fmap Real <$> P.field
+    PgBool -> fmap Boolean <$> P.field
+    PgJson -> do
+      -- this JSON type is untyped and therefore is conveyed as string
+      val <- P.field @Aeson.Value
+      let txt = Text.decodeUtf8 $ LB.toStrict $ Aeson.encode val
+      return (Just $ String txt)
+    PgBytea -> fmap (Binary . Bytes . P.fromBinary) <$> P.field
+    PgTimestamp -> fmap DateTime <$> P.fieldWith (P.optionalField parserTimeStamp)
+    PgTimestamptz -> fmap DateTime <$> P.fieldWith (P.optionalField parserTimeStampTZ)
+    PgText -> fmap String <$> P.field
 
 parserTimeStampTZ :: P.FieldParser TimeStamp
 parserTimeStampTZ = parser
   where
-    parser :: P.Field -> Maybe ByteString -> P.Conversion TimeStamp
-    parser field mbs =
-      case mbs of
-        Nothing -> P.returnError P.UnexpectedNull field ""
-        Just bs -> do
-          let txt = Text.decodeUtf8 bs
-          utcTime <- P.fromField field mbs
-          return $ TimeStamp txt utcTime
+  parser :: P.Field -> Maybe ByteString -> P.Conversion TimeStamp
+  parser field mbs =
+    case mbs of
+      Nothing -> P.returnError P.UnexpectedNull field ""
+      Just bs -> do
+        let txt = Text.decodeUtf8 bs
+        utcTime <- P.fromField field mbs
+        return $ TimeStamp txt utcTime
 
 parserTimeStamp :: P.FieldParser TimeStamp
 parserTimeStamp = parser
   where
-    parser :: P.Field -> Maybe ByteString -> P.Conversion TimeStamp
-    parser field mbs =
-      case mbs of
-        Nothing -> P.returnError P.UnexpectedNull field ""
-        Just bs -> do
-          let txt = Text.decodeUtf8 bs
-          localTime <- P.fromField field mbs
-          return $ TimeStamp txt $ Just $ localTimeToUTC utc localTime
+  parser :: P.Field -> Maybe ByteString -> P.Conversion TimeStamp
+  parser field mbs =
+    case mbs of
+      Nothing -> P.returnError P.UnexpectedNull field ""
+      Just bs -> do
+        let txt = Text.decodeUtf8 bs
+        localTime <- P.fromField field mbs
+        return $ TimeStamp txt $ Just $ localTimeToUTC utc localTime
 
 entryId :: Record -> EntryId
 entryId record = case serialValue record of
-  Int n -> EntryId $ fromIntegral n
-  val -> error "Invalid serial column value:" (show val)
+   Int n -> EntryId $ fromIntegral n
+   val -> error "Invalid serial column value:" (show val)
 
 validate :: PostgreSQL -> TableSchema -> IO ()
 validate config (TableSchema schema) = do
   missingCol
   invalidSerial
   where
-    missing = filter (not . (`Map.member` schema)) (columns config)
-    missingCol =
-      case missing of
-        [] -> return ()
-        xs -> throwIO $ ErrorCall $ "Missing columns in target table: " <> Text.unpack (Text.unwords xs)
+  missing = filter (not . (`Map.member` schema)) (columns config)
+  missingCol =
+    case missing of
+      [] -> return ()
+      xs -> throwIO $ ErrorCall $ "Missing columns in target table: " <> Text.unpack (Text.unwords xs)
 
-    invalidSerial =
-      if serialTy `elem` allowedSerialTypes
-        then return ()
-        else throwIO $ ErrorCall $ "Invalid serial column type: " <> show serialTy
-    serialTy = schema Map.! c_serialColumn config
-    allowedSerialTypes = [PgInt8, PgInt2, PgInt4]
+  invalidSerial =
+    if serialTy `elem` allowedSerialTypes
+    then return ()
+    else throwIO $ ErrorCall $ "Invalid serial column type: " <> show serialTy
+  serialTy = schema Map.! c_serialColumn config
+  allowedSerialTypes = [PgInt8, PgInt2, PgInt4]
 
 fetchSchema :: Text -> P.Connection -> IO TableSchema
 fetchSchema table conn = do
-  cols <- P.query conn query [table]
-  return $ TableSchema $ Map.fromList cols
-  where
-    -- In PostgreSQL internals 'columns' are called 'attributes' for hysterical raisins.
-    -- oid is the table identifier in the pg_class table.
-    query =
-      fromString $
-        unwords
-          [ "SELECT a.attname, t.typname",
-            "  FROM pg_class c",
-            "  JOIN pg_attribute a ON relname = ? AND c.oid = a.attrelid AND a.attnum > 0",
-            "  JOIN pg_type t ON t.oid = a.atttypid",
-            "  ORDER BY a.attnum ASC;"
-          ]
+   cols <- P.query conn query [table]
+   return $ TableSchema $ Map.fromList cols
+   where
+   -- In PostgreSQL internals 'columns' are called 'attributes' for hysterical raisins.
+   -- oid is the table identifier in the pg_class table.
+   query = fromString $ unwords
+      [ "SELECT a.attname, t.typname"
+      , "  FROM pg_class c"
+      , "  JOIN pg_attribute a ON relname = ? AND c.oid = a.attrelid AND a.attnum > 0"
+      , "  JOIN pg_type t ON t.oid = a.atttypid"
+      , "  ORDER BY a.attnum ASC;"
+      ]
+
+
+
+

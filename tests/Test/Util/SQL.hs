@@ -178,6 +178,7 @@ withConnector od withConnection mkConfig conf partitions f =
       connected act = connect config logger def producer (const act) -- setup connector
   f conn table topic connected
 
+
 {-# NOINLINE tableNumber #-}
 tableNumber :: MVar Int
 tableNumber = unsafePerformIO (newMVar 0)
