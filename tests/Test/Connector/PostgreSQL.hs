@@ -55,6 +55,19 @@ testPostgreSQL p = do
   describe "PostgreSQL" $ do
     testGenericSQL with
 
+    it "handles large boundary lists" $ do
+      with (PartitionCount 1) $ \conn table topic connected -> do
+        void $ P.execute_ conn
+          (fromString $ "ALTER SEQUENCE " <> tableName table <> "_id_seq INCREMENT BY 2")
+        let n = 10000
+        insert conn table (take n $ head $ mocks table)
+        connected $
+          deadline (seconds 10) $
+          Topic.withConsumer topic group $ \consumer -> do
+            forM_ [1..n] $ \_ -> void $ readEntry @Event consumer
+            insert conn table [head (mocks table !! 1)]
+            void $ readEntry @Event consumer
+
     -- Test that column types are supported/unsupported by
     -- creating database entries with the value and reporting
     -- on the emulator's behaviour when trying to decode them.
