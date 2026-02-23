@@ -14,7 +14,7 @@ import Data.Default (Default(..))
 import Data.List ((\\))
 import Data.List.Extra (chunksOf)
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import qualified Data.Map.Strict as Map
 import Data.String (fromString)
 import Data.Time.LocalTime (localTimeToUTC, utc)
@@ -162,18 +162,18 @@ connect config@PostgreSQL{..} logger (PostgreSQLState tracker) producer f =
      run (Boundaries bs) acc0 emit =
        P.withTransactionMode txMode conn $ do
          let batches = chunksOf _MAX_BOUNDARY_BATCH_SIZE bs
-         case batches of
+             highest = fmap snd . listToMaybe . reverse
+         case reverse batches of
            [] ->
              runBatch Nothing Nothing [] acc0
-           _ -> do
-             let initBatches = init batches
-                 lastBatch = last batches
+           (lastBatch : restReversed) -> do
+             let initBatches = reverse restReversed
              (acc, mLastUpper) <-
                foldM
                  (\(acc, mLower) batch -> do
-                     let upper = snd (last batch)
-                     acc' <- runBatch mLower (Just upper) batch acc
-                     return (acc', Just upper)
+                     let mUpper = highest batch
+                     acc' <- runBatch mLower mUpper batch acc
+                     return (acc', mUpper)
                  )
                  (acc0, Nothing)
                  initBatches
@@ -187,15 +187,14 @@ connect config@PostgreSQL{..} logger (PostgreSQLState tracker) producer f =
 
        runBatch mLower mUpper batchBs acc = do
          logDebug logger batchQuery
-         rows <- P.queryWith_ parser conn (fromString batchQuery)
-         logDebug logger $ "results: " <> show (length rows)
-         foldM
-           (\a record -> do
+         (acc', count) <- P.foldWith_ parser conn (fromString batchQuery) (acc, 0 :: Int)
+           (\(a, n) record -> do
                logResult record
-               emit a record
+               a' <- emit a record
+               return (a', n + 1)
            )
-           acc
-           rows
+         logDebug logger $ "results: " <> show count
+         return acc'
          where
          batchQuery = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
             [ "SELECT" , commaSeparated $ map pretty $ columns config
