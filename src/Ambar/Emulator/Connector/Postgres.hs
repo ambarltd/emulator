@@ -186,7 +186,7 @@ connect config@PostgreSQL{..} logger (PostgreSQLState tracker) producer f =
        P.withTransactionMode txMode conn $ foldM pollSection acc0 (splitBoundaries bounds)
        where
        txMode = P.TransactionMode
-          { P.isolationLevel = P.ReadCommitted
+          { P.isolationLevel = P.RepeatableRead
           , P.readWriteMode = P.ReadOnly
           }
 
