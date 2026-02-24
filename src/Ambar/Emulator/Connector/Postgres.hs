@@ -117,6 +117,29 @@ newtype PostgreSQLState = PostgreSQLState BoundaryTracker
   deriving newtype (Default)
   deriving anyclass (FromJSON, ToJSON)
 
+-- | Represents a section of the data to be retrieved.
+data Section = Section
+  { _start :: Maybe EntryId -- ^ exclusive start
+  , _end :: Maybe EntryId -- ^ exclusive end
+  , _exclusions :: [(EntryId, EntryId)]
+  }
+
+-- | If the number of boundaries gets too big PostgreSQL starts choking on the
+-- resulting query. To mitigate that we split the boundaries into sections.
+--
+-- It must fulfill the property that, within a transaction with RepeatableRead
+-- isolation, a single query for some boundaries should return the same results
+-- as splitting the boundaries into sections and querying for each section.
+splitBoundaries :: Boundaries -> [Section]
+splitBoundaries (Boundaries []) = [Section Nothing Nothing []]
+splitBoundaries (Boundaries bs) = zipWith3 Section starts ends batches
+  where
+  highest = fmap snd . listToMaybe . reverse
+  lowest = fmap fst . listToMaybe
+  batches = chunksOf _MAX_BOUNDARY_BATCH_SIZE bs
+  starts = Nothing : fmap highest batches
+  ends = drop 1 (fmap lowest batches) <> [Nothing]
+
 connect
   :: PostgreSQL
   -> SimpleLogger
@@ -150,7 +173,7 @@ connect config@PostgreSQL{..} logger (PostgreSQLState tracker) producer f =
      where
      pc = Poll.PollingConnector
         { Poll.c_getId = entryId
-        , Poll.c_poll = run
+        , Poll.c_poll = poll
         , Poll.c_pollingInterval = interval
         , Poll.c_maxTransactionTime = _MAX_TRANSACTION_TIME
         , Poll.c_producer = producer
@@ -158,62 +181,48 @@ connect config@PostgreSQL{..} logger (PostgreSQLState tracker) producer f =
 
      parser = mkParser (columns config) schema
 
-     run :: Boundaries -> Stream Record
-     run (Boundaries bs) acc0 emit =
-       P.withTransactionMode txMode conn $ do
-         let batches = chunksOf _MAX_BOUNDARY_BATCH_SIZE bs
-             highest = fmap snd . listToMaybe . reverse
-         case reverse batches of
-           [] ->
-             runBatch Nothing Nothing [] acc0
-           (lastBatch : restReversed) -> do
-             let initBatches = reverse restReversed
-             (acc, mLastUpper) <-
-               foldM
-                 (\(acc, mLower) batch -> do
-                     let mUpper = highest batch
-                     acc' <- runBatch mLower mUpper batch acc
-                     return (acc', mUpper)
-                 )
-                 (acc0, Nothing)
-                 initBatches
-             -- last batch has no upper bound
-             runBatch mLastUpper Nothing lastBatch acc
+     poll :: Boundaries -> Stream Record
+     poll bounds acc0 emit =
+       P.withTransactionMode txMode conn $ foldM pollSection acc0 (splitBoundaries bounds)
        where
        txMode = P.TransactionMode
           { P.isolationLevel = P.ReadCommitted
           , P.readWriteMode = P.ReadOnly
           }
 
-       runBatch mLower mUpper batchBs acc = do
-         logDebug logger batchQuery
-         (acc', count) <- P.foldWith_ parser conn (fromString batchQuery) (acc, 0 :: Int)
-           (\(a, n) record -> do
-               logResult record
-               a' <- emit a record
-               return (a', n + 1)
-           )
-         logDebug logger $ "results: " <> show count
+       pollSection acc section =  do
+         let query = toQuery section
+         logDebug logger query
+         (acc', count) <- P.foldWith_ parser conn (fromString query) (acc, 0) $
+           \(a, n) record -> do
+             logResult record
+             a' <- emit a record
+             return (a', n + 1)
+         logDebug logger $ "results: " <> show @Int count
          return acc'
+
+       toQuery :: Section -> String
+       toQuery (Section mstart mend excl) =
+         fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
+         [ "SELECT" , commaSeparated $ map pretty $ columns config
+         , "FROM" , pretty c_table
+         , if null constraints
+            then ""
+            else "WHERE" <+> sepBy "AND" constraints
+         , "ORDER BY" , pretty c_serialColumn
+         ]
          where
-         batchQuery = fromString $ Text.unpack $ renderPretty $ Pretty.fillSep
-            [ "SELECT" , commaSeparated $ map pretty $ columns config
-            , "FROM" , pretty c_table
-            , if null allConstraints then "" else "WHERE" <+> sepBy "AND" allConstraints
-            , "ORDER BY" , pretty c_serialColumn
+         constraints = lowerBound <> exclusions <> upperBound
+
+         lowerBound =
+            [ Pretty.fillSep [ pretty start, "<", pretty c_serialColumn ]
+            | Just start <- [mstart]
             ]
 
-         allConstraints = lowerBound ++ upperBound ++ exclusions
-
-         lowerBound = case mLower of
-           Nothing -> []
-           Just (EntryId low) ->
-             [Pretty.fillSep [pretty low, "<", pretty c_serialColumn]]
-
-         upperBound = case mUpper of
-           Nothing -> []
-           Just (EntryId high) ->
-             [Pretty.fillSep [pretty c_serialColumn, "<=", pretty high]]
+         upperBound =
+            [ Pretty.fillSep [ pretty c_serialColumn, "<", pretty end]
+            | Just end <- [mend]
+            ]
 
          exclusions =
             [ Pretty.fillSep
@@ -222,7 +231,7 @@ connect config@PostgreSQL{..} logger (PostgreSQLState tracker) producer f =
                , "OR"
                ,  pretty high, "<", pretty c_serialColumn
                , ")"]
-            | (EntryId low, EntryId high) <- batchBs
+            | (EntryId low, EntryId high) <- excl
             ]
 
        logResult row =
