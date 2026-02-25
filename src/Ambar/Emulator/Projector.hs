@@ -33,7 +33,7 @@ import Ambar.Transport (Transport)
 import qualified Ambar.Transport as Transport
 import Util.Some (Some)
 import Util.Logger (SimpleLogger, logFatal, logWarn, logInfo, fatal, annotate)
-import Util.Delay (Duration, delay, millis, seconds)
+import Util.Delay (Duration, delay, millis, seconds, toDiffTime)
 import Util.Prettyprinter (prettyJSON, renderPretty)
 import Prettyprinter (pretty, fillSep, (<+>))
 
@@ -143,7 +143,7 @@ retrying logger act = go backoff
         Nothing -> return ()
         Just err -> do
           let wait = fromMaybe maxInterval $ listToMaybe waits
-              msg = "Retrying in " <> show wait <> "ms. Error: " <> show err
+              msg = "Retrying in " <> show (toDiffTime wait) <> ". Error: " <> show err
 
           -- On too many retries start sounding the alarm.
           if wait == maxInterval
