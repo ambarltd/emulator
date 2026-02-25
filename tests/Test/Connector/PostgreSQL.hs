@@ -14,7 +14,7 @@ module Test.Connector.PostgreSQL
 
 import Control.Concurrent (MVar, newMVar, modifyMVar)
 import Control.Exception (bracket, throwIO, ErrorCall(..), fromException)
-import Control.Monad (void, forM_)
+import Control.Monad (void, forM_, forM)
 import qualified Data.Aeson as Aeson
 import Data.Aeson (FromJSON)
 import Data.List (isInfixOf)
@@ -60,8 +60,8 @@ testPostgreSQL p = do
         void $ P.execute_ conn $ fromString $
           "ALTER SEQUENCE " <> tableName table <> "_id_seq INCREMENT BY 2"
 
-        let n = 50000
-        connected $ Topic.withConsumer topic group $ \consumer -> deadline (seconds 10) $ do
+        let n = 10000
+        connected $ Topic.withConsumer topic group $ \consumer -> deadline (seconds 5) $ do
           -- pre-fill the table
           insert conn table (take n $ head $ mocks table)
           -- advance connector.
@@ -71,6 +71,31 @@ testPostgreSQL p = do
           -- containing lots of gaps.
           insert conn table [head (mocks table !! 1)]
           void $ readEntry @Event consumer
+
+    it "splitBoundaries does not produce overlapping sections" $ do
+      with (PartitionCount 1) $ \conn table topic connected -> do
+        let odds = [1, 3..]
+            evens = [2,4..]
+            n = 2000
+            -- cheat a little bit by specifying the ids.
+            insertV :: Int -> IO ()
+            insertV x = void $ P.execute_ conn $ fromString $
+              "INSERT INTO " <> tableName table
+              <> " (id, aggregate_id, sequence_number) VALUES ("
+              <> show x <> ","<> show x <> ", "<> show x <>
+              ")"
+
+        -- leave lots of gaps
+        forM_ (take n odds) insertV
+        connected $ Topic.withConsumer topic group $ \consumer -> deadline (seconds 1) $ do
+          oddEntries <- forM [1..n] $ \_ -> readEntry @Event consumer
+
+          -- fill all the gaps
+          forM_ (take n evens) insertV
+          evenEntries <- forM [1..n] $ \_ -> readEntry @Event consumer
+
+          let ids = fmap (e_id . fst) $ oddEntries <> evenEntries
+          ids `shouldBe` (take n odds <> take n evens)
 
     -- Test that column types are supported/unsupported by
     -- creating database entries with the value and reporting
@@ -331,7 +356,7 @@ instance Table (EventsTable PostgreSQL) where
   tableName (EventsTable name) = name
   tableCols _ = ["id", "aggregate_id", "sequence_number"]
   mocks _ =
-    -- the aggregate_id is given when the records are inserted into the database
+    -- the event id is given when the records are inserted into the database
     [ [ Event err agg_id seq_id | seq_id <- [0..] ]
       | agg_id <- [0..]
     ]

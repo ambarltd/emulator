@@ -132,13 +132,12 @@ data Section = Section
 -- as splitting the boundaries into sections and querying for each section.
 splitBoundaries :: Boundaries -> [Section]
 splitBoundaries (Boundaries []) = [Section Nothing Nothing []]
-splitBoundaries (Boundaries bs) = zipWith3 Section starts ends batches
+splitBoundaries (Boundaries bs) = zipWith3 Section starts ends chunks
   where
-  highest = fmap snd . listToMaybe . reverse
-  lowest = fmap fst . listToMaybe
-  batches = chunksOf _MAX_BOUNDARY_BATCH_SIZE bs
-  starts = Nothing : fmap highest batches
-  ends = drop 1 (fmap lowest batches) <> [Nothing]
+  chunks = chunksOf _MAX_BOUNDARY_BATCH_SIZE bs
+  lowest = fmap (fmap fst . listToMaybe) chunks
+  starts = Nothing : drop 1 lowest
+  ends = drop 1 lowest <> [Nothing]
 
 connect
   :: PostgreSQL
