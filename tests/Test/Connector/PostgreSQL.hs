@@ -75,23 +75,22 @@ testPostgreSQL p = do
     it "splitBoundaries does not produce overlapping sections" $ do
       with (PartitionCount 1) $ \conn table topic connected -> do
         let odds = [1, 3..]
-            evens = [2,4..]
+            evens = [2, 4..]
             n = 2000
             -- cheat a little bit by specifying the ids.
-            insertV :: Int -> IO ()
-            insertV x = void $ P.execute_ conn $ fromString $
-              "INSERT INTO " <> tableName table
-              <> " (id, aggregate_id, sequence_number) VALUES ("
-              <> show x <> ","<> show x <> ", "<> show x <>
-              ")"
+            insertMany :: [Int] -> IO ()
+            insertMany xs = void $ P.executeMany conn q [(x,x,x) | x <- xs]
+              where
+              q = fromString $ "INSERT INTO " <> tableName table <>
+                " (id, aggregate_id, sequence_number) VALUES (?, ?, ?)"
 
         -- leave lots of gaps
-        forM_ (take n odds) insertV
+        insertMany $ take n odds
         connected $ Topic.withConsumer topic group $ \consumer -> deadline (seconds 1) $ do
           oddEntries <- forM [1..n] $ \_ -> readEntry @Event consumer
 
           -- fill all the gaps
-          forM_ (take n evens) insertV
+          insertMany (take n evens)
           evenEntries <- forM [1..n] $ \_ -> readEntry @Event consumer
 
           let ids = fmap (e_id . fst) $ oddEntries <> evenEntries
