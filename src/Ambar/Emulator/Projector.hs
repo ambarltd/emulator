@@ -15,9 +15,11 @@ import qualified Data.Aeson as Json
 import Data.Aeson (ToJSON, FromJSON)
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as LB
+import qualified Data.ByteString as B
 import Data.Maybe (listToMaybe, fromMaybe)
 import Data.String (fromString)
 import Data.Text (Text)
+import qualified Data.Text.Encoding as Text
 import qualified Data.Text as Text
 import Control.Concurrent.Async (forConcurrently_)
 import Control.Monad.Extra (whileM)
@@ -100,7 +102,7 @@ project logger_ Projection{..} =
     }
 
   decode logger bs = case Json.eitherDecode $ LB.fromStrict bs of
-    Left err -> fatal logger $ "decoding error: " <> err
+    Left err -> fatal logger $ "decoding error: " <> err <> "\nraw: " <> Text.toString (Text.decodeUtf8 bs)
     Right v -> return v
 
 -- | Fields to print when a record is sent.
