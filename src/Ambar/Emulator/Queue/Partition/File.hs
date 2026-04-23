@@ -43,6 +43,7 @@ import qualified GHC.IO.Device as FD
 import System.IO
   ( Handle
   , hSeek
+  , hSetFileSize
   , withFile
   , openFile
   , hClose
@@ -175,12 +176,14 @@ open location name = do
       let Bytes lastEntry = lastIndexEntry
       when (recordsSize < fromIntegral lastEntry) $
         throwIO $ IndexAheadOfRecords records
-      -- This should be the same as the size of the records file.
-      -- However we use the last index entry in case the program
-      -- was interrupted between writing to the records file and
-      -- to the index file.
-      let byteOffsetOfNextEntry = lastIndexEntry
-      return (Count count, byteOffsetOfNextEntry)
+      -- If the records file is larger than the last index entry, a record
+      -- was appended but the program was interrupted before its index entry
+      -- was written. Discard the orphan bytes so the records file end matches
+      -- the index, keeping subsequent appends consistent.
+      when (recordsSize > fromIntegral lastEntry) $
+        withFile records ReadWriteMode $ \h ->
+          hSetFileSize h (fromIntegral lastEntry)
+      return (Count count, lastIndexEntry)
 
 close :: HasCallStack => FilePartition -> IO ()
 close FilePartition{..} =
