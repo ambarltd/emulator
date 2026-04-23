@@ -366,6 +366,25 @@ testFilePartition = do
       FilePartition.withFilePartition path name (const $ return ())
         `shouldThrow` isInconsistent
 
+  it "truncates records file to last index entry when records is larger" $
+    withTempPath $ \path -> do
+      let name = "file-partition"
+          records = path </> name <> ".records"
+
+      FilePartition.withFilePartition path name $ \partition ->
+        traverse_ (P.write partition) (take 5 messages)
+
+      originalSize <- getFileSize records
+
+      -- Simulate an interrupted write: extra bytes in the records file
+      -- with no corresponding index entry.
+      appendFile records "orphan bytes\n"
+
+      FilePartition.withFilePartition path name (const $ return ())
+
+      afterSize <- getFileSize records
+      afterSize `shouldBe` originalSize
+
 testPartition :: Partition a => (forall b. FilePath -> (a -> IO b) -> IO b) -> Spec
 testPartition with = do
   it "reads what is written" $
