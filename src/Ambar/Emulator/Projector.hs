@@ -83,8 +83,9 @@ project logger_ Projection{..} =
       Left err -> fatal logger (show err)
       Right (bs, meta) -> do
         record <- decode logger bs
-        retrying logger $ Transport.sendJSON p_transport (toMsg source record)
-        logInfo logger $ "sent. " <> relevantFields (s_source source) record
+        let logger' = annotate (relevantFields (s_source source) record) logger
+        retrying logger' $ Transport.sendJSON p_transport (toMsg source record)
+        logInfo logger' ("sent." :: Text)
         Topic.commit consumer meta
         return True
 
