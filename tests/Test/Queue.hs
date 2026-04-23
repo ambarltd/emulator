@@ -15,6 +15,9 @@ import qualified Data.Text as Text
 import Data.Foldable (traverse_)
 import qualified Data.Text.Encoding as Text
 import Data.Typeable (Typeable)
+import System.Directory (getFileSize)
+import System.FilePath ((</>))
+import System.IO (IOMode(..), hSetFileSize, withFile)
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Hspec
   ( Spec
@@ -55,6 +58,8 @@ testQueues = do
     testQueue
   describe "partition" $ do
     testPartition withFilePartition
+  describe "file partition" $ do
+    testFilePartition
   describe "topic" $ do
     testTopic withFileTopic
   where
@@ -339,6 +344,27 @@ instance Partition FailPartition where
   seek _ _ = return ()
   read _ = throwIO FailPartition
   write _ _ = return ()
+
+testFilePartition :: Spec
+testFilePartition = do
+  it "fails to open when records file is smaller than last index entry" $
+    withTempPath $ \path -> do
+      let name = "file-partition"
+          records = path </> name <> ".records"
+
+      FilePartition.withFilePartition path name $ \partition ->
+        traverse_ (P.write partition) (take 5 messages)
+
+      size <- getFileSize records
+      withFile records ReadWriteMode $ \h ->
+        hSetFileSize h (size - 1)
+
+      let isInconsistent e
+            | Just (FilePartition.IndexAheadOfRecords _) <- fromException e = True
+            | otherwise = False
+
+      FilePartition.withFilePartition path name (const $ return ())
+        `shouldThrow` isInconsistent
 
 testPartition :: Partition a => (forall b. FilePath -> (a -> IO b) -> IO b) -> Spec
 testPartition with = do

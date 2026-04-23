@@ -115,6 +115,7 @@ data OpenError
   = AlreadyOpen FilePath
   | MissingRecords FilePath
   | MissingIndex FilePath
+  | IndexAheadOfRecords FilePath
   deriving Show
 
 instance Exception OpenError where
@@ -122,6 +123,7 @@ instance Exception OpenError where
     AlreadyOpen path -> "Lock found. Partition already open: " <> path
     MissingRecords path -> "Missing records file: " <> path
     MissingIndex path -> "Missing index file: " <> path
+    IndexAheadOfRecords path -> "Records file is smaller than its index claims: " <> path
 
 open :: HasCallStack => FilePath -> String -> IO FilePartition
 open location name = do
@@ -132,7 +134,7 @@ open location name = do
   (count, size) <-
     if not exists
     then createIndex index
-    else loadIndex index
+    else loadIndex records index
 
   writeFile lock "locked"
   fd_records <- openNonLockingWritableFD records
@@ -165,10 +167,14 @@ open location name = do
       LB.writeFile index $ Binary.encode @Word64 0
       return (Count 0, Bytes 0)
 
-    loadIndex index = do
+    loadIndex records index = do
       indexSize <- fromIntegral <$> getFileSize index
       let count = (indexSize `div` _WORD64_SIZE) - 1
       lastIndexEntry <- readIndexEntry index (Offset count)
+      recordsSize <- getFileSize records
+      let Bytes lastEntry = lastIndexEntry
+      when (recordsSize < fromIntegral lastEntry) $
+        throwIO $ IndexAheadOfRecords records
       -- This should be the same as the size of the records file.
       -- However we use the last index entry in case the program
       -- was interrupted between writing to the records file and
