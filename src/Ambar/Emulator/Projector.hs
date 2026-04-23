@@ -15,7 +15,6 @@ import qualified Data.Aeson as Json
 import Data.Aeson (ToJSON, FromJSON)
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as LB
-import qualified Data.ByteString as B
 import Data.Maybe (listToMaybe, fromMaybe)
 import Data.String (fromString)
 import Data.Text (Text)
@@ -105,7 +104,7 @@ project logger_ Projection{..} =
     Left err ->
       let
         raw_chars_to_show = 1000
-        raw = take raw_chars_to_show $ Text.toString $ Text.decodeUtf8 bs
+        raw = take raw_chars_to_show $ Text.unpack $ Text.decodeUtf8 bs
       in
       fatal logger $ "decoding error: " <> err <> "\nraw: " <> raw
     Right v -> return v
