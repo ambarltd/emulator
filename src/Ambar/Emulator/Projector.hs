@@ -102,7 +102,12 @@ project logger_ Projection{..} =
     }
 
   decode logger bs = case Json.eitherDecode $ LB.fromStrict bs of
-    Left err -> fatal logger $ "decoding error: " <> err <> "\nraw: " <> Text.toString (Text.decodeUtf8 bs)
+    Left err ->
+      let
+        raw_chars_to_show = 1000
+        raw = take raw_chars_to_show $ Text.toString $ Text.decodeUtf8 bs
+      in
+      fatal logger $ "decoding error: " <> err <> "\nraw: " <> raw
     Right v -> return v
 
 -- | Fields to print when a record is sent.
