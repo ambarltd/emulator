@@ -370,9 +370,10 @@ testFilePartition = do
     withTempPath $ \path -> do
       let name = "file-partition"
           records = path </> name <> ".records"
+          (initial, more) = splitAt 5 (take 10 messages)
 
       FilePartition.withFilePartition path name $ \partition ->
-        traverse_ (P.write partition) (take 5 messages)
+        traverse_ (P.write partition) initial
 
       originalSize <- getFileSize records
 
@@ -380,10 +381,15 @@ testFilePartition = do
       -- with no corresponding index entry.
       appendFile records "orphan bytes\n"
 
-      FilePartition.withFilePartition path name (const $ return ())
+      FilePartition.withFilePartition path name $ \partition -> do
+        afterSize <- getFileSize records
+        afterSize `shouldBe` originalSize
 
-      afterSize <- getFileSize records
-      afterSize `shouldBe` originalSize
+        traverse_ (P.write partition) more
+
+        P.withReader partition Beginning $ \reader -> do
+          rs <- replicateM (length initial + length more) (snd <$> P.read reader)
+          rs `shouldBe` initial ++ more
 
 testPartition :: Partition a => (forall b. FilePath -> (a -> IO b) -> IO b) -> Spec
 testPartition with = do
