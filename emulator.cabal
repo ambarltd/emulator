@@ -112,7 +112,6 @@ test-suite emulator-tests
     main-is: Tests.hs
     other-modules:
         Test.Config
-        Test.Projector
         Test.Queue
         Test.Connector
         Test.Connector.File

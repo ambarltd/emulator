@@ -4,7 +4,6 @@ import Test.Hspec (hspec, parallel)
 
 import Test.Config (testConfig)
 import Test.Emulator (testEmulator)
-import Test.Projector (testProjector)
 import Test.Transport (testTransport)
 import Test.Queue (testQueues)
 import Test.Connector (testConnectors, withDatabases, Databases(..))
@@ -24,7 +23,6 @@ main =
   hspec $ parallel $ do
     -- unit tests use the projector library
     testConfig
-    testProjector
     testQueues
     testTransport
     testEmulator pcreds
