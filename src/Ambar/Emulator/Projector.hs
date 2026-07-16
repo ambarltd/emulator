@@ -1,7 +1,8 @@
 module Ambar.Emulator.Projector
   ( Projection(..)
   , project
-  , matchesFilter
+  , filterVerdict
+  , FilterVerdict(..)
   , Message(..)
   , Payload(..)
   ) where
@@ -25,7 +26,9 @@ import Data.Text (Text)
 import qualified Data.Text.Encoding as Text
 import qualified Data.Text as Text
 import Control.Concurrent.Async (forConcurrently_)
+import Control.Monad (when)
 import Control.Monad.Extra (whileM)
+import Data.IORef (newIORef, atomicModifyIORef')
 import GHC.Generics (Generic)
 
 import qualified Data.Set as Set
@@ -69,14 +72,27 @@ newtype Payload = Payload Json.Value
   deriving newtype (ToJSON, FromJSON)
 
 project :: SimpleLogger -> Projection -> IO ()
-project logger_ Projection{..} =
-  forConcurrently_ p_sources projectSource
+project logger_ Projection{..} = do
+  -- One warning per destination per emulator run when the filter fails
+  -- open (reviewer note on PR #56): a typo'd filter column silently
+  -- restores full delivery, which looks exactly like a normal match.
+  -- Warning on every record would flood the log at full event rate, so
+  -- the first fail-open claims this flag and later ones stay quiet.
+  warnedFailOpen <- newIORef False
+  let warnFailOpenOnce logger reason = do
+        firstWarn <- atomicModifyIORef' warnedFailOpen (\claimed -> (True, not claimed))
+        when firstWarn $
+          logWarn logger $
+            "filter fail-open: " <> reason
+            <> ". Delivering the record; the destination filter is not being applied."
+            <> " Further fail-open warnings for this destination are suppressed."
+  forConcurrently_ p_sources (projectSource warnFailOpenOnce)
   where
-  projectSource (source, topic) =
+  projectSource warnFailOpenOnce (source, topic) =
     -- one consumer per partition
     Topic.withConsumers topic group pcount $ \consumers ->
     forConcurrently_ consumers $ \consumer ->
-    whileM $ consume logger consumer source
+    whileM $ consume warnFailOpenOnce logger consumer source
     where
       PartitionCount pcount = Topic.partitionCount topic
       logger =
@@ -84,7 +100,7 @@ project logger_ Projection{..} =
         annotate ("dst: " <> unId  p_destination)
         logger_
 
-  consume logger consumer source = do
+  consume warnFailOpenOnce logger consumer source = do
     r <- Topic.read consumer
     case r of
       Left EndOfPartition -> return False
@@ -92,12 +108,15 @@ project logger_ Projection{..} =
       Right (bs, meta) -> do
         record <- decode logger bs
         let logger' = annotate (relevantFields (s_source source) record) logger
-        if matchesFilter p_filter record
-          then do
-            retrying logger' $ Transport.sendJSON p_transport (toMsg source record)
-            logInfo logger' ("sent." :: Text)
-          else
-            logInfo logger' ("filtered." :: Text)
+            send = do
+              retrying logger' $ Transport.sendJSON p_transport (toMsg source record)
+              logInfo logger' ("sent." :: Text)
+        case filterVerdict p_filter record of
+          Matched -> send
+          Skipped -> logInfo logger' ("filtered." :: Text)
+          FailedOpen reason -> do
+            warnFailOpenOnce logger' reason
+            send
         Topic.commit consumer meta
         return True
 
@@ -120,20 +139,32 @@ project logger_ Projection{..} =
       fatal logger $ "decoding error: " <> err <> "\nraw: " <> raw
     Right v -> return v
 
--- | Whether a record passes the destination's filter.
+-- | The filter's decision for a record.
 --
--- Records without the filter column, or with a non-string value in it,
--- PASS: a misconfigured column name must degrade to full delivery (the
--- pre-filter behaviour), never to silently dropped records.
-matchesFilter :: Maybe DestinationFilter -> Payload -> Bool
-matchesFilter Nothing _ = True
-matchesFilter (Just DestinationFilter{..}) (Payload value) =
+-- 'FailedOpen' means the record is DELIVERED even though the filter could
+-- not be applied (missing column, null or non-string value, non-object
+-- record): a misconfigured column name must degrade to full delivery (the
+-- pre-filter behaviour), never to silently dropped records. The reason is
+-- carried so the projector can warn that the filter is not doing its job.
+data FilterVerdict
+  = Matched            -- ^ deliver: no filter, or the column value is allowed
+  | Skipped            -- ^ commit without delivering
+  | FailedOpen Text    -- ^ deliver, but the filter could not be applied
+  deriving (Eq, Show)
+
+filterVerdict :: Maybe DestinationFilter -> Payload -> FilterVerdict
+filterVerdict Nothing _ = Matched
+filterVerdict (Just DestinationFilter{..}) (Payload value) =
   case value of
     Json.Object o ->
       case KeyMap.lookup (fromString $ Text.unpack f_column) o of
-        Just (Json.String v) -> Set.member v f_values
-        _ -> True
-    _ -> True
+        Just (Json.String v)
+          | Set.member v f_values -> Matched
+          | otherwise -> Skipped
+        Just Json.Null -> FailedOpen $ "filter column '" <> f_column <> "' is null"
+        Just _ -> FailedOpen $ "filter column '" <> f_column <> "' has a non-string value"
+        Nothing -> FailedOpen $ "filter column '" <> f_column <> "' is missing from the record"
+    _ -> FailedOpen "record is not a JSON object"
 
 -- | Fields to print when a record is sent.
 relevantFields :: Source -> Payload -> Text
