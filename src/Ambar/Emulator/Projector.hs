@@ -1,6 +1,7 @@
 module Ambar.Emulator.Projector
   ( Projection(..)
   , project
+  , matchesFilter
   , Message(..)
   , Payload(..)
   ) where
@@ -8,7 +9,10 @@ module Ambar.Emulator.Projector
 {-| A projector reads messages from multiple queues, applies a filter to the
 stream and submits passing messages to a single data destination.
 
-We do not implement filters for now.
+A destination with no filter receives every record. A destination with a
+filter receives only records whose filter-column value is in the allowed
+set; filtered-out records are committed without being sent, so the
+consumer cursor always advances.
 -}
 
 import qualified Data.Aeson as Json
@@ -24,7 +28,9 @@ import Control.Concurrent.Async (forConcurrently_)
 import Control.Monad.Extra (whileM)
 import GHC.Generics (Generic)
 
-import Ambar.Emulator.Config (Id(..), DataDestination, DataSource(..), Source(..))
+import qualified Data.Set as Set
+
+import Ambar.Emulator.Config (Id(..), DataDestination, DataSource(..), Source(..), DestinationFilter(..))
 import Ambar.Emulator.Queue.Topic (Topic, ReadError(..), PartitionCount(..))
 import qualified Ambar.Emulator.Queue.Topic as Topic
 import Ambar.Emulator.Connector.MicrosoftSQLServer (SQLServer(..))
@@ -44,6 +50,7 @@ data Projection = Projection
   , p_destinationDescription :: Text
   , p_sources :: [(DataSource, Topic)]
   , p_transport :: Some Transport
+  , p_filter :: Maybe DestinationFilter
   }
 
 -- | A record enriched with more information to send to the client.
@@ -85,8 +92,12 @@ project logger_ Projection{..} =
       Right (bs, meta) -> do
         record <- decode logger bs
         let logger' = annotate (relevantFields (s_source source) record) logger
-        retrying logger' $ Transport.sendJSON p_transport (toMsg source record)
-        logInfo logger' ("sent." :: Text)
+        if matchesFilter p_filter record
+          then do
+            retrying logger' $ Transport.sendJSON p_transport (toMsg source record)
+            logInfo logger' ("sent." :: Text)
+          else
+            logInfo logger' ("filtered." :: Text)
         Topic.commit consumer meta
         return True
 
@@ -108,6 +119,21 @@ project logger_ Projection{..} =
       in
       fatal logger $ "decoding error: " <> err <> "\nraw: " <> raw
     Right v -> return v
+
+-- | Whether a record passes the destination's filter.
+--
+-- Records without the filter column, or with a non-string value in it,
+-- PASS: a misconfigured column name must degrade to full delivery (the
+-- pre-filter behaviour), never to silently dropped records.
+matchesFilter :: Maybe DestinationFilter -> Payload -> Bool
+matchesFilter Nothing _ = True
+matchesFilter (Just DestinationFilter{..}) (Payload value) =
+  case value of
+    Json.Object o ->
+      case KeyMap.lookup (fromString $ Text.unpack f_column) o of
+        Just (Json.String v) -> Set.member v f_values
+        _ -> True
+    _ -> True
 
 -- | Fields to print when a record is sent.
 relevantFields :: Source -> Payload -> Text
