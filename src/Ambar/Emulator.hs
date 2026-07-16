@@ -123,7 +123,6 @@ emulate logger_ config env = do
         , p_destinationDescription = d_description dest
         , p_sources = sourceTopics
         , p_transport = transport
-        , p_filter = d_filter dest
         }
 
   withDestination dest act =

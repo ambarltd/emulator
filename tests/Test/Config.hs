@@ -4,7 +4,6 @@ module Test.Config (testConfig) where
 import Control.Exception (ErrorCall(..), fromException)
 import Data.List (isInfixOf)
 import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
 import Data.String.Interpolate (i)
 import System.IO.Temp (withSystemTempFile)
 import System.IO (hClose)
@@ -110,83 +109,6 @@ testConfig = do
         |]
       annotate "source count" $ Map.size (c_sources  config) `shouldBe` 4
       annotate "source count" $ Map.size (c_destinations  config) `shouldBe` 2
-
-    it "parses a destination filter" $ do
-      config <- parseConfig [i|
-        data_sources:
-          - id: file_source
-            description: The file source
-            type: file
-            path: ./source.txt
-            incrementingField: id
-            partitioningField: aggregate_id
-
-        data_destinations:
-          - id: filtered_destination
-            description: filtered projection
-            type: file
-            path: ./temp.file
-            sources:
-              - file_source
-            filter:
-              column: event_name
-              values:
-                - OrderCreated
-                - OrderUpdated
-        |]
-      dest <- case Map.lookup (Id "filtered_destination") (c_destinations config) of
-        Nothing -> fail "destination missing"
-        Just d -> return d
-      case d_filter dest of
-        Nothing -> fail "expected a filter"
-        Just f -> do
-          annotate "filter column" $ f_column f `shouldBe` "event_name"
-          annotate "filter values" $ f_values f `shouldBe` Set.fromList ["OrderCreated", "OrderUpdated"]
-
-    it "a destination without a filter parses to no filter" $ do
-      config <- parseConfig [i|
-        data_sources:
-          - id: file_source
-            description: The file source
-            type: file
-            path: ./source.txt
-            incrementingField: id
-            partitioningField: aggregate_id
-
-        data_destinations:
-          - id: plain_destination
-            description: unfiltered projection
-            type: file
-            path: ./temp.file
-            sources:
-              - file_source
-        |]
-      dest <- case Map.lookup (Id "plain_destination") (c_destinations config) of
-        Nothing -> fail "destination missing"
-        Just d -> return d
-      annotate "no filter" $ null (d_filter dest) `shouldBe` True
-
-    it "rejects an empty filter values list" $ do
-      parseConfig [i|
-        data_sources:
-          - id: file_source
-            description: The file source
-            type: file
-            path: ./source.txt
-            incrementingField: id
-            partitioningField: aggregate_id
-
-        data_destinations:
-          - id: filtered_destination
-            description: filtered projection
-            type: file
-            path: ./temp.file
-            sources:
-              - file_source
-            filter:
-              column: event_name
-              values: []
-        |] `shouldThrow` errorWith "must not be empty"
 
     it "detects duplicate sources" $ do
       parseConfig [i|

@@ -7,19 +7,15 @@ import Control.Exception (ErrorCall(..), throwIO)
 import Control.Concurrent.STM (newTVarIO, modifyTVar, atomically, retry, readTVar, writeTVar)
 import Control.Monad (forM, unless, void)
 import qualified Data.Aeson as Json
-import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
-import Data.Text (Text)
-import System.IO (hClose)
 import Test.Hspec
   ( Spec
   , it
   , describe
   , shouldBe
   )
-import System.IO.Temp (withSystemTempDirectory, withSystemTempFile)
+import System.IO.Temp (withSystemTempDirectory)
 
 import Ambar.Emulator (emulate)
 import Ambar.Emulator.Config
@@ -27,7 +23,6 @@ import Ambar.Emulator.Config
   , EmulatorConfig(..)
   , DataSource(..)
   , DataDestination(..)
-  , DestinationFilter(..)
   , Id(..)
   , Destination(..)
   , Source(..)
@@ -58,52 +53,6 @@ testEmulator p = describe "emulator" $ do
         consumed <- consume out (length events)
         consumed `shouldBe` events
 
-    it "applies destination filters and continues past skipped records" $
-      withConfig $ \config ->
-      withSystemTempFile "file-source-XXXXX" $ \path h -> do
-      hClose h
-      let source = DataSource
-            { s_id = Id "file_src"
-            , s_description = "file source"
-            , s_source = SourceFile
-                { sf_path = path
-                , sf_partitioningField = "aggregate_id"
-                , sf_incrementingField = "id"
-                }
-            }
-          -- same aggregate_id → one partition → a filtered record that
-          -- failed to commit would block every record behind it.
-          entry :: Int -> Text -> Json.Value
-          entry n name = Json.object
-            [ "id" Json..= n, "aggregate_id" Json..= (1 :: Int), "event_name" Json..= name ]
-          rows = [ entry 1 "Skipped", entry 2 "Wanted", entry 3 "Skipped", entry 4 "Wanted" ]
-      LB.writeFile path $ LB.intercalate "\n" (map Json.encode rows) <> "\n"
-      out <- newTVarIO []
-      let dest = DataDestination
-            { d_id = Id "filtered_fun"
-            , d_sources = [source]
-            , d_description = "filtered destination"
-            , d_destination = DestinationFun $ \e -> do
-                atomically $ modifyTVar out (e:)
-                return Nothing
-            , d_filter = Just DestinationFilter
-                { f_column = "event_name"
-                , f_values = Set.fromList ["Wanted"]
-                }
-            }
-          env = mkEnv [source] [dest]
-      withAsyncThrow (emulate logger config env) $
-        deadline (seconds 5) $ do
-        xs <- atomically $ do
-          xs <- readTVar out
-          unless (length xs >= 2) retry
-          return xs
-        names <- forM (reverse xs) $ \x ->
-          case Json.eitherDecode @Message (LB.fromStrict x) of
-            Left err -> throwIO $ ErrorCall $ "Message decoding error: " <> err
-            Right (Message _ _ _ _ (Payload v)) -> return (eventName v)
-        names `shouldBe` [Just "Wanted", Just "Wanted"]
-
     it "resumes from last index" $
       withConfig $ \config ->
       withPostgresSource $ \table insert source -> do
@@ -129,12 +78,6 @@ testEmulator p = describe "emulator" $ do
       case Json.fromJSON @Event r of
         Json.Error str -> Left str
         Json.Success e -> Right e
-
-    eventName v = case v of
-      Json.Object o -> case KeyMap.lookup "event_name" o of
-        Just (Json.String name) -> Just name
-        _ -> Nothing
-      _ -> Nothing
 
     logger = plainLogger Warn
 
@@ -167,7 +110,6 @@ testEmulator p = describe "emulator" $ do
             , d_destination = DestinationFun $ \e -> do
                 atomically $ modifyTVar out (e:)
                 return Nothing
-            , d_filter = Nothing
             }
       return (out, dest)
 

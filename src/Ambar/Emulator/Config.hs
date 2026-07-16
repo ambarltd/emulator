@@ -8,7 +8,6 @@ module Ambar.Emulator.Config
   , Source(..)
   , DataDestination(..)
   , Destination(..)
-  , DestinationFilter(..)
   , Port(..)
   )
   where
@@ -27,8 +26,6 @@ import qualified Data.Text as Text
 import Data.Text (Text)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Set (Set)
-import qualified Data.Set as Set
 import qualified Data.Yaml as Yaml
 
 import Ambar.Emulator.Connector.Poll (PollingInterval(..))
@@ -75,16 +72,6 @@ data DataDestination = DataDestination
   , d_sources :: [DataSource]
   , d_description :: Text
   , d_destination :: Destination
-  , d_filter :: Maybe DestinationFilter
-  }
-
--- | Server-side record filter for a destination. Only records whose
--- @f_column@ value is one of @f_values@ are delivered; everything else is
--- skipped (the consumer cursor still advances). A destination without a
--- filter receives every record, as before.
-data DestinationFilter = DestinationFilter
-  { f_column :: Text
-  , f_values :: Set Text
   }
 
 data Destination
@@ -200,7 +187,6 @@ parseDataDestination sourcesMap = Json.withObject "DataSource" $ \o -> do
           [ "Invalid data destination type: '" <> t <> "'."
           , "Expected one of: http-push, file."
           ]
-    d_filter <- o .:? "filter"
     return DataDestination{..}
     where
     parseHTTPPush o = do
@@ -210,14 +196,6 @@ parseDataDestination sourcesMap = Json.withObject "DataSource" $ \o -> do
       return $ DestinationHttp {..}
 
     parseFile o = DestinationFile <$> (o .: "path")
-
-instance FromJSON DestinationFilter where
-  parseJSON = Json.withObject "DestinationFilter" $ \o -> do
-    f_column <- o .: "column"
-    values <- o .: "values"
-    when (null values) $
-      fail "filter.values must not be empty (omit the filter to deliver everything)"
-    return $ DestinationFilter f_column (Set.fromList values)
 
 parseEnvConfigFile :: FilePath -> IO EnvironmentConfig
 parseEnvConfigFile path = do
