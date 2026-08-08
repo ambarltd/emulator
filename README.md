@@ -102,6 +102,17 @@ data_destinations:
       - sqlserver_source
       - file_source
 
+    # Optional. Deliver only records whose `column` value is in `values`;
+    # other records are skipped (the destination's cursor still advances).
+    # Omit to deliver every record. Records missing the column (or with a
+    # non-string value in it) are always delivered — a misconfigured column
+    # name degrades to full delivery, never to silently dropped records.
+    filter:
+      column: event_name
+      values:
+        - OrderCreated
+        - OrderUpdated
+
   # Send data to a file. One entry per line.
   - id: file_destination
     description: my projection 1
